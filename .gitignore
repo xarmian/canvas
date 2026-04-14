@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build output
+.svelte-kit/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Local storage (dev fallback for S3)
+.local-storage/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+!.vscode/settings.json
+.idea/
+
+# Logs
+*.log
