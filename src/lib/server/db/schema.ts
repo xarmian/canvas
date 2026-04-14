@@ -52,10 +52,7 @@ export const canvases = pgTable(
 			.defaultNow()
 			.$onUpdate(() => new Date())
 	},
-	(table) => [
-		index('canvases_user_id_idx').on(table.userId),
-		index('canvases_slug_idx').on(table.slug)
-	]
+	(table) => [index('canvases_user_id_idx').on(table.userId)]
 );
 
 // ─── Canvas Parameters ───────────────────────────────────────────────────────

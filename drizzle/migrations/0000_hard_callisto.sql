@@ -55,5 +55,4 @@ ALTER TABLE "canvas_params" ADD CONSTRAINT "canvas_params_canvas_id_canvases_id_
 ALTER TABLE "canvases" ADD CONSTRAINT "canvases_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "assets_user_id_idx" ON "assets" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "canvas_params_canvas_id_idx" ON "canvas_params" USING btree ("canvas_id");--> statement-breakpoint
-CREATE INDEX "canvases_user_id_idx" ON "canvases" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "canvases_slug_idx" ON "canvases" USING btree ("slug");
+CREATE INDEX "canvases_user_id_idx" ON "canvases" USING btree ("user_id");

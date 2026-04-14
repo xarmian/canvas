@@ -1,5 +1,5 @@
 {
-	"id": "9cc10cd0-dd72-493e-befc-7ef4904329a4",
+	"id": "8d7d7df9-e222-4407-bb28-3768665ea9e9",
 	"prevId": "00000000-0000-0000-0000-000000000000",
 	"version": "7",
 	"dialect": "postgresql",
@@ -293,21 +293,6 @@
 					"columns": [
 						{
 							"expression": "user_id",
-							"isExpression": false,
-							"asc": true,
-							"nulls": "last"
-						}
-					],
-					"isUnique": false,
-					"concurrently": false,
-					"method": "btree",
-					"with": {}
-				},
-				"canvases_slug_idx": {
-					"name": "canvases_slug_idx",
-					"columns": [
-						{
-							"expression": "slug",
 							"isExpression": false,
 							"asc": true,
 							"nulls": "last"
