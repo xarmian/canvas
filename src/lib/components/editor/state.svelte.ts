@@ -3,62 +3,59 @@ import type { Canvas, FabricObject } from 'fabric';
 /**
  * Shared editor state — bridges Fabric.js imperative canvas
  * with Svelte 5 reactive state ($state runes).
+ *
+ * Svelte 5 doesn't allow exporting reassigned $state from modules.
+ * We use a single exported reactive object instead.
  */
-
-/** The Fabric.js canvas instance */
-export let fabricCanvas: Canvas | null = $state(null);
-
-/** Currently selected object (null if nothing selected) */
-export let selectedObject: FabricObject | null = $state(null);
-
-/** All objects on the canvas, kept in sync with Fabric */
-export let objects: FabricObject[] = $state([]);
-
-/** Whether the canvas has unsaved changes */
-export let isDirty: boolean = $state(false);
-
-/** Monotonically increasing edit generation — incremented on every dirty mark */
-export let editGeneration: number = $state(0);
-
-/** Sync the objects array from the Fabric canvas */
-export function syncObjects() {
-	if (!fabricCanvas) {
-		objects = [];
-		return;
-	}
-	objects = [...fabricCanvas.getObjects()];
-}
 
 /** Optional snapshot callback — set by Canvas component to record undo history */
 let snapshotCallback: (() => void) | null = null;
+
+/** Shared reactive editor state object */
+export const editorState = $state({
+	fabricCanvas: null as Canvas | null,
+	selectedObject: null as FabricObject | null,
+	objects: [] as FabricObject[],
+	isDirty: false,
+	editGeneration: 0
+});
 
 /** Register a callback to save undo snapshots (called by Canvas on mount) */
 export function setSnapshotCallback(cb: (() => void) | null) {
 	snapshotCallback = cb;
 }
 
+/** Sync the objects array from the Fabric canvas */
+export function syncObjects() {
+	if (!editorState.fabricCanvas) {
+		editorState.objects = [];
+		return;
+	}
+	editorState.objects = [...editorState.fabricCanvas.getObjects()];
+}
+
 /** Mark the canvas as dirty (unsaved changes) and record undo snapshot */
 export function markDirty() {
-	isDirty = true;
-	editGeneration++;
+	editorState.isDirty = true;
+	editorState.editGeneration++;
 	snapshotCallback?.();
 }
 
 /** Mark the canvas as clean (saved) */
 export function markClean() {
-	isDirty = false;
+	editorState.isDirty = false;
 }
 
 /** Set the Fabric canvas instance and reset all editor state */
 export function setFabricCanvas(canvas: Canvas | null) {
-	fabricCanvas = canvas;
-	selectedObject = null;
-	objects = [];
-	isDirty = false;
-	editGeneration = 0;
+	editorState.fabricCanvas = canvas;
+	editorState.selectedObject = null;
+	editorState.objects = [];
+	editorState.isDirty = false;
+	editorState.editGeneration = 0;
 }
 
 /** Set the currently selected object */
 export function setSelectedObject(obj: FabricObject | null) {
-	selectedObject = obj;
+	editorState.selectedObject = obj;
 }
