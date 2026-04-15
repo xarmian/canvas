@@ -27,19 +27,44 @@ function isPrivateIPv4(ip: string): boolean {
 }
 
 /**
+ * Extracts an embedded IPv4 address from an IPv4-mapped IPv6 address.
+ * Handles both ::ffff:1.2.3.4 (dotted) and 0:0:0:0:0:ffff:7f00:1 (hex) forms.
+ * Returns null if not an IPv4-mapped address.
+ */
+function extractMappedIPv4(ip: string): string | null {
+	const normalized = ip.toLowerCase();
+
+	// Dotted form: ::ffff:1.2.3.4
+	const dottedMatch = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+	if (dottedMatch) return dottedMatch[1];
+
+	// Expanded hex form: 0:0:0:0:0:ffff:XXYY:ZZWW
+	// The prefix must be all zeros except the ffff
+	const hexMatch = normalized.match(/^(?:0+:){4}0*:ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+	if (hexMatch) {
+		const hi = parseInt(hexMatch[1], 16);
+		const lo = parseInt(hexMatch[2], 16);
+		return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+	}
+
+	return null;
+}
+
+/**
  * Checks whether an IPv6 address is private/internal.
- * Covers loopback (::1), link-local (fe80::/10), and ULA (fc00::/7).
+ * Covers loopback (::1), link-local (fe80::/10), ULA (fc00::/7),
+ * and IPv4-mapped addresses in both dotted and expanded hex forms.
  */
 function isPrivateIPv6(ip: string): boolean {
 	const normalized = ip.toLowerCase();
-	// Check for IPv4-mapped IPv6 (::ffff:x.x.x.x) — validate the embedded IPv4
-	const v4MappedMatch = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-	if (v4MappedMatch) {
-		return isPrivateIPv4(v4MappedMatch[1]);
-	}
+
+	// Check IPv4-mapped forms
+	const mappedV4 = extractMappedIPv4(normalized);
+	if (mappedV4) return isPrivateIPv4(mappedV4);
 
 	// Parse first hextet to check ranges numerically
-	const firstHextet = parseInt(normalized.split(':')[0], 16);
+	const firstPart = normalized.split(':')[0];
+	const firstHextet = firstPart ? parseInt(firstPart, 16) : NaN;
 	if (isNaN(firstHextet)) return true; // malformed → block
 
 	return (
@@ -62,72 +87,98 @@ function isPrivateIp(ip: string): boolean {
 }
 
 /**
- * Validates that a URL is safe to fetch (prevents SSRF).
- * Only allows http/https schemes and blocks private/internal network addresses.
- * Resolves both A and AAAA DNS records to verify target IPs are not private.
+ * Validates a URL for SSRF safety and returns a validated IP to connect to.
+ * Returns { safe: true, ip } with a validated IP to pin the fetch to,
+ * or { safe: false } if the URL is unsafe.
  */
-async function isUrlSafe(url: string): Promise<boolean> {
+async function validateUrl(url: string): Promise<{ safe: true; ip: string } | { safe: false }> {
 	try {
 		const parsed = new URL(url);
 
-		// Only allow http and https
 		if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-			return false;
+			return { safe: false };
 		}
 
-		// Strip IPv6 brackets: URL.hostname returns "[::1]" for IPv6, normalize to "::1"
 		const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
 
-		// Block known private hostnames
 		if (
 			hostname === 'localhost' ||
 			hostname.endsWith('.local') ||
 			hostname.endsWith('.internal') ||
 			hostname === 'metadata.google.internal'
 		) {
-			return false;
+			return { safe: false };
 		}
 
-		// If hostname is already an IP, check it directly
+		// If hostname is already an IP, validate and return it directly
 		if (isIP(hostname)) {
-			return !isPrivateIp(hostname);
+			return isPrivateIp(hostname) ? { safe: false } : { safe: true, ip: hostname };
 		}
 
-		// Resolve both A (IPv4) and AAAA (IPv6) records
-		try {
-			const [v4Addrs, v6Addrs] = await Promise.all([
-				resolve4(hostname).catch(() => [] as string[]),
-				resolve6(hostname).catch(() => [] as string[])
-			]);
-			const allAddrs = [...v4Addrs, ...v6Addrs];
-			if (allAddrs.length === 0) return false;
-			return !allAddrs.some((addr) => isPrivateIp(addr));
-		} catch {
-			// DNS resolution failed — block the request
-			return false;
+		// Resolve both A and AAAA records, pick first safe IP
+		const [v4Addrs, v6Addrs] = await Promise.all([
+			resolve4(hostname).catch(() => [] as string[]),
+			resolve6(hostname).catch(() => [] as string[])
+		]);
+
+		// Prefer IPv4 for broader compatibility
+		const allAddrs = [...v4Addrs, ...v6Addrs];
+		if (allAddrs.length === 0) return { safe: false };
+
+		// ALL resolved IPs must be safe (attacker could have multiple records)
+		if (allAddrs.some((addr) => isPrivateIp(addr))) {
+			return { safe: false };
 		}
+
+		// Return first address to pin the connection to
+		return { safe: true, ip: allAddrs[0] };
 	} catch {
-		return false;
+		return { safe: false };
 	}
+}
+
+/**
+ * Builds a fetch URL pinned to a specific IP, preserving the original
+ * Host header for virtual hosting.
+ */
+function buildPinnedRequest(
+	originalUrl: string,
+	ip: string,
+	signal: AbortSignal
+): { url: string; init: RequestInit } {
+	const parsed = new URL(originalUrl);
+	const originalHost = parsed.host;
+
+	// Replace hostname with validated IP
+	const isV6 = isIP(ip) === 6;
+	parsed.hostname = isV6 ? `[${ip}]` : ip;
+
+	return {
+		url: parsed.toString(),
+		init: {
+			signal,
+			redirect: 'error' as const,
+			headers: { Host: originalHost }
+		}
+	};
 }
 
 /**
  * Loads a remote image by URL with timeout and caching.
  * Returns null on failure (timeout, 404, network error, or unsafe URL).
+ * Pins fetch to the validated IP to prevent DNS rebinding attacks.
  */
 export async function loadRemoteImage(
 	url: string,
 	timeoutMs: number = 3000
 ): Promise<Image | null> {
-	// Wrap everything (including DNS resolution) in the timeout
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 
 	try {
-		// Validate URL to prevent SSRF (DNS resolution is bounded by the timeout)
-		if (!(await isUrlSafe(url))) {
-			return null;
-		}
+		// Validate URL and get a safe IP to connect to
+		const validation = await validateUrl(url);
+		if (!validation.safe) return null;
 
 		// Check cache (after validation to avoid serving cached results for unsafe URLs)
 		const cached = imageCache.get(url);
@@ -137,7 +188,9 @@ export async function loadRemoteImage(
 			return img;
 		}
 
-		const res = await fetch(url, { signal: controller.signal, redirect: 'error' });
+		// Fetch pinned to the validated IP to prevent DNS rebinding
+		const { url: pinnedUrl, init } = buildPinnedRequest(url, validation.ip, controller.signal);
+		const res = await fetch(pinnedUrl, init);
 		if (!res.ok) return null;
 
 		// Enforce max image size to prevent OOM
@@ -169,7 +222,6 @@ export async function loadRemoteImage(
 
 		// Cache the buffer
 		if (imageCache.size >= MAX_CACHE_SIZE) {
-			// Remove oldest entry
 			const firstKey = imageCache.keys().next().value;
 			if (firstKey) imageCache.delete(firstKey);
 		}
