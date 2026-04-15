@@ -24,6 +24,7 @@ function isPrivateIPv4(ip: string): boolean {
 		a === 10 || // 10.0.0.0/8
 		a === 127 || // 127.0.0.0/8
 		(a === 169 && b === 254) || // 169.254.0.0/16 (link-local, AWS metadata)
+		(a === 100 && b >= 64 && b <= 127) || // 100.64.0.0/10 (CGNAT, RFC 6598)
 		(a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12
 		(a === 192 && b === 168) // 192.168.0.0/16
 	);
@@ -194,7 +195,11 @@ export async function loadRemoteImage(
 		const img = new Image();
 		img.src = buffer;
 
-		// Cache the buffer (evict oldest entries if over count or byte budget)
+		// Subtract old entry if overwriting (e.g. refetch after TTL expiry)
+		const existing = imageCache.get(url);
+		if (existing) cacheBytes -= existing.buffer.byteLength;
+
+		// Evict oldest entries if over count or byte budget
 		while (
 			(imageCache.size >= MAX_CACHE_SIZE || cacheBytes + buffer.byteLength > MAX_CACHE_BYTES) &&
 			imageCache.size > 0
