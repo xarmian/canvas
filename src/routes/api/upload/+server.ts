@@ -1,0 +1,108 @@
+import { json, error } from '@sveltejs/kit';
+import type { RequestHandler } from './$types';
+import { nanoid } from 'nanoid';
+import { db } from '$lib/server/db';
+import { assets } from '$lib/server/db/schema';
+import {
+	getStorage,
+	ALLOWED_IMAGE_TYPES,
+	ALLOWED_FONT_TYPES,
+	MAX_IMAGE_SIZE,
+	MAX_FONT_SIZE
+} from '$lib/server/storage';
+
+const ALLOWED_TYPES = new Set([...ALLOWED_IMAGE_TYPES, ...ALLOWED_FONT_TYPES]);
+
+/** Map of allowed MIME types to valid file extensions */
+const MIME_TO_EXTENSIONS: Record<string, string[]> = {
+	'image/png': ['png'],
+	'image/jpeg': ['jpg', 'jpeg'],
+	'image/webp': ['webp'],
+	'image/svg+xml': ['svg'],
+	'font/ttf': ['ttf'],
+	'font/otf': ['otf'],
+	'font/woff': ['woff'],
+	'font/woff2': ['woff2'],
+	'application/x-font-ttf': ['ttf'],
+	'application/x-font-otf': ['otf'],
+	'application/font-woff': ['woff'],
+	'application/font-woff2': ['woff2']
+};
+
+export const POST: RequestHandler = async ({ request, locals }) => {
+	if (!locals.user) {
+		error(401, 'Unauthorized');
+	}
+
+	const formData = await request.formData();
+	const file = formData.get('file');
+
+	if (!file || !(file instanceof File)) {
+		error(400, 'No file provided');
+	}
+
+	// Validate content type
+	const contentType = file.type;
+	if (!ALLOWED_TYPES.has(contentType)) {
+		error(
+			400,
+			`Unsupported file type: ${contentType}. Allowed: images (PNG, JPEG, WebP, SVG) and fonts (TTF, OTF, WOFF, WOFF2).`
+		);
+	}
+
+	// Validate extension matches declared content type
+	const ext = file.name.split('.').pop()?.toLowerCase() || '';
+	const allowedExts = MIME_TO_EXTENSIONS[contentType];
+	if (allowedExts && !allowedExts.includes(ext)) {
+		error(400, `File extension .${ext} does not match content type ${contentType}.`);
+	}
+
+	// Validate file size before buffering to prevent memory exhaustion
+	const isFont = ALLOWED_FONT_TYPES.has(contentType);
+	const maxSize = isFont ? MAX_FONT_SIZE : MAX_IMAGE_SIZE;
+
+	if (file.size > maxSize) {
+		const maxMB = maxSize / (1024 * 1024);
+		error(400, `File too large. Maximum size: ${maxMB}MB for ${isFont ? 'fonts' : 'images'}.`);
+	}
+
+	const buffer = Buffer.from(await file.arrayBuffer());
+
+	// Sanitize filename: strip path separators and dot segments, keep only basename
+	const rawName = file.name.split(/[/\\]/).pop() || 'file';
+	const safeName = rawName.replace(/\.\./g, '').replace(/[^a-zA-Z0-9._-]/g, '_') || 'file';
+
+	// Generate storage key under public/ prefix (publicly accessible via MinIO)
+	const folder = isFont ? 'fonts' : 'images';
+	const key = `public/${folder}/${nanoid()}/${safeName}`;
+
+	// Upload to storage
+	const storage = getStorage();
+	const url = await storage.upload(key, buffer, contentType);
+
+	// Save asset record — clean up storage if DB insert fails
+	let asset;
+	try {
+		[asset] = await db
+			.insert(assets)
+			.values({
+				userId: locals.user.id,
+				filename: file.name,
+				storageKey: key,
+				contentType,
+				sizeBytes: buffer.byteLength
+			})
+			.returning();
+	} catch (err) {
+		await storage.delete(key).catch(() => {}); // best-effort cleanup
+		throw err;
+	}
+
+	return json({
+		id: asset.id,
+		url,
+		filename: asset.filename,
+		contentType: asset.contentType,
+		sizeBytes: asset.sizeBytes
+	});
+};

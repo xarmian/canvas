@@ -23,6 +23,7 @@
 		"@sveltejs/adapter-auto": "^7.0.1",
 		"@sveltejs/kit": "^2.57.0",
 		"@sveltejs/vite-plugin-svelte": "^7.0.0",
+		"@types/mime-types": "^3.0.1",
 		"@types/node": "^24",
 		"drizzle-kit": "^0.31.10",
 		"eslint": "^10.2.0",
@@ -38,10 +39,13 @@
 		"vite": "^8.0.7"
 	},
 	"dependencies": {
+		"@aws-sdk/client-s3": "^3.1030.0",
 		"@napi-rs/canvas": "^0.1.97",
 		"better-auth": "^1.6.3",
 		"dotenv": "^17.4.2",
 		"drizzle-orm": "^0.45.2",
+		"mime-types": "^3.0.2",
+		"nanoid": "^5.1.7",
 		"postgres": "^3.4.9",
 		"sharp": "^0.34.5"
 	},
