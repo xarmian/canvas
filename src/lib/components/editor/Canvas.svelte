@@ -8,6 +8,8 @@
 		syncObjects,
 		markDirty
 	} from './state.svelte.ts';
+	import { saveSnapshot, undo, redo, resetHistory, isRestoring } from './history.svelte.ts';
+	import { setupSnapping } from './snapping.js';
 
 	let {
 		width,
@@ -31,6 +33,13 @@
 		});
 
 		setFabricCanvas(canvas);
+		resetHistory();
+
+		// Set up snapping guides
+		const cleanupSnapping = setupSnapping(canvas);
+
+		// Save initial snapshot for undo
+		saveSnapshot(canvas);
 
 		canvas.on('selection:created', (e) => {
 			setSelectedObject(e.selected[0] ?? null);
@@ -47,21 +56,26 @@
 		canvas.on('object:modified', () => {
 			syncObjects();
 			markDirty();
+			saveSnapshot(canvas);
 		});
 
 		canvas.on('object:added', () => {
 			syncObjects();
 			markDirty();
+			if (!isRestoring) saveSnapshot(canvas);
 		});
 
 		canvas.on('object:removed', () => {
 			syncObjects();
 			markDirty();
+			if (!isRestoring) saveSnapshot(canvas);
 		});
 
 		return () => {
+			cleanupSnapping();
 			canvas.dispose();
 			setFabricCanvas(null);
+			resetHistory();
 		};
 	});
 
@@ -116,7 +130,28 @@
 		fabricCanvas.requestRenderAll();
 	}
 
+	export function undoAction() {
+		if (fabricCanvas) undo(fabricCanvas).then(() => syncObjects());
+	}
+
+	export function redoAction() {
+		if (fabricCanvas) redo(fabricCanvas).then(() => syncObjects());
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
+		// Undo: Ctrl+Z / Cmd+Z
+		if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+			e.preventDefault();
+			undoAction();
+			return;
+		}
+		// Redo: Ctrl+Shift+Z / Cmd+Shift+Z
+		if ((e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey) {
+			e.preventDefault();
+			redoAction();
+			return;
+		}
+		// Delete selected
 		if (e.key === 'Delete' || e.key === 'Backspace') {
 			if (!fabricCanvas) return;
 			const active = fabricCanvas.getActiveObject();

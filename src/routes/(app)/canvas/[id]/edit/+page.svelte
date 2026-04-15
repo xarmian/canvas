@@ -8,6 +8,7 @@
 		fabricCanvas,
 		editGeneration
 	} from '$lib/components/editor/state.svelte';
+	import { canUndo, canRedo } from '$lib/components/editor/history.svelte';
 
 	let { data } = $props();
 
@@ -98,6 +99,19 @@
 		<span class="canvas-name">{data.canvas.name}</span>
 
 		<div class="toolbar-actions">
+			<button
+				class="tool-btn"
+				onclick={() => editorRef?.undoAction()}
+				disabled={!canUndo}
+				title="Undo (Ctrl+Z)">↩</button
+			>
+			<button
+				class="tool-btn"
+				onclick={() => editorRef?.redoAction()}
+				disabled={!canRedo}
+				title="Redo (Ctrl+Shift+Z)">↪</button
+			>
+			<span class="toolbar-sep"></span>
 			<button class="tool-btn" onclick={() => editorRef?.addText()}>Add Text</button>
 			<button class="tool-btn" onclick={() => editorRef?.addRect()}>Add Rectangle</button>
 			<button class="tool-btn" onclick={handleAddImage}>Add Image</button>
@@ -197,6 +211,18 @@
 
 	.tool-btn:hover {
 		background: #f3f4f6;
+	}
+
+	.tool-btn:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+
+	.toolbar-sep {
+		width: 1px;
+		height: 20px;
+		background: #d1d5db;
+		align-self: center;
 	}
 
 	.delete-btn {
