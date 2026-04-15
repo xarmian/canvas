@@ -36,7 +36,8 @@
 			loadedCanvasId = data.canvas.id;
 			// Reset history when switching canvases to prevent cross-canvas undo
 			resetHistory();
-			// Capture canvas ref so stale hydration completions don't affect a different canvas
+			// Track load ID so stale hydration completions are ignored
+			const expectedId = data.canvas.id;
 			const canvas = fabricCanvas;
 			if (data.canvas.templateJson) {
 				// Suppress snapshots during hydration to avoid partial-load states in history
@@ -45,14 +46,14 @@
 				canvas
 					.loadFromJSON(json)
 					.then(() => {
-						// Only finalize if this canvas is still current
-						if (fabricCanvas !== canvas) return;
+						// Only finalize if we're still on the same canvas
+						if (loadedCanvasId !== expectedId) return;
 						canvas.renderAll();
 					})
 					.finally(() => {
 						endSuppressSnapshots();
-						// Only save snapshot if this canvas is still current
-						if (fabricCanvas === canvas) {
+						// Only save snapshot if we're still on the same canvas
+						if (loadedCanvasId === expectedId) {
 							saveSnapshot(canvas);
 						}
 					});

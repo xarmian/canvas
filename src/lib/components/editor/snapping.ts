@@ -28,6 +28,10 @@ export function setupSnapping(canvas: Canvas): () => void {
 
 		// Use bounding rect for rotation-aware bounds
 		const objBounds = target.getBoundingRect();
+		// Delta between origin (left/top) and bounding rect — needed to
+		// correctly snap rotated objects where these differ
+		const deltaX = (target.left ?? 0) - objBounds.left;
+		const deltaY = (target.top ?? 0) - objBounds.top;
 		const objLeft = objBounds.left;
 		const objTop = objBounds.top;
 		const objWidth = objBounds.width;
@@ -42,29 +46,29 @@ export function setupSnapping(canvas: Canvas): () => void {
 		const canvasCenterY = canvasHeight / 2;
 
 		if (Math.abs(objCenterX - canvasCenterX) < SNAP_THRESHOLD) {
-			target.left = canvasCenterX - objWidth / 2;
+			target.left = canvasCenterX - objWidth / 2 + deltaX;
 			guides.push({ x1: canvasCenterX, y1: 0, x2: canvasCenterX, y2: canvasHeight });
 		}
 		if (Math.abs(objCenterY - canvasCenterY) < SNAP_THRESHOLD) {
-			target.top = canvasCenterY - objHeight / 2;
+			target.top = canvasCenterY - objHeight / 2 + deltaY;
 			guides.push({ x1: 0, y1: canvasCenterY, x2: canvasWidth, y2: canvasCenterY });
 		}
 
 		// Snap to canvas edges
 		if (Math.abs(objLeft) < SNAP_THRESHOLD) {
-			target.left = 0;
+			target.left = deltaX;
 			guides.push({ x1: 0, y1: 0, x2: 0, y2: canvasHeight });
 		}
 		if (Math.abs(objTop) < SNAP_THRESHOLD) {
-			target.top = 0;
+			target.top = deltaY;
 			guides.push({ x1: 0, y1: 0, x2: canvasWidth, y2: 0 });
 		}
 		if (Math.abs(objRight - canvasWidth) < SNAP_THRESHOLD) {
-			target.left = canvasWidth - objWidth;
+			target.left = canvasWidth - objWidth + deltaX;
 			guides.push({ x1: canvasWidth, y1: 0, x2: canvasWidth, y2: canvasHeight });
 		}
 		if (Math.abs(objBottom - canvasHeight) < SNAP_THRESHOLD) {
-			target.top = canvasHeight - objHeight;
+			target.top = canvasHeight - objHeight + deltaY;
 			guides.push({ x1: 0, y1: canvasHeight, x2: canvasWidth, y2: canvasHeight });
 		}
 
@@ -85,25 +89,25 @@ export function setupSnapping(canvas: Canvas): () => void {
 
 			// Vertical alignment (left/center/right edges)
 			if (Math.abs(objLeft - oLeft) < SNAP_THRESHOLD) {
-				target.left = oLeft;
+				target.left = oLeft + deltaX;
 				guides.push({ x1: oLeft, y1: 0, x2: oLeft, y2: canvasHeight });
 			} else if (Math.abs(objCenterX - oCenterX) < SNAP_THRESHOLD) {
-				target.left = oCenterX - objWidth / 2;
+				target.left = oCenterX - objWidth / 2 + deltaX;
 				guides.push({ x1: oCenterX, y1: 0, x2: oCenterX, y2: canvasHeight });
 			} else if (Math.abs(objRight - oRight) < SNAP_THRESHOLD) {
-				target.left = oRight - objWidth;
+				target.left = oRight - objWidth + deltaX;
 				guides.push({ x1: oRight, y1: 0, x2: oRight, y2: canvasHeight });
 			}
 
 			// Horizontal alignment (top/center/bottom edges)
 			if (Math.abs(objTop - oTop) < SNAP_THRESHOLD) {
-				target.top = oTop;
+				target.top = oTop + deltaY;
 				guides.push({ x1: 0, y1: oTop, x2: canvasWidth, y2: oTop });
 			} else if (Math.abs(objCenterY - oCenterY) < SNAP_THRESHOLD) {
-				target.top = oCenterY - objHeight / 2;
+				target.top = oCenterY - objHeight / 2 + deltaY;
 				guides.push({ x1: 0, y1: oCenterY, x2: canvasWidth, y2: oCenterY });
 			} else if (Math.abs(objBottom - oBottom) < SNAP_THRESHOLD) {
-				target.top = oBottom - objHeight;
+				target.top = oBottom - objHeight + deltaY;
 				guides.push({ x1: 0, y1: oBottom, x2: canvasWidth, y2: oBottom });
 			}
 		}
