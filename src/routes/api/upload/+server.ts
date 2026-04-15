@@ -44,9 +44,13 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		error(400, `File too large. Maximum size: ${maxMB}MB for ${isFont ? 'fonts' : 'images'}.`);
 	}
 
+	// Sanitize filename: strip path separators and dot segments, keep only basename
+	const rawName = file.name.split(/[/\\]/).pop() || 'file';
+	const safeName = rawName.replace(/\.\./g, '').replace(/[^a-zA-Z0-9._-]/g, '_') || 'file';
+
 	// Generate storage key under public/ prefix (publicly accessible via MinIO)
 	const folder = isFont ? 'fonts' : 'images';
-	const key = `public/${folder}/${nanoid()}/${file.name}`;
+	const key = `public/${folder}/${nanoid()}/${safeName}`;
 
 	// Upload to storage
 	const storage = getStorage();
