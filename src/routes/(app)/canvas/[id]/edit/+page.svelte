@@ -40,17 +40,20 @@
 			const thisToken = ++hydrationToken;
 			const canvas = fabricCanvas;
 
+			// Suppress snapshots before clearing to prevent object:removed
+			// events from marking dirty and triggering autosave with empty canvas
+			beginSuppressSnapshots();
+
 			// Clear canvas and reset state before loading new content
-			// This makes any in-flight stale load harmless since it
-			// mutates a canvas that's already been cleared for the new load
 			canvas.clear();
 			// Restore background after clear() wipes it
 			canvas.backgroundColor = backgroundColor;
 			canvas.renderAll();
 			resetHistory();
+			// Reset dirty flag so autosave doesn't fire for the clear
+			markClean();
 
 			if (data.canvas.templateJson) {
-				beginSuppressSnapshots();
 				const json = data.canvas.templateJson;
 				canvas
 					.loadFromJSON(json)
@@ -65,6 +68,8 @@
 						saveSnapshot(canvas);
 					});
 			} else {
+				// Empty canvas — end suppression and save initial blank snapshot
+				endSuppressSnapshots();
 				saveSnapshot(canvas);
 			}
 		}
