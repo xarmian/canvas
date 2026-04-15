@@ -30,35 +30,38 @@
 	);
 
 	// Load template JSON once fabricCanvas is ready — track by canvas ID
+	// Track which hydration is current — incremented on every load to
+	// invalidate stale completions from overlapping navigations
 	let loadedCanvasId = $state('');
+	let hydrationToken = $state(0);
 	$effect(() => {
 		if (fabricCanvas && loadedCanvasId !== data.canvas.id) {
 			loadedCanvasId = data.canvas.id;
-			// Reset history when switching canvases to prevent cross-canvas undo
-			resetHistory();
-			// Track load ID so stale hydration completions are ignored
-			const expectedId = data.canvas.id;
+			const thisToken = ++hydrationToken;
 			const canvas = fabricCanvas;
+
+			// Clear canvas and reset state before loading new content
+			// This makes any in-flight stale load harmless since it
+			// mutates a canvas that's already been cleared for the new load
+			canvas.clear();
+			resetHistory();
+
 			if (data.canvas.templateJson) {
-				// Suppress snapshots during hydration to avoid partial-load states in history
 				beginSuppressSnapshots();
 				const json = data.canvas.templateJson;
 				canvas
 					.loadFromJSON(json)
 					.then(() => {
-						// Only finalize if we're still on the same canvas
-						if (loadedCanvasId !== expectedId) return;
+						if (hydrationToken !== thisToken) return;
 						canvas.renderAll();
 					})
 					.finally(() => {
+						// Only end suppression if this is still the active hydration
+						if (hydrationToken !== thisToken) return;
 						endSuppressSnapshots();
-						// Only save snapshot if we're still on the same canvas
-						if (loadedCanvasId === expectedId) {
-							saveSnapshot(canvas);
-						}
+						saveSnapshot(canvas);
 					});
 			} else {
-				// Empty canvas — save initial blank snapshot
 				saveSnapshot(canvas);
 			}
 		}
