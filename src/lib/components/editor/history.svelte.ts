@@ -6,8 +6,14 @@ const MAX_HISTORY = 50;
 let undoStack: string[] = $state([]);
 let redoStack: string[] = $state([]);
 let isRestoring = $state(false);
+let isBusy = $state(false);
 
-export { isRestoring };
+/**
+ * Whether snapshot recording is suppressed (during hydration or restore).
+ * Export so Canvas component events can check before recording.
+ */
+// eslint-disable-next-line prefer-const
+export let suppressSnapshots: boolean = $derived(isRestoring || isBusy);
 
 // eslint-disable-next-line prefer-const
 export let canUndo: boolean = $derived(undoStack.length > 1);
@@ -16,7 +22,7 @@ export let canRedo: boolean = $derived(redoStack.length > 0);
 
 /** Take a snapshot of the current canvas state */
 export function saveSnapshot(canvas: Canvas) {
-	if (isRestoring) return;
+	if (suppressSnapshots) return;
 
 	const json = JSON.stringify(canvas.toObject(['paramBindings']));
 
@@ -29,9 +35,10 @@ export function saveSnapshot(canvas: Canvas) {
 
 /** Undo: restore the previous state */
 export async function undo(canvas: Canvas) {
-	if (undoStack.length <= 1) return;
+	if (undoStack.length <= 1 || isBusy) return;
 
 	isRestoring = true;
+	isBusy = true;
 	try {
 		// Move current state to redo stack
 		const current = undoStack[undoStack.length - 1];
@@ -44,14 +51,16 @@ export async function undo(canvas: Canvas) {
 		canvas.renderAll();
 	} finally {
 		isRestoring = false;
+		isBusy = false;
 	}
 }
 
 /** Redo: restore the next state */
 export async function redo(canvas: Canvas) {
-	if (redoStack.length === 0) return;
+	if (redoStack.length === 0 || isBusy) return;
 
 	isRestoring = true;
+	isBusy = true;
 	try {
 		// Pop from redo stack
 		const next = redoStack[redoStack.length - 1];
@@ -63,7 +72,18 @@ export async function redo(canvas: Canvas) {
 		canvas.renderAll();
 	} finally {
 		isRestoring = false;
+		isBusy = false;
 	}
+}
+
+/** Suppress snapshot recording (e.g., during initial hydration) */
+export function beginSuppressSnapshots() {
+	isRestoring = true;
+}
+
+/** Resume snapshot recording */
+export function endSuppressSnapshots() {
+	isRestoring = false;
 }
 
 /** Reset history (e.g., when switching canvases) */
@@ -71,4 +91,5 @@ export function resetHistory() {
 	undoStack = [];
 	redoStack = [];
 	isRestoring = false;
+	isBusy = false;
 }

@@ -8,7 +8,7 @@
 		syncObjects,
 		markDirty
 	} from './state.svelte.ts';
-	import { saveSnapshot, undo, redo, resetHistory, isRestoring } from './history.svelte.ts';
+	import { saveSnapshot, undo, redo, resetHistory, suppressSnapshots } from './history.svelte.ts';
 	import { setupSnapping } from './snapping.js';
 
 	let {
@@ -59,13 +59,13 @@
 		canvas.on('object:added', () => {
 			syncObjects();
 			markDirty();
-			if (!isRestoring) saveSnapshot(canvas);
+			if (!suppressSnapshots) saveSnapshot(canvas);
 		});
 
 		canvas.on('object:removed', () => {
 			syncObjects();
 			markDirty();
-			if (!isRestoring) saveSnapshot(canvas);
+			if (!suppressSnapshots) saveSnapshot(canvas);
 		});
 
 		return () => {
