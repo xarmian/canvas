@@ -8,6 +8,14 @@
 		fabricCanvas,
 		editGeneration
 	} from '$lib/components/editor/state.svelte';
+	import {
+		canUndo,
+		canRedo,
+		saveSnapshot,
+		resetHistory,
+		beginSuppressSnapshots,
+		endSuppressSnapshots
+	} from '$lib/components/editor/history.svelte';
 
 	let { data } = $props();
 
@@ -21,15 +29,49 @@
 		data.canvas.backgroundType === 'color' ? data.canvas.backgroundValue : '#ffffff'
 	);
 
-	// Load template JSON once fabricCanvas is ready
-	let hasLoaded = $state(false);
+	// Load template JSON once fabricCanvas is ready — track by canvas ID
+	// Track which hydration is current — incremented on every load to
+	// invalidate stale completions from overlapping navigations
+	let loadedCanvasId = $state('');
+	let hydrationToken = $state(0);
 	$effect(() => {
-		if (fabricCanvas && !hasLoaded && data.canvas.templateJson) {
-			hasLoaded = true;
-			const json = data.canvas.templateJson;
-			fabricCanvas.loadFromJSON(json).then(() => {
-				fabricCanvas!.renderAll();
-			});
+		if (fabricCanvas && loadedCanvasId !== data.canvas.id) {
+			loadedCanvasId = data.canvas.id;
+			const thisToken = ++hydrationToken;
+			const canvas = fabricCanvas;
+
+			// Suppress snapshots before clearing to prevent object:removed
+			// events from marking dirty and triggering autosave with empty canvas
+			beginSuppressSnapshots();
+
+			// Clear canvas and reset state before loading new content
+			canvas.clear();
+			// Restore background after clear() wipes it
+			canvas.backgroundColor = backgroundColor;
+			canvas.renderAll();
+			resetHistory();
+			// Reset dirty flag so autosave doesn't fire for the clear
+			markClean();
+
+			if (data.canvas.templateJson) {
+				const json = data.canvas.templateJson;
+				canvas
+					.loadFromJSON(json)
+					.then(() => {
+						if (hydrationToken !== thisToken) return;
+						canvas.renderAll();
+					})
+					.finally(() => {
+						// Only end suppression if this is still the active hydration
+						if (hydrationToken !== thisToken) return;
+						endSuppressSnapshots();
+						saveSnapshot(canvas);
+					});
+			} else {
+				// Empty canvas — end suppression and save initial blank snapshot
+				endSuppressSnapshots();
+				saveSnapshot(canvas);
+			}
 		}
 	});
 
@@ -98,6 +140,19 @@
 		<span class="canvas-name">{data.canvas.name}</span>
 
 		<div class="toolbar-actions">
+			<button
+				class="tool-btn"
+				onclick={() => editorRef?.undoAction()}
+				disabled={!canUndo}
+				title="Undo (Ctrl+Z)">↩</button
+			>
+			<button
+				class="tool-btn"
+				onclick={() => editorRef?.redoAction()}
+				disabled={!canRedo}
+				title="Redo (Ctrl+Shift+Z)">↪</button
+			>
+			<span class="toolbar-sep"></span>
 			<button class="tool-btn" onclick={() => editorRef?.addText()}>Add Text</button>
 			<button class="tool-btn" onclick={() => editorRef?.addRect()}>Add Rectangle</button>
 			<button class="tool-btn" onclick={handleAddImage}>Add Image</button>
@@ -197,6 +252,18 @@
 
 	.tool-btn:hover {
 		background: #f3f4f6;
+	}
+
+	.tool-btn:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+
+	.toolbar-sep {
+		width: 1px;
+		height: 20px;
+		background: #d1d5db;
+		align-self: center;
 	}
 
 	.delete-btn {
