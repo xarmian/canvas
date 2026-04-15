@@ -28,10 +28,11 @@ const NUMERIC_PROPS = new Set([
 /**
  * Coerces a string value to the appropriate type for a given property.
  */
-function coerceParamValue(prop: string, value: string): string | number {
+function coerceParamValue(prop: string, value: string): string | number | undefined {
 	if (NUMERIC_PROPS.has(prop)) {
 		const num = parseFloat(value);
-		return isNaN(num) ? value : num;
+		// Return undefined for invalid numbers so the template default is preserved
+		return isNaN(num) ? undefined : num;
 	}
 	return value;
 }
@@ -53,8 +54,11 @@ function mergeParams(
 		for (const [prop, binding] of Object.entries(obj.paramBindings)) {
 			const value = params[binding.param] ?? binding.default;
 			if (value !== undefined) {
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				(obj as any)[prop] = coerceParamValue(prop, value);
+				const coerced = coerceParamValue(prop, value);
+				if (coerced !== undefined) {
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					(obj as any)[prop] = coerced;
+				}
 			}
 		}
 	}
@@ -66,13 +70,13 @@ function mergeParams(
  * Collects all image URLs from template objects that need to be fetched.
  */
 function collectImageUrls(objects: FabricObject[]): string[] {
-	const urls: string[] = [];
+	const seen = new Set<string>();
 	for (const obj of objects) {
 		if ((obj.type === 'image' || obj.type === 'Image') && obj.src) {
-			urls.push(obj.src);
+			seen.add(obj.src);
 		}
 	}
-	return urls;
+	return [...seen];
 }
 
 /**

@@ -119,13 +119,17 @@ export async function loadRemoteImage(
 	url: string,
 	timeoutMs: number = 3000
 ): Promise<Image | null> {
+	// Wrap everything (including DNS resolution) in the timeout
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+
 	try {
-		// Validate URL to prevent SSRF
+		// Validate URL to prevent SSRF (DNS resolution is bounded by the timeout)
 		if (!(await isUrlSafe(url))) {
 			return null;
 		}
 
-		// Check cache
+		// Check cache (after validation to avoid serving cached results for unsafe URLs)
 		const cached = imageCache.get(url);
 		if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
 			const img = new Image();
@@ -133,54 +137,49 @@ export async function loadRemoteImage(
 			return img;
 		}
 
-		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), timeoutMs);
+		const res = await fetch(url, { signal: controller.signal, redirect: 'error' });
+		if (!res.ok) return null;
 
-		try {
-			const res = await fetch(url, { signal: controller.signal, redirect: 'error' });
-			if (!res.ok) return null;
+		// Enforce max image size to prevent OOM
+		const contentLength = res.headers.get('content-length');
+		if (contentLength && parseInt(contentLength, 10) > MAX_IMAGE_BYTES) {
+			return null;
+		}
 
-			// Enforce max image size to prevent OOM
-			const contentLength = res.headers.get('content-length');
-			if (contentLength && parseInt(contentLength, 10) > MAX_IMAGE_BYTES) {
+		// Stream-read with size limit
+		const chunks: Uint8Array[] = [];
+		let totalBytes = 0;
+		const reader = res.body?.getReader();
+		if (!reader) return null;
+
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			totalBytes += value.byteLength;
+			if (totalBytes > MAX_IMAGE_BYTES) {
+				reader.cancel();
 				return null;
 			}
-
-			// Stream-read with size limit
-			const chunks: Uint8Array[] = [];
-			let totalBytes = 0;
-			const reader = res.body?.getReader();
-			if (!reader) return null;
-
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				totalBytes += value.byteLength;
-				if (totalBytes > MAX_IMAGE_BYTES) {
-					reader.cancel();
-					return null;
-				}
-				chunks.push(value);
-			}
-
-			const buffer = Buffer.concat(chunks);
-			const img = new Image();
-			img.src = buffer;
-
-			// Cache the buffer
-			if (imageCache.size >= MAX_CACHE_SIZE) {
-				// Remove oldest entry
-				const firstKey = imageCache.keys().next().value;
-				if (firstKey) imageCache.delete(firstKey);
-			}
-			imageCache.set(url, { buffer, timestamp: Date.now() });
-
-			return img;
-		} finally {
-			clearTimeout(timer);
+			chunks.push(value);
 		}
+
+		const buffer = Buffer.concat(chunks);
+		const img = new Image();
+		img.src = buffer;
+
+		// Cache the buffer
+		if (imageCache.size >= MAX_CACHE_SIZE) {
+			// Remove oldest entry
+			const firstKey = imageCache.keys().next().value;
+			if (firstKey) imageCache.delete(firstKey);
+		}
+		imageCache.set(url, { buffer, timestamp: Date.now() });
+
+		return img;
 	} catch {
 		return null;
+	} finally {
+		clearTimeout(timer);
 	}
 }
 
