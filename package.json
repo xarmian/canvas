@@ -38,9 +38,16 @@
 		"vite": "^8.0.7"
 	},
 	"dependencies": {
+		"@napi-rs/canvas": "^0.1.97",
 		"better-auth": "^1.6.3",
 		"dotenv": "^17.4.2",
 		"drizzle-orm": "^0.45.2",
-		"postgres": "^3.4.9"
+		"postgres": "^3.4.9",
+		"sharp": "^0.34.5"
+	},
+	"pnpm": {
+		"onlyBuiltDependencies": [
+			"sharp"
+		]
 	}
 }
