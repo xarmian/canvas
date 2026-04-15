@@ -41,11 +41,11 @@
 					.loadFromJSON(json)
 					.then(() => {
 						fabricCanvas!.renderAll();
-						// Save initial snapshot after hydration so first undo doesn't wipe content
-						saveSnapshot(fabricCanvas!);
 					})
 					.finally(() => {
 						endSuppressSnapshots();
+						// Save initial snapshot after hydration so first undo doesn't wipe content
+						saveSnapshot(fabricCanvas!);
 					});
 			} else {
 				// Empty canvas — save initial blank snapshot
