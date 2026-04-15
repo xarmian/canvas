@@ -12,6 +12,7 @@
 		canUndo,
 		canRedo,
 		saveSnapshot,
+		resetHistory,
 		beginSuppressSnapshots,
 		endSuppressSnapshots
 	} from '$lib/components/editor/history.svelte';
@@ -33,23 +34,31 @@
 	$effect(() => {
 		if (fabricCanvas && loadedCanvasId !== data.canvas.id) {
 			loadedCanvasId = data.canvas.id;
+			// Reset history when switching canvases to prevent cross-canvas undo
+			resetHistory();
+			// Capture canvas ref so stale hydration completions don't affect a different canvas
+			const canvas = fabricCanvas;
 			if (data.canvas.templateJson) {
 				// Suppress snapshots during hydration to avoid partial-load states in history
 				beginSuppressSnapshots();
 				const json = data.canvas.templateJson;
-				fabricCanvas
+				canvas
 					.loadFromJSON(json)
 					.then(() => {
-						fabricCanvas!.renderAll();
+						// Only finalize if this canvas is still current
+						if (fabricCanvas !== canvas) return;
+						canvas.renderAll();
 					})
 					.finally(() => {
 						endSuppressSnapshots();
-						// Save initial snapshot after hydration so first undo doesn't wipe content
-						saveSnapshot(fabricCanvas!);
+						// Only save snapshot if this canvas is still current
+						if (fabricCanvas === canvas) {
+							saveSnapshot(canvas);
+						}
 					});
 			} else {
 				// Empty canvas — save initial blank snapshot
-				saveSnapshot(fabricCanvas);
+				saveSnapshot(canvas);
 			}
 		}
 	});
