@@ -24,7 +24,8 @@
 	);
 	let isCustom = $derived(presets[selectedPreset].label === 'Custom');
 
-	async function handleSubmit() {
+	async function handleSubmit(e: SubmitEvent) {
+		e.preventDefault();
 		error = '';
 		loading = true;
 
