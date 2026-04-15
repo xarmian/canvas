@@ -4,9 +4,12 @@ import { isIP } from 'net';
 
 /** Simple LRU-ish cache for fetched remote images */
 const imageCache = new Map<string, { buffer: Buffer; timestamp: number }>();
+let cacheBytes = 0;
 const MAX_CACHE_SIZE = 200;
+const MAX_CACHE_BYTES = 100 * 1024 * 1024; // 100MB total cache budget
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB max image size
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB max per image
+const MAX_CONCURRENT_FETCHES = 6;
 
 /**
  * Checks whether an IPv4 address is private/internal.
@@ -191,12 +194,19 @@ export async function loadRemoteImage(
 		const img = new Image();
 		img.src = buffer;
 
-		// Cache the buffer
-		if (imageCache.size >= MAX_CACHE_SIZE) {
+		// Cache the buffer (evict oldest entries if over count or byte budget)
+		while (
+			(imageCache.size >= MAX_CACHE_SIZE || cacheBytes + buffer.byteLength > MAX_CACHE_BYTES) &&
+			imageCache.size > 0
+		) {
 			const firstKey = imageCache.keys().next().value;
-			if (firstKey) imageCache.delete(firstKey);
+			if (!firstKey) break;
+			const evicted = imageCache.get(firstKey);
+			if (evicted) cacheBytes -= evicted.buffer.byteLength;
+			imageCache.delete(firstKey);
 		}
 		imageCache.set(url, { buffer, timestamp: Date.now() });
+		cacheBytes += buffer.byteLength;
 
 		return img;
 	} catch {
@@ -216,13 +226,21 @@ export function loadImageFromBuffer(buffer: Buffer): Image {
 }
 
 /**
- * Loads multiple images in parallel, returning null for any that fail.
+ * Loads multiple images with bounded concurrency, returning null for any that fail.
  */
 export async function loadImagesParallel(
 	urls: string[],
 	timeoutMs: number = 3000
 ): Promise<Map<string, Image | null>> {
-	const results = await Promise.allSettled(urls.map((url) => loadRemoteImage(url, timeoutMs)));
+	// Bounded concurrency: process in chunks of MAX_CONCURRENT_FETCHES
+	const results: PromiseSettledResult<Image | null>[] = [];
+	for (let i = 0; i < urls.length; i += MAX_CONCURRENT_FETCHES) {
+		const chunk = urls.slice(i, i + MAX_CONCURRENT_FETCHES);
+		const chunkResults = await Promise.allSettled(
+			chunk.map((url) => loadRemoteImage(url, timeoutMs))
+		);
+		results.push(...chunkResults);
+	}
 
 	const imageMap = new Map<string, Image | null>();
 	urls.forEach((url, i) => {
