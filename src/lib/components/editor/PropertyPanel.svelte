@@ -4,15 +4,19 @@
 
 	// --- Derived properties from the selected object ---
 
-	let objType = $derived(selectedObject?.type ?? '');
-	let isText = $derived(objType === 'IText' || objType === 'Textbox');
-	let isImage = $derived(objType === 'FabricImage');
+	let objType = $derived(selectedObject?.type?.toLowerCase() ?? '');
+	let isText = $derived(
+		objType === 'i-text' || objType === 'itext' || objType === 'textbox' || objType === 'text'
+	);
+	let isImage = $derived(objType === 'image' || objType === 'fabricimage');
 
-	// Position
+	// Position (scale-aware: displayed dimensions = intrinsic × scale)
 	let posX = $derived((selectedObject?.get('left') as number) ?? 0);
 	let posY = $derived((selectedObject?.get('top') as number) ?? 0);
-	let objWidth = $derived((selectedObject?.get('width') as number) ?? 0);
-	let objHeight = $derived((selectedObject?.get('height') as number) ?? 0);
+	let scaleX = $derived((selectedObject?.get('scaleX') as number) ?? 1);
+	let scaleY = $derived((selectedObject?.get('scaleY') as number) ?? 1);
+	let objWidth = $derived(((selectedObject?.get('width') as number) ?? 0) * scaleX);
+	let objHeight = $derived(((selectedObject?.get('height') as number) ?? 0) * scaleY);
 	let angle = $derived((selectedObject?.get('angle') as number) ?? 0);
 	let opacity = $derived((selectedObject?.get('opacity') as number) ?? 1);
 
@@ -42,6 +46,19 @@
 		if (!selectedObject || !fabricCanvas) return;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		selectedObject.set(prop as keyof FabricObject, value as any);
+		fabricCanvas.renderAll();
+		markDirty();
+	}
+
+	/** Set width/height accounting for scale — resets scale to 1 and sets intrinsic dimension */
+	function setDimension(prop: 'width' | 'height', displayValue: number) {
+		if (!selectedObject || !fabricCanvas) return;
+		const scaleProp = prop === 'width' ? 'scaleX' : 'scaleY';
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		selectedObject.set(prop as any, displayValue);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		selectedObject.set(scaleProp as any, 1);
+		selectedObject.setCoords();
 		fabricCanvas.renderAll();
 		markDirty();
 	}
@@ -127,7 +144,7 @@
 						type="number"
 						class="field-input"
 						value={Math.round(objWidth)}
-						onchange={(e) => setProp('width', Number(e.currentTarget.value))}
+						onchange={(e) => setDimension('width', Number(e.currentTarget.value))}
 					/>
 				</div>
 
@@ -138,7 +155,7 @@
 						type="number"
 						class="field-input"
 						value={Math.round(objHeight)}
-						onchange={(e) => setProp('height', Number(e.currentTarget.value))}
+						onchange={(e) => setDimension('height', Number(e.currentTarget.value))}
 					/>
 				</div>
 
