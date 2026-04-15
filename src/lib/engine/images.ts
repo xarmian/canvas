@@ -1,15 +1,46 @@
 import { Image } from '@napi-rs/canvas';
+import { resolve as dnsResolve } from 'dns/promises';
+import { isIP } from 'net';
 
 /** Simple LRU-ish cache for fetched remote images */
 const imageCache = new Map<string, { buffer: Buffer; timestamp: number }>();
 const MAX_CACHE_SIZE = 200;
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB max image size
+
+/**
+ * Checks whether an IP address is private/internal.
+ */
+function isPrivateIp(ip: string): boolean {
+	return (
+		ip === '127.0.0.1' ||
+		ip === '::1' ||
+		ip === '0.0.0.0' ||
+		ip.startsWith('10.') ||
+		ip.startsWith('172.16.') ||
+		ip.startsWith('172.17.') ||
+		ip.startsWith('172.18.') ||
+		ip.startsWith('172.19.') ||
+		ip.startsWith('172.2') ||
+		ip.startsWith('172.30.') ||
+		ip.startsWith('172.31.') ||
+		ip.startsWith('192.168.') ||
+		ip.startsWith('169.254.') ||
+		ip.startsWith('fe80:') || // IPv6 link-local
+		ip.startsWith('fc00:') || // IPv6 unique local
+		ip.startsWith('fd00:') || // IPv6 unique local (fd00::/8)
+		ip === '::' ||
+		ip === '0:0:0:0:0:0:0:0' ||
+		ip === '0:0:0:0:0:0:0:1'
+	);
+}
 
 /**
  * Validates that a URL is safe to fetch (prevents SSRF).
  * Only allows http/https schemes and blocks private/internal network addresses.
+ * Resolves DNS to verify the target IP is not private.
  */
-function isUrlSafe(url: string): boolean {
+async function isUrlSafe(url: string): Promise<boolean> {
 	try {
 		const parsed = new URL(url);
 
@@ -21,33 +52,30 @@ function isUrlSafe(url: string): boolean {
 		// Strip IPv6 brackets: URL.hostname returns "[::1]" for IPv6, normalize to "::1"
 		const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
 
-		// Block private/internal IP ranges and localhost
+		// Block known private hostnames
 		if (
 			hostname === 'localhost' ||
-			hostname === '127.0.0.1' ||
-			hostname === '::1' ||
-			hostname === '0.0.0.0' ||
-			hostname.startsWith('fe80:') || // IPv6 link-local
-			hostname.startsWith('fc00:') || // IPv6 unique local
-			hostname.startsWith('fd') || // IPv6 unique local
-			hostname.startsWith('10.') ||
-			hostname.startsWith('172.16.') ||
-			hostname.startsWith('172.17.') ||
-			hostname.startsWith('172.18.') ||
-			hostname.startsWith('172.19.') ||
-			hostname.startsWith('172.2') ||
-			hostname.startsWith('172.30.') ||
-			hostname.startsWith('172.31.') ||
-			hostname.startsWith('192.168.') ||
 			hostname.endsWith('.local') ||
 			hostname.endsWith('.internal') ||
-			hostname === 'metadata.google.internal' ||
-			hostname === '169.254.169.254' // AWS/GCP metadata endpoint
+			hostname === 'metadata.google.internal'
 		) {
 			return false;
 		}
 
-		return true;
+		// If hostname is already an IP, check it directly
+		if (isIP(hostname)) {
+			return !isPrivateIp(hostname);
+		}
+
+		// Resolve DNS and check all resulting IPs
+		try {
+			const addresses = await dnsResolve(hostname);
+			if (addresses.length === 0) return false;
+			return !addresses.some((addr) => isPrivateIp(addr));
+		} catch {
+			// DNS resolution failed — block the request
+			return false;
+		}
 	} catch {
 		return false;
 	}
@@ -63,7 +91,7 @@ export async function loadRemoteImage(
 ): Promise<Image | null> {
 	try {
 		// Validate URL to prevent SSRF
-		if (!isUrlSafe(url)) {
+		if (!(await isUrlSafe(url))) {
 			return null;
 		}
 
@@ -82,7 +110,30 @@ export async function loadRemoteImage(
 			const res = await fetch(url, { signal: controller.signal, redirect: 'error' });
 			if (!res.ok) return null;
 
-			const buffer = Buffer.from(await res.arrayBuffer());
+			// Enforce max image size to prevent OOM
+			const contentLength = res.headers.get('content-length');
+			if (contentLength && parseInt(contentLength, 10) > MAX_IMAGE_BYTES) {
+				return null;
+			}
+
+			// Stream-read with size limit
+			const chunks: Uint8Array[] = [];
+			let totalBytes = 0;
+			const reader = res.body?.getReader();
+			if (!reader) return null;
+
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				totalBytes += value.byteLength;
+				if (totalBytes > MAX_IMAGE_BYTES) {
+					reader.cancel();
+					return null;
+				}
+				chunks.push(value);
+			}
+
+			const buffer = Buffer.concat(chunks);
 			const img = new Image();
 			img.src = buffer;
 

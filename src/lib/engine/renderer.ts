@@ -11,9 +11,35 @@ import { drawWrappedText } from './text.js';
 import { loadRemoteImage, loadImagesParallel } from './images.js';
 import { initDefaultFonts } from './fonts.js';
 
+/** Properties that should remain numeric when bound to URL params */
+const NUMERIC_PROPS = new Set([
+	'left',
+	'top',
+	'width',
+	'height',
+	'scaleX',
+	'scaleY',
+	'angle',
+	'opacity',
+	'fontSize',
+	'lineHeight'
+]);
+
+/**
+ * Coerces a string value to the appropriate type for a given property.
+ */
+function coerceParamValue(prop: string, value: string): string | number {
+	if (NUMERIC_PROPS.has(prop)) {
+		const num = parseFloat(value);
+		return isNaN(num) ? value : num;
+	}
+	return value;
+}
+
 /**
  * Merges URL parameters into a template's Fabric.js JSON.
- * Replaces bound properties with their parameter values.
+ * Replaces bound properties with their parameter values,
+ * coercing numeric properties to preserve type safety.
  */
 function mergeParams(
 	templateJson: FabricCanvasJson,
@@ -28,7 +54,7 @@ function mergeParams(
 			const value = params[binding.param] ?? binding.default;
 			if (value !== undefined) {
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				(obj as any)[prop] = value;
+				(obj as any)[prop] = coerceParamValue(prop, value);
 			}
 		}
 	}
