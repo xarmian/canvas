@@ -95,20 +95,24 @@ function drawObject(
 	const opacity = obj.opacity ?? 1;
 	const width = obj.width ?? 0;
 	const height = obj.height ?? 0;
+	const originX = obj.originX ?? 'left';
+	const originY = obj.originY ?? 'top';
 
 	ctx.save();
 	ctx.globalAlpha = opacity;
 
-	// Fabric.js rotates around the object's center by default.
-	// To match: translate to center, rotate, translate back, then draw at origin.
-	const halfW = (width * scaleX) / 2;
-	const halfH = (height * scaleY) / 2;
+	// Compute origin offset based on Fabric's originX/originY
+	const scaledW = width * scaleX;
+	const scaledH = height * scaleY;
+	const originOffsetX = originX === 'center' ? scaledW / 2 : originX === 'right' ? scaledW : 0;
+	const originOffsetY = originY === 'center' ? scaledH / 2 : originY === 'bottom' ? scaledH : 0;
 
-	ctx.translate(left + halfW, top + halfH);
+	// Translate to the object's origin point, rotate, then offset to top-left for drawing
+	ctx.translate(left, top);
 	if (angle) {
 		ctx.rotate((angle * Math.PI) / 180);
 	}
-	ctx.translate(-halfW, -halfH);
+	ctx.translate(-originOffsetX, -originOffsetY);
 	if (scaleX !== 1 || scaleY !== 1) {
 		ctx.scale(scaleX, scaleY);
 	}
