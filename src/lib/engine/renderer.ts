@@ -63,15 +63,22 @@ function drawObject(
 	const scaleY = obj.scaleY ?? 1;
 	const angle = obj.angle ?? 0;
 	const opacity = obj.opacity ?? 1;
+	const width = obj.width ?? 0;
+	const height = obj.height ?? 0;
 
 	ctx.save();
 	ctx.globalAlpha = opacity;
 
-	// Apply transform: translate to position, rotate, scale
-	ctx.translate(left, top);
+	// Fabric.js rotates around the object's center by default.
+	// To match: translate to center, rotate, translate back, then draw at origin.
+	const halfW = (width * scaleX) / 2;
+	const halfH = (height * scaleY) / 2;
+
+	ctx.translate(left + halfW, top + halfH);
 	if (angle) {
 		ctx.rotate((angle * Math.PI) / 180);
 	}
+	ctx.translate(-halfW, -halfH);
 	if (scaleX !== 1 || scaleY !== 1) {
 		ctx.scale(scaleX, scaleY);
 	}

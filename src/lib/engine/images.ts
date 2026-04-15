@@ -18,7 +18,8 @@ function isUrlSafe(url: string): boolean {
 			return false;
 		}
 
-		const hostname = parsed.hostname;
+		// Strip IPv6 brackets: URL.hostname returns "[::1]" for IPv6, normalize to "::1"
+		const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
 
 		// Block private/internal IP ranges and localhost
 		if (
@@ -26,6 +27,9 @@ function isUrlSafe(url: string): boolean {
 			hostname === '127.0.0.1' ||
 			hostname === '::1' ||
 			hostname === '0.0.0.0' ||
+			hostname.startsWith('fe80:') || // IPv6 link-local
+			hostname.startsWith('fc00:') || // IPv6 unique local
+			hostname.startsWith('fd') || // IPv6 unique local
 			hostname.startsWith('10.') ||
 			hostname.startsWith('172.16.') ||
 			hostname.startsWith('172.17.') ||
