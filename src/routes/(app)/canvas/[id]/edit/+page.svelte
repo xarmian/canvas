@@ -37,12 +37,16 @@
 				// Suppress snapshots during hydration to avoid partial-load states in history
 				beginSuppressSnapshots();
 				const json = data.canvas.templateJson;
-				fabricCanvas.loadFromJSON(json).then(() => {
-					fabricCanvas!.renderAll();
-					endSuppressSnapshots();
-					// Save initial snapshot after hydration so first undo doesn't wipe content
-					saveSnapshot(fabricCanvas!);
-				});
+				fabricCanvas
+					.loadFromJSON(json)
+					.then(() => {
+						fabricCanvas!.renderAll();
+						// Save initial snapshot after hydration so first undo doesn't wipe content
+						saveSnapshot(fabricCanvas!);
+					})
+					.finally(() => {
+						endSuppressSnapshots();
+					});
 			} else {
 				// Empty canvas — save initial blank snapshot
 				saveSnapshot(fabricCanvas);

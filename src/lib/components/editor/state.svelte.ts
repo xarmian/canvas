@@ -29,10 +29,19 @@ export function syncObjects() {
 	objects = [...fabricCanvas.getObjects()];
 }
 
-/** Mark the canvas as dirty (unsaved changes) */
+/** Optional snapshot callback — set by Canvas component to record undo history */
+let snapshotCallback: (() => void) | null = null;
+
+/** Register a callback to save undo snapshots (called by Canvas on mount) */
+export function setSnapshotCallback(cb: (() => void) | null) {
+	snapshotCallback = cb;
+}
+
+/** Mark the canvas as dirty (unsaved changes) and record undo snapshot */
 export function markDirty() {
 	isDirty = true;
 	editGeneration++;
+	snapshotCallback?.();
 }
 
 /** Mark the canvas as clean (saved) */

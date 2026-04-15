@@ -6,7 +6,8 @@
 		setFabricCanvas,
 		setSelectedObject,
 		syncObjects,
-		markDirty
+		markDirty,
+		setSnapshotCallback
 	} from './state.svelte.ts';
 	import { saveSnapshot, undo, redo, resetHistory, suppressSnapshots } from './history.svelte.ts';
 	import { setupSnapping } from './snapping.js';
@@ -35,6 +36,11 @@
 		setFabricCanvas(canvas);
 		resetHistory();
 
+		// Register snapshot callback so markDirty() from any component records history
+		setSnapshotCallback(() => {
+			if (!suppressSnapshots) saveSnapshot(canvas);
+		});
+
 		// Set up snapping guides
 		const cleanupSnapping = setupSnapping(canvas);
 
@@ -53,23 +59,21 @@
 		canvas.on('object:modified', () => {
 			syncObjects();
 			markDirty();
-			saveSnapshot(canvas);
 		});
 
 		canvas.on('object:added', () => {
 			syncObjects();
 			markDirty();
-			if (!suppressSnapshots) saveSnapshot(canvas);
 		});
 
 		canvas.on('object:removed', () => {
 			syncObjects();
 			markDirty();
-			if (!suppressSnapshots) saveSnapshot(canvas);
 		});
 
 		return () => {
 			cleanupSnapping();
+			setSnapshotCallback(null);
 			canvas.dispose();
 			setFabricCanvas(null);
 			resetHistory();
