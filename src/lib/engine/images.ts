@@ -138,8 +138,11 @@ async function validateUrl(url: string): Promise<{ safe: true; ip: string } | { 
 }
 
 /**
- * Builds a fetch URL pinned to a specific IP, preserving the original
- * Host header for virtual hosting.
+ * Builds a fetch request, pinning to a validated IP for HTTP requests.
+ * For HTTPS, we use the original URL because:
+ * - IP pinning breaks TLS certificate validation (certs are for domains)
+ * - HTTPS is inherently safe from DNS rebinding since TLS verifies the
+ *   server certificate matches the requested hostname
  */
 function buildPinnedRequest(
 	originalUrl: string,
@@ -147,18 +150,29 @@ function buildPinnedRequest(
 	signal: AbortSignal
 ): { url: string; init: RequestInit } {
 	const parsed = new URL(originalUrl);
-	const originalHost = parsed.host;
 
-	// Replace hostname with validated IP
-	const isV6 = isIP(ip) === 6;
-	parsed.hostname = isV6 ? `[${ip}]` : ip;
+	if (parsed.protocol === 'http:') {
+		// HTTP: pin to validated IP, set Host header for virtual hosting
+		const originalHost = parsed.host;
+		const isV6 = isIP(ip) === 6;
+		parsed.hostname = isV6 ? `[${ip}]` : ip;
 
+		return {
+			url: parsed.toString(),
+			init: {
+				signal,
+				redirect: 'error' as const,
+				headers: { Host: originalHost }
+			}
+		};
+	}
+
+	// HTTPS: use original URL (TLS cert validation prevents rebinding)
 	return {
-		url: parsed.toString(),
+		url: originalUrl,
 		init: {
 			signal,
-			redirect: 'error' as const,
-			headers: { Host: originalHost }
+			redirect: 'error' as const
 		}
 	};
 }

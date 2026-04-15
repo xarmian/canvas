@@ -1,27 +1,30 @@
 import { GlobalFonts } from '@napi-rs/canvas';
 import { existsSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { join } from 'path';
 
 let fontsInitialized = false;
 
 /** Default font families bundled with Canvas */
 export const DEFAULT_FONTS = ['Inter', 'sans-serif'] as const;
 
-// Resolve project root from this file's location:
-// src/lib/engine/fonts.ts → project root is 4 levels up
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = join(__dirname, '..', '..', '..');
+/**
+ * Configurable fonts directory. Defaults to static/fonts/ relative to cwd.
+ * Can be overridden via CANVAS_FONTS_DIR environment variable for production
+ * builds where the module location differs from the project root.
+ */
+function getFontsDir(): string {
+	return process.env.CANVAS_FONTS_DIR || join(process.cwd(), 'static', 'fonts');
+}
 
 /**
  * Registers bundled default fonts with the Skia renderer.
  * Call this once at server startup.
- * Fonts are loaded from the static/fonts/ directory.
+ * Fonts are loaded from the static/fonts/ directory (or CANVAS_FONTS_DIR).
  */
 export function initDefaultFonts(): void {
 	if (fontsInitialized) return;
 
-	const fontsDir = join(PROJECT_ROOT, 'static', 'fonts');
+	const fontsDir = getFontsDir();
 
 	// Register Inter if available
 	const interRegular = join(fontsDir, 'Inter-Regular.ttf');
