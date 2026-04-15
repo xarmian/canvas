@@ -39,10 +39,18 @@ export const GET: RequestHandler = async ({ params }) => {
 	const contentType = asset?.contentType || 'application/octet-stream';
 	const buffer = readFileSync(filePath);
 
-	return new Response(buffer, {
-		headers: {
-			'Content-Type': contentType,
-			'Cache-Control': 'public, max-age=31536000, immutable'
-		}
-	});
+	const headers: Record<string, string> = {
+		'Content-Type': contentType,
+		'Cache-Control': 'public, max-age=31536000, immutable',
+		// Prevent scriptable content (SVG) from executing in the app origin
+		'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'",
+		'X-Content-Type-Options': 'nosniff'
+	};
+
+	// Force download for SVGs to prevent inline script execution
+	if (contentType === 'image/svg+xml') {
+		headers['Content-Disposition'] = 'attachment';
+	}
+
+	return new Response(buffer, { headers });
 };
