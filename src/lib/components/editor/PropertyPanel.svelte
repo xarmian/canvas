@@ -1,41 +1,49 @@
 <script lang="ts">
 	import type { FabricObject } from 'fabric';
-	import { selectedObject, fabricCanvas, markDirty } from './state.svelte.ts';
+	import { selectedObject, fabricCanvas, markDirty, editGeneration } from './state.svelte.ts';
 
 	// --- Derived properties from the selected object ---
+	// editGeneration is read to force re-derivation when Fabric mutates
+	// objects in place (the selectedObject reference doesn't change).
 
-	let objType = $derived(selectedObject?.type?.toLowerCase() ?? '');
+	function getObjProp<T>(prop: string, fallback: T): T {
+		void editGeneration; // reactive dependency
+		return (selectedObject?.get(prop) as T) ?? fallback;
+	}
+
+	let objType = $derived((void editGeneration, selectedObject?.type?.toLowerCase() ?? ''));
 	let isText = $derived(
 		objType === 'i-text' || objType === 'itext' || objType === 'textbox' || objType === 'text'
 	);
 	let isImage = $derived(objType === 'image' || objType === 'fabricimage');
 
 	// Position (scale-aware: displayed dimensions = intrinsic × scale)
-	let posX = $derived((selectedObject?.get('left') as number) ?? 0);
-	let posY = $derived((selectedObject?.get('top') as number) ?? 0);
-	let scaleX = $derived((selectedObject?.get('scaleX') as number) ?? 1);
-	let scaleY = $derived((selectedObject?.get('scaleY') as number) ?? 1);
-	let objWidth = $derived(((selectedObject?.get('width') as number) ?? 0) * scaleX);
-	let objHeight = $derived(((selectedObject?.get('height') as number) ?? 0) * scaleY);
-	let angle = $derived((selectedObject?.get('angle') as number) ?? 0);
-	let opacity = $derived((selectedObject?.get('opacity') as number) ?? 1);
+	let posX = $derived(getObjProp<number>('left', 0));
+	let posY = $derived(getObjProp<number>('top', 0));
+	let scaleX = $derived(getObjProp<number>('scaleX', 1));
+	let scaleY = $derived(getObjProp<number>('scaleY', 1));
+	let objWidth = $derived(getObjProp<number>('width', 0) * scaleX);
+	let objHeight = $derived(getObjProp<number>('height', 0) * scaleY);
+	let angle = $derived(getObjProp<number>('angle', 0));
+	let opacity = $derived(getObjProp<number>('opacity', 1));
 
 	// Text
-	let text = $derived((selectedObject?.get('text') as string) ?? '');
-	let fontFamily = $derived((selectedObject?.get('fontFamily') as string) ?? 'Inter');
-	let fontSize = $derived((selectedObject?.get('fontSize') as number) ?? 24);
-	let fontWeight = $derived((selectedObject?.get('fontWeight') as number) ?? 400);
-	let fill = $derived((selectedObject?.get('fill') as string) ?? '#000000');
-	let textAlign = $derived((selectedObject?.get('textAlign') as string) ?? 'left');
+	let text = $derived(getObjProp<string>('text', ''));
+	let fontFamily = $derived(getObjProp<string>('fontFamily', 'Inter'));
+	let fontSize = $derived(getObjProp<number>('fontSize', 24));
+	let fontWeight = $derived(getObjProp<number>('fontWeight', 400));
+	let fill = $derived(getObjProp<string>('fill', '#000000'));
+	let textAlign = $derived(getObjProp<string>('textAlign', 'left'));
 
 	// Image
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	let imageSrc = $derived(isImage ? ((selectedObject as any)?.getSrc?.() ?? '') : '');
+	let imageSrc = $derived(
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		(void editGeneration, isImage ? ((selectedObject as any)?.getSrc?.() ?? '') : '')
+	);
 
 	// Parameter bindings
 	let paramBindings: Record<string, { param: string; default: string }> = $derived(
-		(selectedObject?.get('paramBindings') as Record<string, { param: string; default: string }>) ??
-			{}
+		getObjProp<Record<string, { param: string; default: string }>>('paramBindings', {})
 	);
 
 	let bindingsExpanded = $state(false);
