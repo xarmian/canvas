@@ -79,7 +79,7 @@ export async function loadRemoteImage(
 		const timer = setTimeout(() => controller.abort(), timeoutMs);
 
 		try {
-			const res = await fetch(url, { signal: controller.signal });
+			const res = await fetch(url, { signal: controller.signal, redirect: 'error' });
 			if (!res.ok) return null;
 
 			const buffer = Buffer.from(await res.arrayBuffer());

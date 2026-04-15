@@ -7,6 +7,12 @@ import type { SKRSContext2D } from '@napi-rs/canvas';
 export function wrapText(ctx: SKRSContext2D, text: string, maxWidth: number): string[] {
 	if (!text) return [''];
 
+	// Handle explicit newlines as hard line breaks
+	if (text.includes('\n')) {
+		const hardLines = text.split('\n');
+		return hardLines.flatMap((line) => wrapText(ctx, line, maxWidth));
+	}
+
 	const words = text.split(' ');
 	const lines: string[] = [];
 	let currentLine = '';

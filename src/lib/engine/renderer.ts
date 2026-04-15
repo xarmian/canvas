@@ -42,7 +42,7 @@ function mergeParams(
 function collectImageUrls(objects: FabricObject[]): string[] {
 	const urls: string[] = [];
 	for (const obj of objects) {
-		if (obj.type === 'image' && obj.src) {
+		if ((obj.type === 'image' || obj.type === 'Image') && obj.src) {
 			urls.push(obj.src);
 		}
 	}
