@@ -17,6 +17,9 @@ export let objects: FabricObject[] = $state([]);
 /** Whether the canvas has unsaved changes */
 export let isDirty: boolean = $state(false);
 
+/** Monotonically increasing edit generation — incremented on every dirty mark */
+export let editGeneration: number = $state(0);
+
 /** Sync the objects array from the Fabric canvas */
 export function syncObjects() {
 	if (!fabricCanvas) {
@@ -29,6 +32,7 @@ export function syncObjects() {
 /** Mark the canvas as dirty (unsaved changes) */
 export function markDirty() {
 	isDirty = true;
+	editGeneration++;
 }
 
 /** Mark the canvas as clean (saved) */

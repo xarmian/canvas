@@ -1,7 +1,12 @@
 <script lang="ts">
 	import CanvasEditor from '$lib/components/editor/Canvas.svelte';
 	import LayerPanel from '$lib/components/editor/LayerPanel.svelte';
-	import { isDirty, markClean, fabricCanvas } from '$lib/components/editor/state.svelte';
+	import {
+		isDirty,
+		markClean,
+		fabricCanvas,
+		editGeneration
+	} from '$lib/components/editor/state.svelte';
 
 	let { data } = $props();
 
@@ -44,6 +49,8 @@
 	async function save() {
 		if (!fabricCanvas || isSaving) return;
 		isSaving = true;
+		// Capture generation before save — only mark clean if no new edits during save
+		const genBeforeSave = editGeneration;
 		try {
 			const json = fabricCanvas.toJSON();
 			const res = await fetch(`/api/canvas/${data.canvas.id}`, {
@@ -54,7 +61,10 @@
 			if (!res.ok) {
 				saveStatus = 'Save failed';
 			} else {
-				markClean();
+				// Only mark clean if no edits happened during the save
+				if (editGeneration === genBeforeSave) {
+					markClean();
+				}
 				saveStatus = 'Saved';
 			}
 		} catch {

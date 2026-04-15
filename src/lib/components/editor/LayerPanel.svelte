@@ -5,7 +5,8 @@
 		selectedObject,
 		objects,
 		syncObjects,
-		setSelectedObject
+		setSelectedObject,
+		markDirty
 	} from './state.svelte.ts';
 
 	function getIcon(obj: FabricObject): string {
@@ -37,6 +38,7 @@
 		if (!fabricCanvas) return;
 		obj.visible = !obj.visible;
 		fabricCanvas.renderAll();
+		markDirty();
 	}
 
 	function toggleLock(obj: FabricObject) {
@@ -45,6 +47,7 @@
 		obj.selectable = locked;
 		obj.evented = locked;
 		fabricCanvas.renderAll();
+		markDirty();
 	}
 
 	function moveUp(obj: FabricObject) {
@@ -52,6 +55,7 @@
 		fabricCanvas.bringObjectForward(obj);
 		syncObjects();
 		fabricCanvas.renderAll();
+		markDirty();
 	}
 
 	function moveDown(obj: FabricObject) {
@@ -59,6 +63,7 @@
 		fabricCanvas.sendObjectBackwards(obj);
 		syncObjects();
 		fabricCanvas.renderAll();
+		markDirty();
 	}
 
 	let reversed = $derived([...objects].reverse());
