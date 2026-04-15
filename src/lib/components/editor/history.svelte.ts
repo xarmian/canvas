@@ -8,21 +8,22 @@ let redoStack: string[] = $state([]);
 let isRestoring = $state(false);
 let isBusy = $state(false);
 
-/**
- * Whether snapshot recording is suppressed (during hydration or restore).
- * Export so Canvas component events can check before recording.
- */
-// eslint-disable-next-line prefer-const
-export let suppressSnapshots: boolean = $derived(isRestoring || isBusy);
-
-// eslint-disable-next-line prefer-const
-export let canUndo: boolean = $derived(undoStack.length > 1);
-// eslint-disable-next-line prefer-const
-export let canRedo: boolean = $derived(redoStack.length > 0);
+/** Exported reactive state for history (uses object pattern for Svelte 5 module compat) */
+export const historyState = $state({
+	get suppressSnapshots() {
+		return isRestoring || isBusy;
+	},
+	get canUndo() {
+		return undoStack.length > 1;
+	},
+	get canRedo() {
+		return redoStack.length > 0;
+	}
+});
 
 /** Take a snapshot of the current canvas state */
 export function saveSnapshot(canvas: Canvas) {
-	if (suppressSnapshots) return;
+	if (historyState.suppressSnapshots) return;
 
 	const json = JSON.stringify(canvas.toObject(['paramBindings']));
 

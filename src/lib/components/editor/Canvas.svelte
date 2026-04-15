@@ -2,14 +2,14 @@
 	import { onMount } from 'svelte';
 	import { Canvas, IText, FabricImage, Rect } from 'fabric';
 	import {
-		fabricCanvas,
+		editorState,
 		setFabricCanvas,
 		setSelectedObject,
 		syncObjects,
 		markDirty,
 		setSnapshotCallback
 	} from './state.svelte.ts';
-	import { saveSnapshot, undo, redo, resetHistory, suppressSnapshots } from './history.svelte.ts';
+	import { saveSnapshot, undo, redo, resetHistory, historyState } from './history.svelte.ts';
 	import { setupSnapping } from './snapping.js';
 
 	let {
@@ -38,7 +38,7 @@
 
 		// Register snapshot callback so markDirty() from any component records history
 		setSnapshotCallback(() => {
-			if (!suppressSnapshots) saveSnapshot(canvas);
+			if (!historyState.suppressSnapshots) saveSnapshot(canvas);
 		});
 
 		// Set up snapping guides
@@ -81,7 +81,7 @@
 	});
 
 	export function addText() {
-		if (!fabricCanvas) return;
+		if (!editorState.fabricCanvas) return;
 		const text = new IText('Edit me', {
 			fontFamily: 'Inter',
 			fontSize: 32,
@@ -89,13 +89,13 @@
 			left: width / 2 - 60,
 			top: height / 2 - 16
 		});
-		fabricCanvas.add(text);
-		fabricCanvas.setActiveObject(text);
-		fabricCanvas.requestRenderAll();
+		editorState.fabricCanvas.add(text);
+		editorState.fabricCanvas.setActiveObject(text);
+		editorState.fabricCanvas.requestRenderAll();
 	}
 
 	export function addRect() {
-		if (!fabricCanvas) return;
+		if (!editorState.fabricCanvas) return;
 		const rect = new Rect({
 			width: 200,
 			height: 100,
@@ -103,40 +103,40 @@
 			left: width / 2 - 100,
 			top: height / 2 - 50
 		});
-		fabricCanvas.add(rect);
-		fabricCanvas.setActiveObject(rect);
-		fabricCanvas.requestRenderAll();
+		editorState.fabricCanvas.add(rect);
+		editorState.fabricCanvas.setActiveObject(rect);
+		editorState.fabricCanvas.requestRenderAll();
 	}
 
 	export async function addImageFromUrl(url: string) {
-		if (!fabricCanvas) return;
+		if (!editorState.fabricCanvas) return;
 		const img = await FabricImage.fromURL(url);
 		img.set({
 			left: width / 2 - (img.width ?? 100) / 2,
 			top: height / 2 - (img.height ?? 100) / 2
 		});
-		fabricCanvas.add(img);
-		fabricCanvas.setActiveObject(img);
-		fabricCanvas.requestRenderAll();
+		editorState.fabricCanvas.add(img);
+		editorState.fabricCanvas.setActiveObject(img);
+		editorState.fabricCanvas.requestRenderAll();
 	}
 
 	export function deleteSelected() {
-		if (!fabricCanvas) return;
-		const activeObjects = fabricCanvas.getActiveObjects();
+		if (!editorState.fabricCanvas) return;
+		const activeObjects = editorState.fabricCanvas.getActiveObjects();
 		if (activeObjects.length === 0) return;
 		for (const obj of activeObjects) {
-			fabricCanvas.remove(obj);
+			editorState.fabricCanvas.remove(obj);
 		}
-		fabricCanvas.discardActiveObject();
-		fabricCanvas.requestRenderAll();
+		editorState.fabricCanvas.discardActiveObject();
+		editorState.fabricCanvas.requestRenderAll();
 	}
 
 	export function undoAction() {
-		if (fabricCanvas) undo(fabricCanvas).then(() => syncObjects());
+		if (editorState.fabricCanvas) undo(editorState.fabricCanvas).then(() => syncObjects());
 	}
 
 	export function redoAction() {
-		if (fabricCanvas) redo(fabricCanvas).then(() => syncObjects());
+		if (editorState.fabricCanvas) redo(editorState.fabricCanvas).then(() => syncObjects());
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -155,8 +155,8 @@
 		}
 		// Delete selected
 		if (e.key === 'Delete' || e.key === 'Backspace') {
-			if (!fabricCanvas) return;
-			const active = fabricCanvas.getActiveObject();
+			if (!editorState.fabricCanvas) return;
+			const active = editorState.fabricCanvas.getActiveObject();
 			if (active && active.type === 'i-text' && (active as IText).isEditing) {
 				return;
 			}

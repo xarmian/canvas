@@ -1,17 +1,19 @@
 <script lang="ts">
 	import type { FabricObject } from 'fabric';
-	import { selectedObject, fabricCanvas, markDirty, editGeneration } from './state.svelte.ts';
+	import { editorState, markDirty } from './state.svelte.ts';
 
 	// --- Derived properties from the selected object ---
-	// editGeneration is read to force re-derivation when Fabric mutates
-	// objects in place (the selectedObject reference doesn't change).
+	// editorState.editGeneration is read to force re-derivation when Fabric mutates
+	// objects in place (the editorState.selectedObject reference doesn't change).
 
 	function getObjProp<T>(prop: string, fallback: T): T {
-		void editGeneration; // reactive dependency
-		return (selectedObject?.get(prop) as T) ?? fallback;
+		void editorState.editGeneration; // reactive dependency
+		return (editorState.selectedObject?.get(prop) as T) ?? fallback;
 	}
 
-	let objType = $derived((void editGeneration, selectedObject?.type?.toLowerCase() ?? ''));
+	let objType = $derived(
+		(void editorState.editGeneration, editorState.selectedObject?.type?.toLowerCase() ?? '')
+	);
 	let isText = $derived(
 		objType === 'i-text' || objType === 'itext' || objType === 'textbox' || objType === 'text'
 	);
@@ -37,8 +39,9 @@
 
 	// Image
 	let imageSrc = $derived(
+		(void editorState.editGeneration,
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		(void editGeneration, isImage ? ((selectedObject as any)?.getSrc?.() ?? '') : '')
+		isImage ? ((editorState.selectedObject as any)?.getSrc?.() ?? '') : '')
 	);
 
 	// Parameter bindings
@@ -51,29 +54,29 @@
 	// --- Helpers ---
 
 	function setProp(prop: string, value: unknown) {
-		if (!selectedObject || !fabricCanvas) return;
+		if (!editorState.selectedObject || !editorState.fabricCanvas) return;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		selectedObject.set(prop as keyof FabricObject, value as any);
-		selectedObject.setCoords();
-		fabricCanvas.renderAll();
+		editorState.selectedObject.set(prop as keyof FabricObject, value as any);
+		editorState.selectedObject.setCoords();
+		editorState.fabricCanvas.renderAll();
 		markDirty();
 	}
 
 	/** Set width/height accounting for scale — resets scale to 1 and sets intrinsic dimension */
 	function setDimension(prop: 'width' | 'height', displayValue: number) {
-		if (!selectedObject || !fabricCanvas) return;
+		if (!editorState.selectedObject || !editorState.fabricCanvas) return;
 		const scaleProp = prop === 'width' ? 'scaleX' : 'scaleY';
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		selectedObject.set(prop as any, displayValue);
+		editorState.selectedObject.set(prop as any, displayValue);
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		selectedObject.set(scaleProp as any, 1);
-		selectedObject.setCoords();
-		fabricCanvas.renderAll();
+		editorState.selectedObject.set(scaleProp as any, 1);
+		editorState.selectedObject.setCoords();
+		editorState.fabricCanvas.renderAll();
 		markDirty();
 	}
 
 	function setBinding(property: string, field: 'param' | 'default', value: string) {
-		if (!selectedObject) return;
+		if (!editorState.selectedObject) return;
 		const current = { ...paramBindings };
 		if (!current[property]) {
 			current[property] = { param: '', default: '' };
@@ -83,7 +86,7 @@
 	}
 
 	function toggleBinding(property: string) {
-		if (!selectedObject) return;
+		if (!editorState.selectedObject) return;
 		const current = { ...paramBindings };
 		if (current[property]) {
 			delete current[property];
@@ -108,7 +111,7 @@
 </script>
 
 <aside class="property-panel">
-	{#if !selectedObject}
+	{#if !editorState.selectedObject}
 		<div class="empty-state">
 			<p>No selection</p>
 			<span class="hint">Click an object on the canvas to edit its properties</span>

@@ -1,13 +1,6 @@
 <script lang="ts">
 	import type { FabricObject } from 'fabric';
-	import {
-		fabricCanvas,
-		selectedObject,
-		objects,
-		syncObjects,
-		setSelectedObject,
-		markDirty
-	} from './state.svelte.ts';
+	import { editorState, syncObjects, setSelectedObject, markDirty } from './state.svelte.ts';
 
 	function getIcon(obj: FabricObject): string {
 		const t = obj.type?.toLowerCase() ?? '';
@@ -28,65 +21,65 @@
 	}
 
 	function selectLayer(obj: FabricObject) {
-		if (!fabricCanvas) return;
-		fabricCanvas.setActiveObject(obj);
+		if (!editorState.fabricCanvas) return;
+		editorState.fabricCanvas.setActiveObject(obj);
 		setSelectedObject(obj);
-		fabricCanvas.renderAll();
+		editorState.fabricCanvas.renderAll();
 	}
 
 	function toggleVisibility(obj: FabricObject) {
-		if (!fabricCanvas) return;
+		if (!editorState.fabricCanvas) return;
 		obj.visible = !obj.visible;
-		fabricCanvas.renderAll();
+		editorState.fabricCanvas.renderAll();
 		markDirty();
 	}
 
 	function toggleLock(obj: FabricObject) {
-		if (!fabricCanvas) return;
+		if (!editorState.fabricCanvas) return;
 		const locked = !obj.selectable;
 		obj.selectable = locked;
 		obj.evented = locked;
-		fabricCanvas.renderAll();
+		editorState.fabricCanvas.renderAll();
 		markDirty();
 	}
 
 	function moveUp(obj: FabricObject) {
-		if (!fabricCanvas) return;
-		fabricCanvas.bringObjectForward(obj);
+		if (!editorState.fabricCanvas) return;
+		editorState.fabricCanvas.bringObjectForward(obj);
 		syncObjects();
-		fabricCanvas.renderAll();
+		editorState.fabricCanvas.renderAll();
 		markDirty();
 	}
 
 	function moveDown(obj: FabricObject) {
-		if (!fabricCanvas) return;
-		fabricCanvas.sendObjectBackwards(obj);
+		if (!editorState.fabricCanvas) return;
+		editorState.fabricCanvas.sendObjectBackwards(obj);
 		syncObjects();
-		fabricCanvas.renderAll();
+		editorState.fabricCanvas.renderAll();
 		markDirty();
 	}
 
-	let reversed = $derived([...objects].reverse());
+	let reversed = $derived([...editorState.objects].reverse());
 </script>
 
 <aside class="layer-panel">
 	<header class="panel-header">
 		<h3>Layers</h3>
-		<span class="count">{objects.length}</span>
+		<span class="count">{editorState.objects.length}</span>
 	</header>
 
 	<div class="layer-list" role="listbox" aria-label="Canvas layers">
 		{#each reversed as obj (obj)}
 			<div
 				class="layer-row"
-				class:selected={selectedObject === obj}
+				class:selected={editorState.selectedObject === obj}
 				onclick={() => selectLayer(obj)}
 				onkeydown={(e) => {
 					if (e.key === 'Enter' || e.key === ' ') selectLayer(obj);
 				}}
 				tabindex="0"
 				role="option"
-				aria-selected={selectedObject === obj}
+				aria-selected={editorState.selectedObject === obj}
 			>
 				<span class="icon">{getIcon(obj)}</span>
 				<span class="label">{getLabel(obj)}</span>

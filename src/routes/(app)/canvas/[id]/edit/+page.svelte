@@ -2,15 +2,9 @@
 	import CanvasEditor from '$lib/components/editor/Canvas.svelte';
 	import LayerPanel from '$lib/components/editor/LayerPanel.svelte';
 	import PropertyPanel from '$lib/components/editor/PropertyPanel.svelte';
+	import { editorState, markClean } from '$lib/components/editor/state.svelte';
 	import {
-		isDirty,
-		markClean,
-		fabricCanvas,
-		editGeneration
-	} from '$lib/components/editor/state.svelte';
-	import {
-		canUndo,
-		canRedo,
+		historyState,
 		saveSnapshot,
 		resetHistory,
 		beginSuppressSnapshots,
@@ -29,16 +23,16 @@
 		data.canvas.backgroundType === 'color' ? data.canvas.backgroundValue : '#ffffff'
 	);
 
-	// Load template JSON once fabricCanvas is ready — track by canvas ID
+	// Load template JSON once editorState.fabricCanvas is ready — track by canvas ID
 	// Track which hydration is current — incremented on every load to
 	// invalidate stale completions from overlapping navigations
 	let loadedCanvasId = $state('');
 	let hydrationToken = $state(0);
 	$effect(() => {
-		if (fabricCanvas && loadedCanvasId !== data.canvas.id) {
+		if (editorState.fabricCanvas && loadedCanvasId !== data.canvas.id) {
 			loadedCanvasId = data.canvas.id;
 			const thisToken = ++hydrationToken;
-			const canvas = fabricCanvas;
+			const canvas = editorState.fabricCanvas;
 
 			// Suppress snapshots before clearing to prevent object:removed
 			// events from marking dirty and triggering autosave with empty canvas
@@ -75,11 +69,11 @@
 		}
 	});
 
-	// Auto-save: debounce 2 seconds after any edit (watches editGeneration for re-triggers)
+	// Auto-save: debounce 2 seconds after any edit (watches editorState.editGeneration for re-triggers)
 	$effect(() => {
-		// Read editGeneration to re-run this effect on every new edit
-		void editGeneration;
-		if (isDirty) {
+		// Read editorState.editGeneration to re-run this effect on every new edit
+		void editorState.editGeneration;
+		if (editorState.isDirty) {
 			clearTimeout(autoSaveTimer);
 			autoSaveTimer = setTimeout(() => {
 				save();
@@ -92,12 +86,12 @@
 	});
 
 	async function save() {
-		if (!fabricCanvas || isSaving) return;
+		if (!editorState.fabricCanvas || isSaving) return;
 		isSaving = true;
 		// Capture generation before save — only mark clean if no new edits during save
-		const genBeforeSave = editGeneration;
+		const genBeforeSave = editorState.editGeneration;
 		try {
-			const json = fabricCanvas.toObject(['paramBindings']);
+			const json = editorState.fabricCanvas.toObject(['paramBindings']);
 			const res = await fetch(`/api/canvas/${data.canvas.id}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
@@ -107,7 +101,7 @@
 				saveStatus = 'Save failed';
 			} else {
 				// Only mark clean if no edits happened during the save
-				if (editGeneration === genBeforeSave) {
+				if (editorState.editGeneration === genBeforeSave) {
 					markClean();
 				}
 				saveStatus = 'Saved';
@@ -143,13 +137,13 @@
 			<button
 				class="tool-btn"
 				onclick={() => editorRef?.undoAction()}
-				disabled={!canUndo}
+				disabled={!historyState.canUndo}
 				title="Undo (Ctrl+Z)">↩</button
 			>
 			<button
 				class="tool-btn"
 				onclick={() => editorRef?.redoAction()}
-				disabled={!canRedo}
+				disabled={!historyState.canRedo}
 				title="Redo (Ctrl+Shift+Z)">↪</button
 			>
 			<span class="toolbar-sep"></span>
