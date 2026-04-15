@@ -39,16 +39,22 @@ export async function undo(canvas: Canvas) {
 
 	isRestoring = true;
 	isBusy = true;
+
+	// Save stacks before mutation so we can rollback on failure
+	const prevUndo = undoStack;
+	const prevRedo = redoStack;
 	try {
-		// Move current state to redo stack
 		const current = undoStack[undoStack.length - 1];
 		redoStack = [...redoStack, current];
 		undoStack = undoStack.slice(0, -1);
 
-		// Restore previous state
 		const previous = undoStack[undoStack.length - 1];
 		await canvas.loadFromJSON(JSON.parse(previous));
 		canvas.renderAll();
+	} catch {
+		// Rollback stacks on restore failure
+		undoStack = prevUndo;
+		redoStack = prevRedo;
 	} finally {
 		isRestoring = false;
 		isBusy = false;
@@ -61,15 +67,19 @@ export async function redo(canvas: Canvas) {
 
 	isRestoring = true;
 	isBusy = true;
+
+	const prevUndo = undoStack;
+	const prevRedo = redoStack;
 	try {
-		// Pop from redo stack
 		const next = redoStack[redoStack.length - 1];
 		redoStack = redoStack.slice(0, -1);
 
-		// Push to undo stack and restore
 		undoStack = [...undoStack, next];
 		await canvas.loadFromJSON(JSON.parse(next));
 		canvas.renderAll();
+	} catch {
+		undoStack = prevUndo;
+		redoStack = prevRedo;
 	} finally {
 		isRestoring = false;
 		isBusy = false;

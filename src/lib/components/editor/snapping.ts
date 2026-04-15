@@ -26,11 +26,12 @@ export function setupSnapping(canvas: Canvas): () => void {
 		const canvasHeight = canvas.getHeight();
 		guides = [];
 
-		const objLeft = target.left ?? 0;
-		const objTop = target.top ?? 0;
-		const objWidth = (target.width ?? 0) * (target.scaleX ?? 1);
-		const objHeight = (target.height ?? 0) * (target.scaleY ?? 1);
-
+		// Use bounding rect for rotation-aware bounds
+		const objBounds = target.getBoundingRect();
+		const objLeft = objBounds.left;
+		const objTop = objBounds.top;
+		const objWidth = objBounds.width;
+		const objHeight = objBounds.height;
 		const objCenterX = objLeft + objWidth / 2;
 		const objCenterY = objTop + objHeight / 2;
 		const objRight = objLeft + objWidth;
@@ -72,10 +73,11 @@ export function setupSnapping(canvas: Canvas): () => void {
 		for (const other of objects) {
 			if (!other.visible) continue;
 
-			const oLeft = other.left ?? 0;
-			const oTop = other.top ?? 0;
-			const oWidth = (other.width ?? 0) * (other.scaleX ?? 1);
-			const oHeight = (other.height ?? 0) * (other.scaleY ?? 1);
+			const oBounds = other.getBoundingRect();
+			const oLeft = oBounds.left;
+			const oTop = oBounds.top;
+			const oWidth = oBounds.width;
+			const oHeight = oBounds.height;
 			const oCenterX = oLeft + oWidth / 2;
 			const oCenterY = oTop + oHeight / 2;
 			const oRight = oLeft + oWidth;
