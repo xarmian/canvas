@@ -44,6 +44,7 @@
 		"better-auth": "^1.6.3",
 		"dotenv": "^17.4.2",
 		"drizzle-orm": "^0.45.2",
+		"fabric": "^7.2.0",
 		"mime-types": "^3.0.2",
 		"nanoid": "^5.1.7",
 		"postgres": "^3.4.9",
