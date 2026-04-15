@@ -13,6 +13,22 @@ import {
 
 const ALLOWED_TYPES = new Set([...ALLOWED_IMAGE_TYPES, ...ALLOWED_FONT_TYPES]);
 
+/** Map of allowed MIME types to valid file extensions */
+const MIME_TO_EXTENSIONS: Record<string, string[]> = {
+	'image/png': ['png'],
+	'image/jpeg': ['jpg', 'jpeg'],
+	'image/webp': ['webp'],
+	'image/svg+xml': ['svg'],
+	'font/ttf': ['ttf'],
+	'font/otf': ['otf'],
+	'font/woff': ['woff'],
+	'font/woff2': ['woff2'],
+	'application/x-font-ttf': ['ttf'],
+	'application/x-font-otf': ['otf'],
+	'application/font-woff': ['woff'],
+	'application/font-woff2': ['woff2']
+};
+
 export const POST: RequestHandler = async ({ request, locals }) => {
 	if (!locals.user) {
 		error(401, 'Unauthorized');
@@ -32,6 +48,13 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			400,
 			`Unsupported file type: ${contentType}. Allowed: images (PNG, JPEG, WebP, SVG) and fonts (TTF, OTF, WOFF, WOFF2).`
 		);
+	}
+
+	// Validate extension matches declared content type
+	const ext = file.name.split('.').pop()?.toLowerCase() || '';
+	const allowedExts = MIME_TO_EXTENSIONS[contentType];
+	if (allowedExts && !allowedExts.includes(ext)) {
+		error(400, `File extension .${ext} does not match content type ${contentType}.`);
 	}
 
 	// Validate file size

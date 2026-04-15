@@ -2,8 +2,10 @@ import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { env } from '$env/dynamic/private';
 import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
-import { lookup } from 'mime-types';
+import { resolve, sep } from 'path';
+import { db } from '$lib/server/db';
+import { assets } from '$lib/server/db/schema';
+import { eq } from 'drizzle-orm';
 
 /**
  * Serves locally stored assets when using STORAGE_LOCAL=true.
@@ -14,11 +16,11 @@ export const GET: RequestHandler = async ({ params }) => {
 		error(404, 'Local asset serving is only available with STORAGE_LOCAL=true');
 	}
 
-	const filePath = join(process.cwd(), '.local-storage', params.path);
+	const storageRoot = resolve(process.cwd(), '.local-storage');
+	const filePath = resolve(storageRoot, params.path);
 
-	// Prevent path traversal
-	const resolved = join(process.cwd(), '.local-storage');
-	if (!filePath.startsWith(resolved)) {
+	// Enforce directory boundary (resolve + sep prevents prefix-only matches)
+	if (!filePath.startsWith(storageRoot + sep)) {
 		error(403, 'Forbidden');
 	}
 
@@ -26,8 +28,16 @@ export const GET: RequestHandler = async ({ params }) => {
 		error(404, 'Asset not found');
 	}
 
+	// Look up the stored content type from the database to prevent MIME mismatches
+	const storageKey = params.path;
+	const [asset] = await db
+		.select({ contentType: assets.contentType })
+		.from(assets)
+		.where(eq(assets.storageKey, storageKey))
+		.limit(1);
+
+	const contentType = asset?.contentType || 'application/octet-stream';
 	const buffer = readFileSync(filePath);
-	const contentType = lookup(filePath) || 'application/octet-stream';
 
 	return new Response(buffer, {
 		headers: {
