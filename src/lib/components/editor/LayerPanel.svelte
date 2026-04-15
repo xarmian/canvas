@@ -10,21 +10,21 @@
 	} from './state.svelte.ts';
 
 	function getIcon(obj: FabricObject): string {
-		const t = obj.type;
-		if (t === 'IText' || t === 'Textbox') return '📝';
-		if (t === 'FabricImage') return '🖼️';
+		const t = obj.type?.toLowerCase() ?? '';
+		if (t === 'i-text' || t === 'itext' || t === 'textbox' || t === 'text') return '📝';
+		if (t === 'image' || t === 'fabricimage') return '🖼️';
 		return '▪️';
 	}
 
 	function getLabel(obj: FabricObject): string {
-		const t = obj.type;
-		if (t === 'IText' || t === 'Textbox') {
+		const t = obj.type?.toLowerCase() ?? '';
+		if (t === 'i-text' || t === 'itext' || t === 'textbox' || t === 'text') {
 			const text = obj.get('text') as string;
 			return text.length > 20 ? text.slice(0, 20) + '…' : text;
 		}
-		if (t === 'FabricImage') return 'Image';
-		if (t === 'Rect') return 'Rectangle';
-		return t ?? 'Object';
+		if (t === 'image' || t === 'fabricimage') return 'Image';
+		if (t === 'rect') return 'Rectangle';
+		return obj.type ?? 'Object';
 	}
 
 	function selectLayer(obj: FabricObject) {
