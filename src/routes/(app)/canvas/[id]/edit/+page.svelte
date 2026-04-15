@@ -1,6 +1,7 @@
 <script lang="ts">
 	import CanvasEditor from '$lib/components/editor/Canvas.svelte';
 	import LayerPanel from '$lib/components/editor/LayerPanel.svelte';
+	import PropertyPanel from '$lib/components/editor/PropertyPanel.svelte';
 	import {
 		isDirty,
 		markClean,
@@ -54,7 +55,7 @@
 		// Capture generation before save — only mark clean if no new edits during save
 		const genBeforeSave = editGeneration;
 		try {
-			const json = fabricCanvas.toJSON();
+			const json = fabricCanvas.toObject(['paramBindings']);
 			const res = await fetch(`/api/canvas/${data.canvas.id}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
@@ -131,6 +132,8 @@
 				{backgroundColor}
 			/>
 		</div>
+
+		<PropertyPanel />
 	</div>
 </div>
 
