@@ -40,9 +40,13 @@ export function markClean() {
 	isDirty = false;
 }
 
-/** Set the Fabric canvas instance */
+/** Set the Fabric canvas instance and reset all editor state */
 export function setFabricCanvas(canvas: Canvas | null) {
 	fabricCanvas = canvas;
+	selectedObject = null;
+	objects = [];
+	isDirty = false;
+	editGeneration = 0;
 }
 
 /** Set the currently selected object */

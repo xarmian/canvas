@@ -32,8 +32,10 @@
 		}
 	});
 
-	// Auto-save: debounce 2 seconds after dirty
+	// Auto-save: debounce 2 seconds after any edit (watches editGeneration for re-triggers)
 	$effect(() => {
+		// Read editGeneration to re-run this effect on every new edit
+		void editGeneration;
 		if (isDirty) {
 			clearTimeout(autoSaveTimer);
 			autoSaveTimer = setTimeout(() => {
