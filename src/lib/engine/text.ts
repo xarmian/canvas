@@ -12,6 +12,25 @@ export function wrapText(ctx: SKRSContext2D, text: string, maxWidth: number): st
 	let currentLine = '';
 
 	for (const word of words) {
+		// Break overlong single tokens character-by-character
+		if (ctx.measureText(word).width > maxWidth) {
+			if (currentLine) {
+				lines.push(currentLine);
+			}
+			let fragment = '';
+			for (const char of word) {
+				const test = fragment + char;
+				if (ctx.measureText(test).width > maxWidth && fragment) {
+					lines.push(fragment);
+					fragment = char;
+				} else {
+					fragment = test;
+				}
+			}
+			currentLine = fragment;
+			continue;
+		}
+
 		const testLine = currentLine ? `${currentLine} ${word}` : word;
 		const metrics = ctx.measureText(testLine);
 
