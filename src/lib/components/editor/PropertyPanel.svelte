@@ -54,6 +54,7 @@
 		if (!selectedObject || !fabricCanvas) return;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		selectedObject.set(prop as keyof FabricObject, value as any);
+		selectedObject.setCoords();
 		fabricCanvas.renderAll();
 		markDirty();
 	}
