@@ -38,9 +38,6 @@
 		// Set up snapping guides
 		const cleanupSnapping = setupSnapping(canvas);
 
-		// Save initial snapshot for undo
-		saveSnapshot(canvas);
-
 		canvas.on('selection:created', (e) => {
 			setSelectedObject(e.selected[0] ?? null);
 		});
@@ -139,16 +136,17 @@
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
-		// Undo: Ctrl+Z / Cmd+Z
-		if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-			e.preventDefault();
-			undoAction();
-			return;
-		}
-		// Redo: Ctrl+Shift+Z / Cmd+Shift+Z
-		if ((e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey) {
+		const key = e.key.toLowerCase();
+		// Redo: Ctrl+Shift+Z / Cmd+Shift+Z (check before undo since both match 'z')
+		if ((e.ctrlKey || e.metaKey) && key === 'z' && e.shiftKey) {
 			e.preventDefault();
 			redoAction();
+			return;
+		}
+		// Undo: Ctrl+Z / Cmd+Z
+		if ((e.ctrlKey || e.metaKey) && key === 'z' && !e.shiftKey) {
+			e.preventDefault();
+			undoAction();
 			return;
 		}
 		// Delete selected

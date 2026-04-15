@@ -8,7 +8,7 @@
 		fabricCanvas,
 		editGeneration
 	} from '$lib/components/editor/state.svelte';
-	import { canUndo, canRedo } from '$lib/components/editor/history.svelte';
+	import { canUndo, canRedo, saveSnapshot } from '$lib/components/editor/history.svelte';
 
 	let { data } = $props();
 
@@ -25,12 +25,19 @@
 	// Load template JSON once fabricCanvas is ready
 	let hasLoaded = $state(false);
 	$effect(() => {
-		if (fabricCanvas && !hasLoaded && data.canvas.templateJson) {
+		if (fabricCanvas && !hasLoaded) {
 			hasLoaded = true;
-			const json = data.canvas.templateJson;
-			fabricCanvas.loadFromJSON(json).then(() => {
-				fabricCanvas!.renderAll();
-			});
+			if (data.canvas.templateJson) {
+				const json = data.canvas.templateJson;
+				fabricCanvas.loadFromJSON(json).then(() => {
+					fabricCanvas!.renderAll();
+					// Save initial snapshot after hydration so first undo doesn't wipe content
+					saveSnapshot(fabricCanvas!);
+				});
+			} else {
+				// Empty canvas — save initial blank snapshot
+				saveSnapshot(fabricCanvas);
+			}
 		}
 	});
 
