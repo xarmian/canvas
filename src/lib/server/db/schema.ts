@@ -8,22 +8,10 @@ import {
 	jsonb,
 	index
 } from 'drizzle-orm/pg-core';
+import { user } from './auth-schema.js';
 
-// ─── Users ───────────────────────────────────────────────────────────────────
-// Core user table. Better Auth will add its own tables alongside this.
-
-export const users = pgTable('users', {
-	id: uuid('id').primaryKey().defaultRandom(),
-	email: text('email').notNull().unique(),
-	name: text('name').notNull(),
-	avatarUrl: text('avatar_url'),
-	emailVerified: boolean('email_verified').notNull().default(false),
-	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-	updatedAt: timestamp('updated_at', { withTimezone: true })
-		.notNull()
-		.defaultNow()
-		.$onUpdate(() => new Date())
-});
+// Re-export auth schema so everything is accessible from one place
+export * from './auth-schema.js';
 
 // ─── Canvases ────────────────────────────────────────────────────────────────
 // A template design owned by a user.
@@ -32,9 +20,9 @@ export const canvases = pgTable(
 	'canvases',
 	{
 		id: uuid('id').primaryKey().defaultRandom(),
-		userId: uuid('user_id')
+		userId: text('user_id')
 			.notNull()
-			.references(() => users.id, { onDelete: 'cascade' }),
+			.references(() => user.id, { onDelete: 'cascade' }),
 		name: text('name').notNull(),
 		slug: text('slug').notNull().unique(),
 		width: integer('width').notNull().default(1200),
@@ -82,9 +70,9 @@ export const assets = pgTable(
 	'assets',
 	{
 		id: uuid('id').primaryKey().defaultRandom(),
-		userId: uuid('user_id')
+		userId: text('user_id')
 			.notNull()
-			.references(() => users.id, { onDelete: 'cascade' }),
+			.references(() => user.id, { onDelete: 'cascade' }),
 		filename: text('filename').notNull(),
 		storageKey: text('storage_key').notNull().unique(),
 		contentType: text('content_type').notNull(),
