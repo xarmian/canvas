@@ -57,15 +57,16 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		error(400, `File extension .${ext} does not match content type ${contentType}.`);
 	}
 
-	// Validate file size
+	// Validate file size before buffering to prevent memory exhaustion
 	const isFont = ALLOWED_FONT_TYPES.has(contentType);
 	const maxSize = isFont ? MAX_FONT_SIZE : MAX_IMAGE_SIZE;
-	const buffer = Buffer.from(await file.arrayBuffer());
 
-	if (buffer.byteLength > maxSize) {
+	if (file.size > maxSize) {
 		const maxMB = maxSize / (1024 * 1024);
 		error(400, `File too large. Maximum size: ${maxMB}MB for ${isFont ? 'fonts' : 'images'}.`);
 	}
+
+	const buffer = Buffer.from(await file.arrayBuffer());
 
 	// Sanitize filename: strip path separators and dot segments, keep only basename
 	const rawName = file.name.split(/[/\\]/).pop() || 'file';
@@ -79,17 +80,23 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	const storage = getStorage();
 	const url = await storage.upload(key, buffer, contentType);
 
-	// Save asset record
-	const [asset] = await db
-		.insert(assets)
-		.values({
-			userId: locals.user.id,
-			filename: file.name,
-			storageKey: key,
-			contentType,
-			sizeBytes: buffer.byteLength
-		})
-		.returning();
+	// Save asset record — clean up storage if DB insert fails
+	let asset;
+	try {
+		[asset] = await db
+			.insert(assets)
+			.values({
+				userId: locals.user.id,
+				filename: file.name,
+				storageKey: key,
+				contentType,
+				sizeBytes: buffer.byteLength
+			})
+			.returning();
+	} catch (err) {
+		await storage.delete(key).catch(() => {}); // best-effort cleanup
+		throw err;
+	}
 
 	return json({
 		id: asset.id,
