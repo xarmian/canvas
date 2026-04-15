@@ -1,5 +1,5 @@
 import { Image } from '@napi-rs/canvas';
-import { resolve as dnsResolve } from 'dns/promises';
+import { resolve4, resolve6 } from 'dns/promises';
 import { isIP } from 'net';
 
 /** Simple LRU-ish cache for fetched remote images */
@@ -9,36 +9,53 @@ const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB max image size
 
 /**
- * Checks whether an IP address is private/internal.
+ * Checks whether an IPv4 address is private/internal.
+ */
+function isPrivateIPv4(ip: string): boolean {
+	const parts = ip.split('.').map(Number);
+	if (parts.length !== 4 || parts.some((p) => isNaN(p))) return true; // malformed → block
+
+	const [a, b] = parts;
+	return (
+		a === 0 || // 0.0.0.0/8
+		a === 10 || // 10.0.0.0/8
+		a === 127 || // 127.0.0.0/8
+		(a === 169 && b === 254) || // 169.254.0.0/16 (link-local, AWS metadata)
+		(a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12
+		(a === 192 && b === 168) // 192.168.0.0/16
+	);
+}
+
+/**
+ * Checks whether an IPv6 address is private/internal.
+ * Covers loopback (::1), link-local (fe80::/10), and ULA (fc00::/7).
+ */
+function isPrivateIPv6(ip: string): boolean {
+	const normalized = ip.toLowerCase();
+	return (
+		normalized === '::1' ||
+		normalized === '::' ||
+		normalized === '0:0:0:0:0:0:0:1' ||
+		normalized === '0:0:0:0:0:0:0:0' ||
+		normalized.startsWith('fe80') || // link-local fe80::/10
+		normalized.startsWith('fc') || // ULA fc00::/7 (fc00::-fdff::)
+		normalized.startsWith('fd') // ULA fc00::/7 (fc00::-fdff::)
+	);
+}
+
+/**
+ * Checks whether an IP address (v4 or v6) is private/internal.
  */
 function isPrivateIp(ip: string): boolean {
-	return (
-		ip === '127.0.0.1' ||
-		ip === '::1' ||
-		ip === '0.0.0.0' ||
-		ip.startsWith('10.') ||
-		ip.startsWith('172.16.') ||
-		ip.startsWith('172.17.') ||
-		ip.startsWith('172.18.') ||
-		ip.startsWith('172.19.') ||
-		ip.startsWith('172.2') ||
-		ip.startsWith('172.30.') ||
-		ip.startsWith('172.31.') ||
-		ip.startsWith('192.168.') ||
-		ip.startsWith('169.254.') ||
-		ip.startsWith('fe80:') || // IPv6 link-local
-		ip.startsWith('fc00:') || // IPv6 unique local
-		ip.startsWith('fd00:') || // IPv6 unique local (fd00::/8)
-		ip === '::' ||
-		ip === '0:0:0:0:0:0:0:0' ||
-		ip === '0:0:0:0:0:0:0:1'
-	);
+	if (isIP(ip) === 4) return isPrivateIPv4(ip);
+	if (isIP(ip) === 6) return isPrivateIPv6(ip);
+	return true; // unknown format → block
 }
 
 /**
  * Validates that a URL is safe to fetch (prevents SSRF).
  * Only allows http/https schemes and blocks private/internal network addresses.
- * Resolves DNS to verify the target IP is not private.
+ * Resolves both A and AAAA DNS records to verify target IPs are not private.
  */
 async function isUrlSafe(url: string): Promise<boolean> {
 	try {
@@ -67,11 +84,15 @@ async function isUrlSafe(url: string): Promise<boolean> {
 			return !isPrivateIp(hostname);
 		}
 
-		// Resolve DNS and check all resulting IPs
+		// Resolve both A (IPv4) and AAAA (IPv6) records
 		try {
-			const addresses = await dnsResolve(hostname);
-			if (addresses.length === 0) return false;
-			return !addresses.some((addr) => isPrivateIp(addr));
+			const [v4Addrs, v6Addrs] = await Promise.all([
+				resolve4(hostname).catch(() => [] as string[]),
+				resolve6(hostname).catch(() => [] as string[])
+			]);
+			const allAddrs = [...v4Addrs, ...v6Addrs];
+			if (allAddrs.length === 0) return false;
+			return !allAddrs.some((addr) => isPrivateIp(addr));
 		} catch {
 			// DNS resolution failed — block the request
 			return false;
