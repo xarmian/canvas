@@ -38,7 +38,7 @@ function isBot(userAgent: string): boolean {
 
 /** Replace {{param}} placeholders in a string with query parameter values */
 function substituteParams(template: string, params: Record<string, string>): string {
-	return template.replace(/\{\{(\w+)\}\}/g, (_, key) => params[key] ?? '');
+	return template.replace(/\{\{([\w-]+)\}\}/g, (_, key) => params[key] ?? '');
 }
 
 export const load: PageServerLoad = async ({ params, url, request }) => {
