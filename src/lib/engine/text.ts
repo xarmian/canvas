@@ -101,10 +101,11 @@ export function drawWrappedText(
 	y: number,
 	maxWidth: number,
 	fontSize: number,
-	textAlign: CanvasTextAlign = 'left'
+	textAlign: CanvasTextAlign = 'left',
+	lineHeightMultiplier: number = 1.2
 ): void {
 	const lines = wrapText(ctx, text, maxWidth);
-	const lineHeight = fontSize * 1.2;
+	const lineHeight = fontSize * lineHeightMultiplier;
 
 	ctx.textAlign = textAlign;
 

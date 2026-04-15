@@ -149,12 +149,13 @@ function drawTextObject(ctx: SKRSContext2D, obj: FabricObject): void {
 	const fill = obj.fill ?? '#000000';
 	const textAlign = (obj.textAlign ?? 'left') as CanvasTextAlign;
 	const width = obj.width ?? 500;
+	const lineHeight = obj.lineHeight ?? 1.2;
 
 	ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
 	ctx.fillStyle = fill;
 
 	// Use wrapped text drawing for bounded text
-	drawWrappedText(ctx, text, 0, 0, width, fontSize, textAlign);
+	drawWrappedText(ctx, text, 0, 0, width, fontSize, textAlign, lineHeight);
 }
 
 /**

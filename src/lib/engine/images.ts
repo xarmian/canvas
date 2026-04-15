@@ -32,14 +32,23 @@ function isPrivateIPv4(ip: string): boolean {
  */
 function isPrivateIPv6(ip: string): boolean {
 	const normalized = ip.toLowerCase();
+	// Check for IPv4-mapped IPv6 (::ffff:x.x.x.x) — validate the embedded IPv4
+	const v4MappedMatch = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+	if (v4MappedMatch) {
+		return isPrivateIPv4(v4MappedMatch[1]);
+	}
+
+	// Parse first hextet to check ranges numerically
+	const firstHextet = parseInt(normalized.split(':')[0], 16);
+	if (isNaN(firstHextet)) return true; // malformed → block
+
 	return (
 		normalized === '::1' ||
 		normalized === '::' ||
 		normalized === '0:0:0:0:0:0:0:1' ||
 		normalized === '0:0:0:0:0:0:0:0' ||
-		normalized.startsWith('fe80') || // link-local fe80::/10
-		normalized.startsWith('fc') || // ULA fc00::/7 (fc00::-fdff::)
-		normalized.startsWith('fd') // ULA fc00::/7 (fc00::-fdff::)
+		(firstHextet >= 0xfe80 && firstHextet <= 0xfebf) || // link-local fe80::/10
+		(firstHextet >= 0xfc00 && firstHextet <= 0xfdff) // ULA fc00::/7
 	);
 }
 
