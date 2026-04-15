@@ -44,6 +44,9 @@
 			// This makes any in-flight stale load harmless since it
 			// mutates a canvas that's already been cleared for the new load
 			canvas.clear();
+			// Restore background after clear() wipes it
+			canvas.backgroundColor = backgroundColor;
+			canvas.renderAll();
 			resetHistory();
 
 			if (data.canvas.templateJson) {
