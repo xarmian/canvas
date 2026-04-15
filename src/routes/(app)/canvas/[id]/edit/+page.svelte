@@ -28,11 +28,11 @@
 		data.canvas.backgroundType === 'color' ? data.canvas.backgroundValue : '#ffffff'
 	);
 
-	// Load template JSON once fabricCanvas is ready
-	let hasLoaded = $state(false);
+	// Load template JSON once fabricCanvas is ready — track by canvas ID
+	let loadedCanvasId = $state('');
 	$effect(() => {
-		if (fabricCanvas && !hasLoaded) {
-			hasLoaded = true;
+		if (fabricCanvas && loadedCanvasId !== data.canvas.id) {
+			loadedCanvasId = data.canvas.id;
 			if (data.canvas.templateJson) {
 				// Suppress snapshots during hydration to avoid partial-load states in history
 				beginSuppressSnapshots();
