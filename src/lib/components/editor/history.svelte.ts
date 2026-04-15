@@ -34,13 +34,17 @@ export function saveSnapshot(canvas: Canvas) {
 }
 
 /** Undo: restore the previous state */
+/** Monotonic restore token — incremented on every undo/redo and reset.
+ *  Used to detect if a canvas switch happened during an async restore. */
+let restoreToken = 0;
+
 export async function undo(canvas: Canvas) {
 	if (undoStack.length <= 1 || isBusy) return;
 
 	isRestoring = true;
 	isBusy = true;
+	const token = ++restoreToken;
 
-	// Save stacks before mutation so we can rollback on failure
 	const prevUndo = undoStack;
 	const prevRedo = redoStack;
 	try {
@@ -50,14 +54,19 @@ export async function undo(canvas: Canvas) {
 
 		const previous = undoStack[undoStack.length - 1];
 		await canvas.loadFromJSON(JSON.parse(previous));
+		// Bail if canvas was switched during async restore
+		if (restoreToken !== token) return;
 		canvas.renderAll();
 	} catch {
-		// Rollback stacks on restore failure
-		undoStack = prevUndo;
-		redoStack = prevRedo;
+		if (restoreToken === token) {
+			undoStack = prevUndo;
+			redoStack = prevRedo;
+		}
 	} finally {
-		isRestoring = false;
-		isBusy = false;
+		if (restoreToken === token) {
+			isRestoring = false;
+			isBusy = false;
+		}
 	}
 }
 
@@ -67,6 +76,7 @@ export async function redo(canvas: Canvas) {
 
 	isRestoring = true;
 	isBusy = true;
+	const token = ++restoreToken;
 
 	const prevUndo = undoStack;
 	const prevRedo = redoStack;
@@ -76,13 +86,18 @@ export async function redo(canvas: Canvas) {
 
 		undoStack = [...undoStack, next];
 		await canvas.loadFromJSON(JSON.parse(next));
+		if (restoreToken !== token) return;
 		canvas.renderAll();
 	} catch {
-		undoStack = prevUndo;
-		redoStack = prevRedo;
+		if (restoreToken === token) {
+			undoStack = prevUndo;
+			redoStack = prevRedo;
+		}
 	} finally {
-		isRestoring = false;
-		isBusy = false;
+		if (restoreToken === token) {
+			isRestoring = false;
+			isBusy = false;
+		}
 	}
 }
 
@@ -96,8 +111,10 @@ export function endSuppressSnapshots() {
 	isRestoring = false;
 }
 
-/** Reset history (e.g., when switching canvases) */
+/** Reset history (e.g., when switching canvases).
+ *  Bumps restoreToken to invalidate any in-flight async restores. */
 export function resetHistory() {
+	restoreToken++;
 	undoStack = [];
 	redoStack = [];
 	isRestoring = false;
