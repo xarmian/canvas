@@ -17,6 +17,8 @@
 	let saveStatus: string = $state('');
 	let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
 	let isSaving = $state(false);
+	let showPreview = $state(false);
+	let previewUrl = $state('');
 
 	// Determine background color from data
 	let backgroundColor = $derived(
@@ -85,8 +87,8 @@
 		};
 	});
 
-	async function save() {
-		if (!editorState.fabricCanvas || isSaving) return;
+	async function save(): Promise<boolean> {
+		if (!editorState.fabricCanvas || isSaving) return false;
 		isSaving = true;
 		// Capture generation before save — only mark clean if no new edits during save
 		const genBeforeSave = editorState.editGeneration;
@@ -99,15 +101,18 @@
 			});
 			if (!res.ok) {
 				saveStatus = 'Save failed';
+				return false;
 			} else {
 				// Only mark clean if no edits happened during the save
 				if (editorState.editGeneration === genBeforeSave) {
 					markClean();
 				}
 				saveStatus = 'Saved';
+				return true;
 			}
 		} catch {
 			saveStatus = 'Save failed';
+			return false;
 		} finally {
 			isSaving = false;
 			setTimeout(() => {
@@ -121,6 +126,28 @@
 		if (url) {
 			editorRef?.addImageFromUrl(url);
 		}
+	}
+
+	/** Wait for any in-flight save to finish */
+	async function waitForSave() {
+		while (isSaving) {
+			await new Promise((r) => setTimeout(r, 100));
+		}
+	}
+
+	async function togglePreview() {
+		if (showPreview) {
+			showPreview = false;
+			previewUrl = '';
+			return;
+		}
+		// Wait for any in-flight save, then save again to ensure latest state
+		await waitForSave();
+		const saved = await save();
+		if (!saved) return; // Don't preview if save failed
+		// Use authenticated preview endpoint (works for drafts too)
+		previewUrl = `/api/canvas/${data.canvas.id}/preview?_t=${Date.now()}`;
+		showPreview = true;
 	}
 </script>
 
@@ -155,6 +182,11 @@
 			</button>
 		</div>
 
+		<span class="toolbar-sep"></span>
+		<button class="tool-btn" class:active={showPreview} onclick={togglePreview}>
+			{showPreview ? '✕ Close Preview' : '👁 Preview'}
+		</button>
+
 		<div class="spacer"></div>
 
 		{#if saveStatus}
@@ -184,6 +216,23 @@
 
 		<PropertyPanel />
 	</div>
+
+	{#if showPreview && previewUrl}
+		<div class="preview-panel">
+			<div class="preview-header">
+				<strong>Rendered Preview</strong>
+				<span class="preview-info">
+					{data.canvas.width} × {data.canvas.height} · {data.canvas.slug}
+				</span>
+			</div>
+			<div class="preview-image">
+				<img src={previewUrl} alt="Canvas preview" />
+			</div>
+			<div class="preview-url">
+				<code>/c/{data.canvas.slug}/image.png</code>
+			</div>
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -327,5 +376,51 @@
 		background: #f1f5f9;
 		overflow: auto;
 		padding: 24px;
+	}
+
+	.tool-btn.active {
+		background: #2563eb;
+		color: #fff;
+		border-color: #2563eb;
+	}
+
+	.preview-panel {
+		border-top: 2px solid #e2e8f0;
+		background: #f8fafc;
+		padding: 16px 24px;
+		text-align: center;
+	}
+
+	.preview-header {
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		gap: 12px;
+		margin-bottom: 12px;
+		font-size: 13px;
+	}
+
+	.preview-info {
+		color: #94a3b8;
+	}
+
+	.preview-image img {
+		max-width: 100%;
+		max-height: 300px;
+		border: 1px solid #e2e8f0;
+		border-radius: 4px;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+	}
+
+	.preview-url {
+		margin-top: 8px;
+		font-size: 12px;
+		color: #64748b;
+	}
+
+	.preview-url code {
+		background: #e2e8f0;
+		padding: 2px 8px;
+		border-radius: 3px;
 	}
 </style>
