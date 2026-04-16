@@ -87,8 +87,8 @@
 		};
 	});
 
-	async function save() {
-		if (!editorState.fabricCanvas || isSaving) return;
+	async function save(): Promise<boolean> {
+		if (!editorState.fabricCanvas || isSaving) return false;
 		isSaving = true;
 		// Capture generation before save — only mark clean if no new edits during save
 		const genBeforeSave = editorState.editGeneration;
@@ -101,15 +101,18 @@
 			});
 			if (!res.ok) {
 				saveStatus = 'Save failed';
+				return false;
 			} else {
 				// Only mark clean if no edits happened during the save
 				if (editorState.editGeneration === genBeforeSave) {
 					markClean();
 				}
 				saveStatus = 'Saved';
+				return true;
 			}
 		} catch {
 			saveStatus = 'Save failed';
+			return false;
 		} finally {
 			isSaving = false;
 			setTimeout(() => {
@@ -140,7 +143,8 @@
 		}
 		// Wait for any in-flight save, then save again to ensure latest state
 		await waitForSave();
-		await save();
+		const saved = await save();
+		if (!saved) return; // Don't preview if save failed
 		// Use authenticated preview endpoint (works for drafts too)
 		previewUrl = `/api/canvas/${data.canvas.id}/preview?_t=${Date.now()}`;
 		showPreview = true;
