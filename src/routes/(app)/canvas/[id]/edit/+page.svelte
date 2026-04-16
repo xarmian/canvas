@@ -133,7 +133,8 @@
 		}
 		// Save first to ensure latest state is rendered
 		await save();
-		previewUrl = `/c/${data.canvas.slug}/image.png?_t=${Date.now()}`;
+		// Use authenticated preview endpoint (works for drafts too)
+		previewUrl = `/api/canvas/${data.canvas.id}/preview?_t=${Date.now()}`;
 		showPreview = true;
 	}
 </script>
