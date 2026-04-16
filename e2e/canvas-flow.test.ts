@@ -113,9 +113,31 @@ test.describe('Canvas MVP E2E', () => {
 	});
 
 	test.describe('Public rendering', () => {
-		test('unpublished canvas returns 404', async ({ request }) => {
+		test('nonexistent canvas returns 404', async ({ request }) => {
 			const res = await request.get('/c/nonexistent-slug/image.png');
 			expect(res.status()).toBe(404);
+		});
+
+		test('unpublished canvas returns 404', async ({ playwright }) => {
+			const ctx = await playwright.request.newContext({ baseURL: 'http://localhost:5173' });
+
+			await ctx.post('/api/auth/sign-up/email', {
+				data: {
+					name: 'Draft Tester',
+					email: `draft-${Date.now()}@test.com`,
+					password: 'testpass123456'
+				}
+			});
+
+			const createRes = await ctx.post('/api/canvas', {
+				data: { name: 'Draft Canvas', width: 400, height: 200 }
+			});
+			const canvas = await createRes.json();
+			// Canvas is unpublished by default — public render should 404
+			const imgRes = await ctx.get(`/c/${canvas.slug}/image.png`);
+			expect(imgRes.status()).toBe(404);
+
+			await ctx.dispose();
 		});
 
 		test('published canvas renders PNG', async ({ request }) => {
