@@ -125,13 +125,21 @@
 		}
 	}
 
+	/** Wait for any in-flight save to finish */
+	async function waitForSave() {
+		while (isSaving) {
+			await new Promise((r) => setTimeout(r, 100));
+		}
+	}
+
 	async function togglePreview() {
 		if (showPreview) {
 			showPreview = false;
 			previewUrl = '';
 			return;
 		}
-		// Save first to ensure latest state is rendered
+		// Wait for any in-flight save, then save again to ensure latest state
+		await waitForSave();
 		await save();
 		// Use authenticated preview endpoint (works for drafts too)
 		previewUrl = `/api/canvas/${data.canvas.id}/preview?_t=${Date.now()}`;
