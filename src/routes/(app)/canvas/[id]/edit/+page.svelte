@@ -41,11 +41,27 @@
 	let showPublishModal = $state(false);
 
 	let editorRef: ReturnType<typeof CanvasEditor> | undefined = $state();
-	let saveStatus: string = $state('');
 	let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
 	let isSaving = $state(false);
+	/** True when the last save attempt errored out. Cleared on the next
+	 * successful save. Drives the persistent "Save failed" indicator and
+	 * the sticky error toast. */
+	let lastSaveFailed = $state(false);
+	/** ID of the sticky error toast so we can dismiss it when the user
+	 * either retries successfully or dismisses it manually. */
+	let failedToastId = $state<string | null>(null);
 	let showPreview = $state(false);
 	let previewUrl = $state('');
+
+	/** Derived UI state for the persistent save-status indicator.
+	 * Priority order: failed > saving > dirty > saved. */
+	type SaveStatus = 'saved' | 'dirty' | 'saving' | 'failed';
+	let saveStatus: SaveStatus = $derived.by(() => {
+		if (lastSaveFailed) return 'failed';
+		if (isSaving) return 'saving';
+		if (editorState.isDirty) return 'dirty';
+		return 'saved';
+	});
 
 	// Determine background color from data
 	let backgroundColor = $derived(
@@ -181,6 +197,43 @@
 		pendingNavigationIsExternal = false;
 	}
 
+	function saveStatusLabel(s: SaveStatus): string {
+		switch (s) {
+			case 'saved':
+				return 'All changes saved';
+			case 'dirty':
+				return 'Unsaved changes';
+			case 'saving':
+				return 'Saving…';
+			case 'failed':
+				return 'Save failed';
+		}
+	}
+
+	function handleSaveFailure() {
+		lastSaveFailed = true;
+		// If a previous failure toast is still visible, let it continue to
+		// represent the current state instead of stacking a new one.
+		if (failedToastId && toast.items.some((t) => t.id === failedToastId)) return;
+		failedToastId = toast.error('Could not save your canvas.', {
+			action: {
+				label: 'Retry',
+				onClick: () => {
+					failedToastId = null;
+					void save();
+				}
+			}
+		});
+	}
+
+	function handleSaveSuccess() {
+		lastSaveFailed = false;
+		if (failedToastId) {
+			toast.dismiss(failedToastId);
+			failedToastId = null;
+		}
+	}
+
 	async function save(): Promise<boolean> {
 		if (!editorState.fabricCanvas || isSaving) return false;
 		isSaving = true;
@@ -194,24 +247,20 @@
 				body: JSON.stringify({ templateJson: json })
 			});
 			if (!res.ok) {
-				saveStatus = 'Save failed';
+				handleSaveFailure();
 				return false;
-			} else {
-				// Only mark clean if no edits happened during the save
-				if (editorState.editGeneration === genBeforeSave) {
-					markClean();
-				}
-				saveStatus = 'Saved';
-				return true;
 			}
+			// Only mark clean if no edits happened during the save
+			if (editorState.editGeneration === genBeforeSave) {
+				markClean();
+			}
+			handleSaveSuccess();
+			return true;
 		} catch {
-			saveStatus = 'Save failed';
+			handleSaveFailure();
 			return false;
 		} finally {
 			isSaving = false;
-			setTimeout(() => {
-				saveStatus = '';
-			}, 2000);
 		}
 	}
 
@@ -436,9 +485,10 @@
 
 		<div class="spacer"></div>
 
-		{#if saveStatus}
-			<span class="save-status">{saveStatus}</span>
-		{/if}
+		<span class="save-indicator save-{saveStatus}" title={saveStatusLabel(saveStatus)}>
+			<span class="save-dot" aria-hidden="true"></span>
+			<span class="save-label">{saveStatusLabel(saveStatus)}</span>
+		</span>
 
 		<button class="save-btn" onclick={save} disabled={isSaving}>
 			{isSaving ? 'Saving...' : 'Save'}
@@ -615,9 +665,66 @@
 		flex: 1;
 	}
 
-	.save-status {
-		font-size: 13px;
-		color: #16a34a;
+	.save-indicator {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 12px;
+		font-weight: 500;
+		padding: 3px 10px;
+		border-radius: 9999px;
+		white-space: nowrap;
+		user-select: none;
+	}
+
+	.save-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.save-saved {
+		background: #dcfce7;
+		color: #15803d;
+	}
+	.save-saved .save-dot {
+		background: #16a34a;
+	}
+
+	.save-dirty {
+		background: #f1f5f9;
+		color: #475569;
+	}
+	.save-dirty .save-dot {
+		background: #94a3b8;
+	}
+
+	.save-saving {
+		background: #fef3c7;
+		color: #92400e;
+	}
+	.save-saving .save-dot {
+		background: #d97706;
+		animation: pulse 1s ease-in-out infinite;
+	}
+
+	.save-failed {
+		background: #fee2e2;
+		color: #991b1b;
+	}
+	.save-failed .save-dot {
+		background: #dc2626;
+	}
+
+	@keyframes pulse {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.4;
+		}
 	}
 
 	.save-btn {
