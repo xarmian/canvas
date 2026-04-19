@@ -98,16 +98,48 @@
 
 	/** Bindable properties depend on the object type */
 	let bindableProperties = $derived.by(() => {
-		const props: { key: string; label: string }[] = [];
+		const props: { key: string; label: string; sample: string }[] = [];
 		if (isText) {
-			props.push({ key: 'text', label: 'Text Content' });
+			props.push({ key: 'text', label: 'Text Content', sample: 'Hello' });
 		}
 		if (isImage) {
-			props.push({ key: 'src', label: 'Image Source' });
+			props.push({ key: 'src', label: 'Image Source', sample: 'https://example.com/pic.png' });
 		}
-		props.push({ key: 'fill', label: 'Fill Color' });
+		props.push({ key: 'fill', label: 'Fill Color', sample: '#ff0000' });
 		return props;
 	});
+
+	let boundCount = $derived(Object.keys(paramBindings).length);
+
+	/** Param names must be URL-safe identifiers. Browsers tolerate more, but
+	 * validating here keeps consumers/devs sane and flags typos early. */
+	const VALID_PARAM_NAME = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
+	function paramNameWarning(name: string): string {
+		if (!name) return 'Give this parameter a name, e.g. "title".';
+		if (!VALID_PARAM_NAME.test(name)) {
+			return 'Use letters, numbers, underscores, or dashes. Start with a letter.';
+		}
+		return '';
+	}
+
+	function urlExample(
+		paramName: string,
+		defaultValue: string,
+		sample: string
+	): { defaultUrl: string; sampleUrl: string } {
+		if (!paramName) {
+			return { defaultUrl: '?…', sampleUrl: `?…=${encodeURIComponent(sample)}` };
+		}
+		// Show the user's default verbatim in the "when param is absent" line.
+		// The runtime renderer applies defaults via nullish-merge, so an
+		// empty-string default really does blank out the bound property —
+		// don't substitute a sample for empty here or the preview lies.
+		const defaultUrl = `?${paramName}=${encodeURIComponent(defaultValue)}`;
+		// Separate "try a value" line gives authors something concrete to copy
+		// without misrepresenting runtime behavior.
+		const sampleUrl = `?${paramName}=${encodeURIComponent(sample)}`;
+		return { defaultUrl, sampleUrl };
+	}
 </script>
 
 <aside class="property-panel">
@@ -312,50 +344,87 @@
 				<button
 					class="section-title collapsible"
 					onclick={() => (bindingsExpanded = !bindingsExpanded)}
+					aria-expanded={bindingsExpanded}
 				>
-					<span>Dynamic Parameters</span>
-					<span class="chevron" class:open={bindingsExpanded}>&#9654;</span>
+					<span>
+						Dynamic Parameters
+						{#if boundCount > 0}
+							<span class="bound-count" aria-label="{boundCount} bound">{boundCount}</span>
+						{/if}
+					</span>
+					<span class="chevron" class:open={bindingsExpanded} aria-hidden="true">&#9654;</span>
 				</button>
 
 				{#if bindingsExpanded}
+					<p class="bindings-intro">
+						Make a property change based on the URL. After publishing, append
+						<code>?name=value</code> to the share URL to override the default.
+					</p>
+
 					<div class="bindings-list">
 						{#each bindableProperties as prop (prop.key)}
 							{@const bound = paramBindings[prop.key]}
-							<div class="binding-row">
+							{@const warning = bound ? paramNameWarning(bound.param) : ''}
+							<div class="binding-row" class:binding-active={!!bound}>
 								<div class="binding-header">
 									<span class="binding-label">{prop.label}</span>
 									<button
 										class="binding-toggle"
 										class:active={!!bound}
 										onclick={() => toggleBinding(prop.key)}
-										title={bound ? 'Remove binding' : 'Add binding'}>&#9889;</button
+										aria-label={bound
+											? `Stop binding ${prop.label}`
+											: `Bind ${prop.label} to a URL parameter`}
+										title={bound ? 'Remove binding' : 'Bind this property to a URL parameter'}
 									>
+										{bound ? 'Unbind' : 'Bind'}
+									</button>
 								</div>
 
 								{#if bound}
+									{@const urls = urlExample(bound.param, bound.default, prop.sample)}
 									<div class="binding-fields">
 										<div class="field-row">
-											<label class="field-label small" for="bind-{prop.key}-param">Param</label>
+											<label class="field-label small" for="bind-{prop.key}-param">
+												Param name
+											</label>
 											<input
 												id="bind-{prop.key}-param"
 												type="text"
 												class="field-input"
+												class:field-input-warning={!!warning}
 												value={bound.param}
 												oninput={(e) => setBinding(prop.key, 'param', e.currentTarget.value)}
-												placeholder="parameter name"
+												placeholder="e.g. title, price, userName"
+												aria-describedby={warning ? `bind-${prop.key}-param-warning` : undefined}
 											/>
 										</div>
+										{#if warning}
+											<p id="bind-{prop.key}-param-warning" class="binding-warning">
+												{warning}
+											</p>
+										{/if}
 										<div class="field-row">
-											<label class="field-label small" for="bind-{prop.key}-default">Default</label>
+											<label class="field-label small" for="bind-{prop.key}-default">
+												Default
+											</label>
 											<input
 												id="bind-{prop.key}-default"
 												type="text"
 												class="field-input"
 												value={bound.default}
 												oninput={(e) => setBinding(prop.key, 'default', e.currentTarget.value)}
-												placeholder="default value"
+												placeholder="used when URL omits this param"
 											/>
 										</div>
+										<p class="binding-url-preview">
+											<span class="url-preview-label">With default:</span>
+											<code>{urls.defaultUrl}</code>
+										</p>
+										<p class="binding-url-preview binding-url-sample">
+											<span class="url-preview-label">With a value:</span>
+											<code>{urls.sampleUrl}</code>
+										</p>
 									</div>
 								{/if}
 							</div>
@@ -625,6 +694,42 @@
 		color: #333;
 	}
 
+	.bound-count {
+		display: inline-block;
+		margin-left: 4px;
+		padding: 0 6px;
+		background: #2563eb;
+		color: #fff;
+		border-radius: 9999px;
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: 0;
+		text-transform: none;
+		line-height: 16px;
+		min-width: 16px;
+		text-align: center;
+	}
+
+	.bindings-intro {
+		margin: 8px 0;
+		padding: 8px 10px;
+		background: #eff6ff;
+		border: 1px solid #dbeafe;
+		border-radius: 4px;
+		font-size: 11px;
+		color: #1e40af;
+		line-height: 1.45;
+	}
+
+	.bindings-intro code {
+		background: #fff;
+		border: 1px solid #dbeafe;
+		border-radius: 3px;
+		padding: 0 3px;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 10.5px;
+	}
+
 	.bindings-list {
 		margin-top: 8px;
 	}
@@ -635,6 +740,11 @@
 		background: #f5f5f5;
 		border-radius: 4px;
 		border: 1px solid #eee;
+	}
+
+	.binding-row.binding-active {
+		background: #fffdf5;
+		border-color: #fde68a;
 	}
 
 	.binding-header {
@@ -650,23 +760,81 @@
 	}
 
 	.binding-toggle {
-		background: none;
+		background: #fff;
 		border: 1px solid #ccc;
 		border-radius: 4px;
-		padding: 2px 6px;
+		padding: 2px 10px;
 		cursor: pointer;
-		font-size: 14px;
-		line-height: 1;
-		color: #999;
+		font-size: 11px;
+		font-weight: 600;
+		line-height: 1.5;
+		color: #444;
+	}
+
+	.binding-toggle:hover {
+		background: #f3f4f6;
+	}
+
+	.binding-toggle:focus-visible {
+		outline: 2px solid #2563eb;
+		outline-offset: 2px;
 	}
 
 	.binding-toggle.active {
-		background: #fff3cd;
-		border-color: #ffc107;
-		color: #856404;
+		background: #fde68a;
+		border-color: #f59e0b;
+		color: #78350f;
+	}
+
+	.binding-toggle.active:hover {
+		background: #fcd34d;
 	}
 
 	.binding-fields {
 		margin-top: 6px;
+	}
+
+	.field-input-warning {
+		border-color: #f59e0b;
+		background: #fffbeb;
+	}
+
+	.field-input-warning:focus {
+		border-color: #f59e0b;
+		box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+	}
+
+	.binding-warning {
+		margin: 2px 0 6px 56px;
+		font-size: 11px;
+		color: #92400e;
+		line-height: 1.35;
+	}
+
+	.binding-url-preview {
+		margin: 6px 0 0;
+		padding: 5px 7px;
+		background: #111;
+		border-radius: 3px;
+		font-size: 10.5px;
+		line-height: 1.4;
+		color: #cbd5e1;
+		overflow-x: auto;
+		white-space: nowrap;
+	}
+
+	.binding-url-sample {
+		margin-top: 3px;
+		background: #1e293b;
+	}
+
+	.url-preview-label {
+		color: #94a3b8;
+		margin-right: 4px;
+	}
+
+	.binding-url-preview code {
+		color: #f9fafb;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 	}
 </style>
