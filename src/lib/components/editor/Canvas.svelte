@@ -108,9 +108,15 @@
 		editorState.fabricCanvas.requestRenderAll();
 	}
 
-	export async function addImageFromUrl(url: string) {
-		if (!editorState.fabricCanvas) return;
+	/** Returns true when the image was actually added to the canvas, false
+	 * when the underlying Fabric canvas wasn't ready. Callers can use this
+	 * to decide whether to emit a success affordance. */
+	export async function addImageFromUrl(url: string): Promise<boolean> {
+		if (!editorState.fabricCanvas) return false;
 		const img = await FabricImage.fromURL(url);
+		// Re-check after the async load — the canvas may have been torn down
+		// during FabricImage.fromURL (e.g. navigation).
+		if (!editorState.fabricCanvas) return false;
 		img.set({
 			left: width / 2 - (img.width ?? 100) / 2,
 			top: height / 2 - (img.height ?? 100) / 2
@@ -118,6 +124,7 @@
 		editorState.fabricCanvas.add(img);
 		editorState.fabricCanvas.setActiveObject(img);
 		editorState.fabricCanvas.requestRenderAll();
+		return true;
 	}
 
 	export function deleteSelected() {

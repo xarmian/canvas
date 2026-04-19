@@ -213,8 +213,14 @@
 				toast.error('Image uploaded but editor was unavailable — refresh and try again.');
 				return;
 			}
-			await editorRef.addImageFromUrl(url);
-			toast.success('Image added');
+			const inserted = await editorRef.addImageFromUrl(url);
+			if (inserted) {
+				toast.success('Image added');
+			} else {
+				// addImageFromUrl returns false when the Fabric canvas isn't ready
+				// (e.g. mount/teardown race). Don't lie about a successful insert.
+				toast.error('Image uploaded but could not be added — try again.');
+			}
 		} catch {
 			toast.error('Upload failed. Check your connection and try again.');
 		} finally {
@@ -234,6 +240,22 @@
 	function hasFileDrag(e: DragEvent): boolean {
 		return Array.from(e.dataTransfer?.types ?? []).includes('Files');
 	}
+
+	// While the editor is mounted, swallow any file drag-drops that miss the
+	// canvas container (toolbar, side panels, empty space). Without this guard,
+	// a stray drop would cause the browser to navigate to the dropped file,
+	// tearing the user out of the editor and potentially losing unsaved work.
+	$effect(() => {
+		function block(e: DragEvent) {
+			if (hasFileDrag(e)) e.preventDefault();
+		}
+		window.addEventListener('dragover', block);
+		window.addEventListener('drop', block);
+		return () => {
+			window.removeEventListener('dragover', block);
+			window.removeEventListener('drop', block);
+		};
+	});
 
 	function onDragEnter(e: DragEvent) {
 		if (!hasFileDrag(e)) return;
