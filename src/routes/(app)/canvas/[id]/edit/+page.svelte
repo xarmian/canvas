@@ -247,13 +247,19 @@
 		isSaving = true;
 		// Capture generation before save — only mark clean if no new edits during save
 		const genBeforeSave = editorState.editGeneration;
+		// Pin the canvas id at request start. If the user navigates to a
+		// different /canvas/[id]/edit before the response arrives, we must
+		// not flip the new canvas's save-status based on the stale A-response.
+		const originCanvasId = data.canvas.id;
+		const isStale = () => data.canvas.id !== originCanvasId;
 		try {
 			const json = editorState.fabricCanvas.toObject(['paramBindings']);
-			const res = await fetch(`/api/canvas/${data.canvas.id}`, {
+			const res = await fetch(`/api/canvas/${originCanvasId}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ templateJson: json })
 			});
+			if (isStale()) return false;
 			if (!res.ok) {
 				handleSaveFailure();
 				return false;
@@ -265,10 +271,15 @@
 			handleSaveSuccess();
 			return true;
 		} catch {
+			if (isStale()) return false;
 			handleSaveFailure();
 			return false;
 		} finally {
-			isSaving = false;
+			// Only clear isSaving for the originating canvas; if we navigated
+			// away, the resync effect already handled teardown of the new
+			// canvas's state, and setting isSaving here would be wrong for it
+			// (though harmless since save() early-returns if already saving).
+			if (!isStale()) isSaving = false;
 		}
 	}
 
