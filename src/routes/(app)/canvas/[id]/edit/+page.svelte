@@ -50,6 +50,21 @@
 			// there (intentional — so a late A-response doesn't clobber a B-save
 			// in progress). The newly loaded canvas starts from a clean slate.
 			isSaving = false;
+			// Drop any Test Parameter values entered while previewing canvas A
+			// so they don't leak into canvas B's preview when the user opens it.
+			// Also close the preview panel if it was open, because
+			// collectBoundParams() runs only on togglePreview(); leaving preview
+			// open after the switch would show canvas A's binding list (or
+			// a spurious "no bindings" state) alongside canvas B's render.
+			// Reopening gives the user a fresh, correctly-populated panel.
+			testParams = Object.create(null);
+			boundParams = [];
+			previewQuery = '';
+			if (showPreview) {
+				showPreview = false;
+				previewUrl = '';
+				clearTimeout(previewDebounce);
+			}
 		}
 	});
 	let showPublishModal = $state(false);
@@ -471,20 +486,152 @@
 		}
 	}
 
+	// --- Test Parameters panel: drive the preview with bound-param values ---
+
+	interface BoundParamInfo {
+		/** Name as it would appear in the URL query string. */
+		name: string;
+		/** Default value stored on the binding — applied when the URL omits the param. */
+		default: string;
+		/** Which template property first requested this param (e.g. "Text Content"),
+		 * to help the user tell which binding a param drives. */
+		sampleLabel: string;
+	}
+
+	type FabricLikeObject = {
+		paramBindings?: Record<string, { param?: string; default?: string }>;
+		type?: string;
+	};
+
+	function propLabel(property: string): string {
+		switch (property) {
+			case 'text':
+				return 'Text Content';
+			case 'src':
+				return 'Image Source';
+			case 'fill':
+				return 'Fill Color';
+			default:
+				return property;
+		}
+	}
+
+	/** Collect a deduped list of {name, default} across every paramBinding in the
+	 * current canvas. Two bindings with the same name win with the first-seen
+	 * default — matches how the runtime merges. Uses Object.create(null) plus
+	 * Object.hasOwn() so identifiers inherited from Object.prototype (e.g.
+	 * "constructor", "toString", "hasOwnProperty") aren't misread as already
+	 * present and silently dropped. */
+	function collectBoundParams(): BoundParamInfo[] {
+		if (!editorState.fabricCanvas) return [];
+		const json = editorState.fabricCanvas.toObject(['paramBindings']) as {
+			objects?: FabricLikeObject[];
+		};
+		const seen: Record<string, BoundParamInfo> = Object.create(null);
+		for (const obj of json.objects ?? []) {
+			const bindings = obj.paramBindings;
+			if (!bindings) continue;
+			for (const [property, binding] of Object.entries(bindings)) {
+				// Use the raw stored name — the renderer does params[binding.param]
+				// verbatim, so trimming here would show the user a preview URL
+				// that doesn't match runtime lookup for names with whitespace.
+				// We still skip empty strings since the runtime ignores those.
+				const name = binding?.param;
+				if (!name) continue;
+				if (Object.hasOwn(seen, name)) continue;
+				seen[name] = {
+					name,
+					default: binding?.default ?? '',
+					sampleLabel: propLabel(property)
+				};
+			}
+		}
+		return Object.values(seen).sort((a, b) => a.name.localeCompare(b.name));
+	}
+
+	let boundParams = $state<BoundParamInfo[]>([]);
+	/** User-typed test values, keyed by param name. Starts empty (so the default
+	 * is applied) and the user types to override. Separate from boundParams so
+	 * edits survive re-discovery of bindings. */
+	// Null-prototype object so parameter names that collide with Object.prototype
+	// members ("constructor", "toString", …) don't shadow inherited properties.
+	let testParams = $state<Record<string, string>>(Object.create(null));
+	/** The query-string portion driving the preview image, updated only after a
+	 * 300ms debounce so the user can type without thrashing the server. */
+	let previewQuery = $state('');
+	let previewDebounce: ReturnType<typeof setTimeout> | undefined;
+	let previewNonce = $state(0);
+
+	function buildPreviewQuery(values: Record<string, string>): string {
+		// Build the query string manually (encodeURIComponent) rather than via
+		// URLSearchParams to keep eslint-plugin-svelte's reactivity rule happy —
+		// this is a pure helper, not a reactive source. Object.entries is safe
+		// against prototype pollution (it only yields own enumerable keys).
+		const parts: string[] = [];
+		for (const [k, v] of Object.entries(values)) {
+			if (v === '') continue; // empty means "fall through to binding default"
+			parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
+		}
+		return parts.length ? `&${parts.join('&')}` : '';
+	}
+
+	function schedulePreviewRefresh() {
+		clearTimeout(previewDebounce);
+		previewDebounce = setTimeout(() => {
+			previewQuery = buildPreviewQuery(testParams);
+			previewNonce++;
+		}, 300);
+	}
+
+	function setTestParam(name: string, value: string) {
+		// Rebuild with a null-prototype object to preserve prototype-pollution
+		// safety for identifiers like "constructor" or "toString".
+		const next: Record<string, string> = Object.create(null);
+		for (const [k, v] of Object.entries(testParams)) next[k] = v;
+		next[name] = value;
+		testParams = next;
+		schedulePreviewRefresh();
+	}
+
+	let previewUrlFull = $derived(
+		showPreview ? `/api/canvas/${data.canvas.id}/preview?_t=${previewNonce}${previewQuery}` : ''
+	);
+
 	async function togglePreview() {
 		if (showPreview) {
 			showPreview = false;
 			previewUrl = '';
+			previewQuery = '';
+			clearTimeout(previewDebounce);
 			return;
 		}
 		// Wait for any in-flight save, then save again to ensure latest state
 		await waitForSave();
 		const saved = await save();
 		if (!saved) return; // Don't preview if save failed
-		// Use authenticated preview endpoint (works for drafts too)
-		previewUrl = `/api/canvas/${data.canvas.id}/preview?_t=${Date.now()}`;
+
+		// Discover bound params from the freshly-saved template and seed test
+		// inputs with empty strings (so defaults take effect). Preserve any
+		// existing user-typed values for params that still exist. Uses a
+		// null-prototype object so parameter names like "constructor" or
+		// "toString" are handled correctly (prototype-pollution safe).
+		const discovered = collectBoundParams();
+		boundParams = discovered;
+		const nextTest: Record<string, string> = Object.create(null);
+		for (const p of discovered) {
+			nextTest[p.name] = Object.hasOwn(testParams, p.name) ? testParams[p.name] : '';
+		}
+		testParams = nextTest;
+
+		previewQuery = buildPreviewQuery(testParams);
+		previewNonce = Date.now();
 		showPreview = true;
 	}
+
+	$effect(() => {
+		void previewUrlFull;
+		previewUrl = previewUrlFull;
+	});
 </script>
 
 <svelte:head>
@@ -617,11 +764,46 @@
 					{data.canvas.width} × {data.canvas.height} · {data.canvas.slug}
 				</span>
 			</div>
-			<div class="preview-image">
-				<img src={previewUrl} alt="Canvas preview" />
+			<div class="preview-body">
+				<div class="preview-image">
+					<img src={previewUrl} alt="Canvas preview" />
+				</div>
+				<div class="preview-params">
+					<div class="preview-params-header">Test Parameters</div>
+					{#if boundParams.length === 0}
+						<p class="preview-params-empty">
+							No dynamic parameters yet. Select a layer and open
+							<strong>Dynamic Parameters</strong> in the property panel to bind one.
+						</p>
+					{:else}
+						<p class="preview-params-hint">
+							Type values to preview how the published URL will render. Leave blank to use the
+							binding default.
+						</p>
+						{#each boundParams as p (p.name)}
+							<div class="preview-param-row">
+								<label class="preview-param-label" for="test-param-{p.name}">
+									{p.name}
+									<span class="preview-param-source" title="Bound from {p.sampleLabel}">
+										{p.sampleLabel}
+									</span>
+								</label>
+								<input
+									id="test-param-{p.name}"
+									type="text"
+									class="preview-param-input"
+									value={testParams[p.name] ?? ''}
+									oninput={(e) => setTestParam(p.name, e.currentTarget.value)}
+									placeholder={p.default || 'default is empty'}
+								/>
+							</div>
+						{/each}
+					{/if}
+				</div>
 			</div>
 			<div class="preview-url">
-				<code>/c/{data.canvas.slug}/image.png</code>
+				<code>/c/{data.canvas.slug}/image.png{previewQuery ? `?${previewQuery.slice(1)}` : ''}</code
+				>
 			</div>
 		</div>
 	{/if}
@@ -881,7 +1063,6 @@
 		border-top: 2px solid #e2e8f0;
 		background: #f8fafc;
 		padding: 16px 24px;
-		text-align: center;
 	}
 
 	.preview-header {
@@ -897,6 +1078,18 @@
 		color: #94a3b8;
 	}
 
+	.preview-body {
+		display: flex;
+		gap: 20px;
+		align-items: flex-start;
+		justify-content: center;
+	}
+
+	.preview-image {
+		flex: 0 1 auto;
+		min-width: 0;
+	}
+
 	.preview-image img {
 		max-width: 100%;
 		max-height: 300px;
@@ -905,10 +1098,84 @@
 		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 	}
 
+	.preview-params {
+		flex: 0 0 260px;
+		text-align: left;
+		background: #fff;
+		border: 1px solid #e2e8f0;
+		border-radius: 6px;
+		padding: 10px 12px;
+		max-height: 300px;
+		overflow-y: auto;
+	}
+
+	.preview-params-header {
+		font-size: 11px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+		color: #64748b;
+		margin-bottom: 6px;
+	}
+
+	.preview-params-hint {
+		font-size: 11px;
+		color: #64748b;
+		line-height: 1.4;
+		margin: 0 0 8px;
+	}
+
+	.preview-params-empty {
+		font-size: 11.5px;
+		color: #64748b;
+		line-height: 1.5;
+		margin: 0;
+	}
+
+	.preview-param-row {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		margin-bottom: 8px;
+	}
+
+	.preview-param-label {
+		font-size: 11px;
+		font-weight: 600;
+		color: #334155;
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+	}
+
+	.preview-param-source {
+		font-size: 10px;
+		font-weight: 400;
+		color: #94a3b8;
+	}
+
+	.preview-param-input {
+		width: 100%;
+		padding: 4px 6px;
+		border: 1px solid #cbd5e1;
+		border-radius: 4px;
+		font-size: 12px;
+		font-family: inherit;
+		background: #fff;
+	}
+
+	.preview-param-input:focus {
+		outline: none;
+		border-color: #2563eb;
+		box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
+	}
+
 	.preview-url {
-		margin-top: 8px;
+		margin-top: 12px;
 		font-size: 12px;
 		color: #64748b;
+		text-align: center;
+		word-break: break-all;
 	}
 
 	.preview-url code {
