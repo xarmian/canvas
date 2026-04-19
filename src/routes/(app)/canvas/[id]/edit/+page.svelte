@@ -65,6 +65,13 @@
 				previewUrl = '';
 				clearTimeout(previewDebounce);
 			}
+			// Any in-flight openPublishModal() for canvas A has been orphaned
+			// by the switch; make sure we don't leave the button stuck in
+			// "Loading…" for canvas B.
+			openingPublish = false;
+			showPublishModal = false;
+			publishBindings = [];
+			publishBindingsStale = false;
 		}
 	});
 	let showPublishModal = $state(false);
@@ -83,17 +90,26 @@
 	async function openPublishModal() {
 		if (openingPublish) return;
 		openingPublish = true;
+		// Pin canvas id at click time. If the user switches to a different
+		// /canvas/[id]/edit while we're awaiting hydration/save, we must not
+		// apply UI state (publishBindings / showPublishModal) for the wrong
+		// canvas — same rationale as the stale-guard in save().
+		const originCanvasId = data.canvas.id;
+		const isStale = () => data.canvas.id !== originCanvasId;
 		try {
 			// Block clicks that land before loadFromJSON() finishes. Without this,
 			// collectBoundParams() could walk a cleared-but-not-yet-repopulated
 			// Fabric canvas and snapshot an empty bindings list.
 			const hydrated = await waitForHydration();
+			if (isStale()) return;
 			if (!hydrated) {
 				toast.error('Canvas is still loading — try Publish again in a moment.');
 				return;
 			}
 
 			await waitForSave();
+			if (isStale()) return;
+
 			// save() skips markClean() when edits land *during* the PATCH (to
 			// avoid clobbering work). A single loop iteration could therefore
 			// return true and still leave us dirty. Loop a few times so that a
@@ -106,11 +122,13 @@
 			let persistOk = true;
 			for (let i = 0; i < MAX_PERSIST_ATTEMPTS && editorState.isDirty; i++) {
 				const saved = await save();
+				if (isStale()) return;
 				if (!saved) {
 					persistOk = false;
 					break;
 				}
 			}
+			if (isStale()) return;
 			publishBindingsStale = !persistOk || editorState.isDirty;
 			publishBindings = collectBoundParams().map((b) => ({
 				name: b.name,
@@ -119,7 +137,9 @@
 			}));
 			showPublishModal = true;
 		} finally {
-			openingPublish = false;
+			// Clear the loading flag only if we're still on the originating
+			// canvas — otherwise the canvas-switch resync effect owns state.
+			if (!isStale()) openingPublish = false;
 		}
 	}
 
