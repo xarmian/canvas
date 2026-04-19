@@ -68,10 +68,38 @@
 		}
 	});
 	let showPublishModal = $state(false);
-	/** Snapshot of the current bindings in the format PublishModal expects,
-	 * recomputed each time the modal opens so the "Using this template"
-	 * section reflects the freshly-saved canvas, not a stale read. */
+	let openingPublish = $state(false);
+	/** Snapshot of the current bindings in the format PublishModal expects.
+	 * Only refreshed after any pending edits are persisted — the public
+	 * renderer reads templateJson from the DB, so if we snapshotted from live
+	 * Fabric state while the canvas was dirty, the "Using this template"
+	 * table and example URLs could describe bindings that aren't yet live. */
 	let publishBindings = $state<{ name: string; default: string; sourceLabel: string }[]>([]);
+
+	async function openPublishModal() {
+		if (openingPublish) return;
+		openingPublish = true;
+		try {
+			await waitForSave();
+			if (editorState.isDirty) {
+				const saved = await save();
+				if (!saved) {
+					// The failure toast from save() already tells the user to retry.
+					// Abort — opening the modal in a dirty state could mislead about
+					// what consumers will actually get.
+					return;
+				}
+			}
+			publishBindings = collectBoundParams().map((b) => ({
+				name: b.name,
+				default: b.default,
+				sourceLabel: b.sampleLabel
+			}));
+			showPublishModal = true;
+		} finally {
+			openingPublish = false;
+		}
+	}
 
 	let editorRef: ReturnType<typeof CanvasEditor> | undefined = $state();
 	let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -698,19 +726,10 @@
 			type="button"
 			class="publish-btn"
 			class:published={isPublished}
-			onclick={() => {
-				// Refresh the bindings snapshot the modal consumes so the docs
-				// panel always reflects the current canvas. Cheap — one walk
-				// of the Fabric object list.
-				publishBindings = collectBoundParams().map((b) => ({
-					name: b.name,
-					default: b.default,
-					sourceLabel: b.sampleLabel
-				}));
-				showPublishModal = true;
-			}}
+			disabled={openingPublish}
+			onclick={openPublishModal}
 		>
-			{isPublished ? 'Published' : 'Publish'}
+			{openingPublish ? 'Loading…' : isPublished ? 'Published' : 'Publish'}
 		</button>
 	</header>
 
