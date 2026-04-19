@@ -81,14 +81,22 @@
 		openingPublish = true;
 		try {
 			await waitForSave();
-			if (editorState.isDirty) {
+			// save() skips markClean() when edits land *during* the PATCH (to
+			// avoid clobbering work). A single loop iteration could therefore
+			// return true and still leave us dirty. Loop a few times so that a
+			// stable clean state — matching what the public renderer will
+			// actually serve — precedes the binding snapshot.
+			const MAX_PERSIST_ATTEMPTS = 3;
+			for (let i = 0; i < MAX_PERSIST_ATTEMPTS && editorState.isDirty; i++) {
 				const saved = await save();
 				if (!saved) {
 					// The failure toast from save() already tells the user to retry.
-					// Abort — opening the modal in a dirty state could mislead about
-					// what consumers will actually get.
 					return;
 				}
+			}
+			if (editorState.isDirty) {
+				toast.error('Still saving rapid edits — try Publish again in a moment.');
+				return;
 			}
 			publishBindings = collectBoundParams().map((b) => ({
 				name: b.name,
