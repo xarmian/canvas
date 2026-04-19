@@ -117,6 +117,11 @@
 			toast.error(err);
 			return;
 		}
+		// Pin the canvas id at request start. If the user switches to a
+		// different /canvas/[id]/edit while the PATCH is in flight, we must
+		// not apply canvas A's dimensions/background to canvas B (which
+		// would resize/recolor the wrong canvas + show a misleading toast).
+		const originCanvasId = canvasId;
 		saving = true;
 		try {
 			const patch: CanvasSettingsPatch = {
@@ -125,11 +130,12 @@
 				backgroundType: 'color',
 				backgroundValue: backgroundColor
 			};
-			const res = await fetch(`/api/canvas/${canvasId}`, {
+			const res = await fetch(`/api/canvas/${originCanvasId}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(patch)
 			});
+			if (canvasId !== originCanvasId) return;
 			if (!res.ok) {
 				toast.error('Failed to update canvas settings.');
 				return;
@@ -138,6 +144,7 @@
 			toast.success('Canvas settings updated');
 			onClose();
 		} catch {
+			if (canvasId !== originCanvasId) return;
 			toast.error('Failed to update canvas settings.');
 		} finally {
 			saving = false;
