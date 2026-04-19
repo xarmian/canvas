@@ -12,6 +12,13 @@
 		beginSuppressSnapshots,
 		endSuppressSnapshots
 	} from '$lib/components/editor/history.svelte';
+	import { toast } from '$lib/stores/toast.svelte';
+
+	/** Accepted by /api/upload for image uploads. Must stay in sync with
+	 * server-side ALLOWED_IMAGE_TYPES. */
+	const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'];
+	/** Must stay in sync with MAX_IMAGE_SIZE on the server. */
+	const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 	let { data } = $props();
 
@@ -139,11 +146,105 @@
 		}
 	}
 
-	function handleAddImage() {
-		const url = window.prompt('Enter image URL:');
-		if (url) {
-			editorRef?.addImageFromUrl(url);
+	let fileInput = $state<HTMLInputElement | null>(null);
+	let isUploading = $state(false);
+	let isDraggingFile = $state(false);
+	/** Counts nested dragenter/dragleave events so the overlay only clears when
+	 * the drag leaves the outer container, not when it moves between children. */
+	let dragCounter = 0;
+
+	function openFilePicker() {
+		fileInput?.click();
+	}
+
+	async function uploadAndInsertImage(file: File) {
+		if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+			toast.error(`"${file.name}" is not a supported image. Use PNG, JPEG, WebP, or SVG.`);
+			return;
 		}
+		if (file.size > MAX_IMAGE_BYTES) {
+			toast.error(`"${file.name}" is larger than 5MB. Please use a smaller image.`);
+			return;
+		}
+
+		isUploading = true;
+		const uploadingId = toast.info(`Uploading "${file.name}"…`, { duration: 0 });
+		try {
+			const formData = new FormData();
+			formData.append('file', file);
+			const res = await fetch('/api/upload', { method: 'POST', body: formData });
+			if (!res.ok) {
+				let detail = '';
+				try {
+					const body = await res.json();
+					detail = typeof body?.message === 'string' ? ` — ${body.message}` : '';
+				} catch {
+					// ignore — server returned a non-JSON error
+				}
+				toast.error(`Upload failed${detail}`);
+				return;
+			}
+			const { url } = (await res.json()) as { url: string };
+			await editorRef?.addImageFromUrl(url);
+			toast.success('Image added');
+		} catch {
+			toast.error('Upload failed. Check your connection and try again.');
+		} finally {
+			toast.dismiss(uploadingId);
+			isUploading = false;
+		}
+	}
+
+	function onFileInputChange(e: Event) {
+		const target = e.target as HTMLInputElement;
+		const file = target.files?.[0];
+		if (file) uploadAndInsertImage(file);
+		// Reset so selecting the same file twice in a row still fires change
+		target.value = '';
+	}
+
+	function hasFileDrag(e: DragEvent): boolean {
+		return Array.from(e.dataTransfer?.types ?? []).includes('Files');
+	}
+
+	function onDragEnter(e: DragEvent) {
+		if (!hasFileDrag(e)) return;
+		e.preventDefault();
+		dragCounter++;
+		isDraggingFile = true;
+	}
+
+	function onDragOver(e: DragEvent) {
+		if (!hasFileDrag(e)) return;
+		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+	}
+
+	function onDragLeave(e: DragEvent) {
+		if (!hasFileDrag(e)) return;
+		e.preventDefault();
+		dragCounter = Math.max(0, dragCounter - 1);
+		if (dragCounter === 0) isDraggingFile = false;
+	}
+
+	function onDrop(e: DragEvent) {
+		if (!hasFileDrag(e)) return;
+		e.preventDefault();
+		dragCounter = 0;
+		isDraggingFile = false;
+		const files = Array.from(e.dataTransfer?.files ?? []).filter((f) =>
+			f.type.startsWith('image/')
+		);
+		if (files.length === 0) {
+			toast.error('Drop an image file (PNG, JPEG, WebP, or SVG).');
+			return;
+		}
+		// Upload sequentially to avoid stacking multiple large requests at once.
+		(async () => {
+			for (const file of files) {
+				await uploadAndInsertImage(file);
+			}
+		})();
 	}
 
 	/** Wait for any in-flight save to finish */
@@ -194,7 +295,16 @@
 			<span class="toolbar-sep"></span>
 			<button class="tool-btn" onclick={() => editorRef?.addText()}>Add Text</button>
 			<button class="tool-btn" onclick={() => editorRef?.addRect()}>Add Rectangle</button>
-			<button class="tool-btn" onclick={handleAddImage}>Add Image</button>
+			<button class="tool-btn" onclick={openFilePicker} disabled={isUploading}>
+				{isUploading ? 'Uploading…' : 'Add Image'}
+			</button>
+			<input
+				bind:this={fileInput}
+				type="file"
+				accept={ACCEPTED_IMAGE_TYPES.join(',')}
+				onchange={onFileInputChange}
+				style="display: none;"
+			/>
 			<button class="tool-btn delete-btn" onclick={() => editorRef?.deleteSelected()}>
 				Delete
 			</button>
@@ -228,13 +338,27 @@
 	<div class="main-area">
 		<LayerPanel />
 
-		<div class="canvas-container">
+		<div
+			class="canvas-container"
+			class:drag-over={isDraggingFile}
+			ondragenter={onDragEnter}
+			ondragover={onDragOver}
+			ondragleave={onDragLeave}
+			ondrop={onDrop}
+			role="region"
+			aria-label="Canvas — drop an image here to add it"
+		>
 			<CanvasEditor
 				bind:this={editorRef}
 				width={data.canvas.width}
 				height={data.canvas.height}
 				{backgroundColor}
 			/>
+			{#if isDraggingFile}
+				<div class="drop-overlay" aria-hidden="true">
+					<div class="drop-hint">Drop to add image</div>
+				</div>
+			{/if}
 		</div>
 
 		<PropertyPanel />
@@ -432,6 +556,33 @@
 		background: #f1f5f9;
 		overflow: auto;
 		padding: 24px;
+		position: relative;
+	}
+
+	.canvas-container.drag-over {
+		background: #e0e7ff;
+	}
+
+	.drop-overlay {
+		position: absolute;
+		inset: 12px;
+		border: 3px dashed #2563eb;
+		border-radius: 8px;
+		background: rgba(37, 99, 235, 0.08);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		pointer-events: none;
+	}
+
+	.drop-hint {
+		background: #fff;
+		padding: 10px 18px;
+		border-radius: 6px;
+		font-size: 14px;
+		font-weight: 600;
+		color: #1e40af;
+		box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
 	}
 
 	.tool-btn.active {
