@@ -80,6 +80,15 @@
 		if (openingPublish) return;
 		openingPublish = true;
 		try {
+			// Block clicks that land before loadFromJSON() finishes. Without this,
+			// collectBoundParams() could walk a cleared-but-not-yet-repopulated
+			// Fabric canvas and snapshot an empty bindings list.
+			const hydrated = await waitForHydration();
+			if (!hydrated) {
+				toast.error('Canvas is still loading — try Publish again in a moment.');
+				return;
+			}
+
 			await waitForSave();
 			// save() skips markClean() when edits land *during* the PATCH (to
 			// avoid clobbering work). A single loop iteration could therefore
@@ -142,9 +151,15 @@
 	// invalidate stale completions from overlapping navigations
 	let loadedCanvasId = $state('');
 	let hydrationToken = $state(0);
+	/** True once loadFromJSON(...) has completed for the currently-loaded
+	 * canvas id. Serialized edits (save, publish-docs snapshot) must wait
+	 * for this to avoid operating on a cleared-but-not-yet-populated
+	 * Fabric canvas. */
+	let hydrationComplete = $state(false);
 	$effect(() => {
 		if (editorState.fabricCanvas && loadedCanvasId !== data.canvas.id) {
 			loadedCanvasId = data.canvas.id;
+			hydrationComplete = false;
 			const thisToken = ++hydrationToken;
 			const canvas = editorState.fabricCanvas;
 
@@ -174,14 +189,25 @@
 						if (hydrationToken !== thisToken) return;
 						endSuppressSnapshots();
 						saveSnapshot(canvas);
+						hydrationComplete = true;
 					});
 			} else {
 				// Empty canvas — end suppression and save initial blank snapshot
 				endSuppressSnapshots();
 				saveSnapshot(canvas);
+				hydrationComplete = true;
 			}
 		}
 	});
+
+	async function waitForHydration(timeoutMs = 5000): Promise<boolean> {
+		const start = Date.now();
+		while (!hydrationComplete) {
+			if (Date.now() - start > timeoutMs) return false;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		return true;
+	}
 
 	// Auto-save: debounce 2 seconds after any edit (watches editorState.editGeneration for re-triggers)
 	$effect(() => {
