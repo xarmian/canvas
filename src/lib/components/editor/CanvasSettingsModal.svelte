@@ -76,6 +76,17 @@
 		}
 	});
 
+	// Reset saving=true when the modal is remounted against a different
+	// canvas id. Without this, a stalled PATCH from canvas A leaves the
+	// Apply button disabled on canvas B because the stale-guard in apply()
+	// returns early from the in-flight request and never clears `saving`
+	// for the new canvas. fetch() has no timeout/abort, so the old request
+	// may never settle.
+	$effect(() => {
+		void canvasId;
+		saving = false;
+	});
+
 	let isCustom = $derived(PRESETS[selectedPreset]?.label === 'Custom');
 
 	function applyPresetChoice(index: number) {
