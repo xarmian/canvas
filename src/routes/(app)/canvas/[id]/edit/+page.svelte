@@ -135,6 +135,11 @@
 	// lost. We cancel the navigation and show a styled confirm dialog; if the
 	// user confirms, we set a one-shot bypass flag and re-issue the goto.
 	let pendingNavigationHref = $state<string | null>(null);
+	/** True when the blocked destination isn't an app-owned SvelteKit route
+	 * (route.id === null) — e.g. external link, non-SvelteKit URL, or
+	 * browser-back to an external referrer. Those can't be re-issued via
+	 * goto(); they need window.location. */
+	let pendingNavigationIsExternal = false;
 	let bypassNavigationGuard = false;
 
 	function hasPendingWork(): boolean {
@@ -150,19 +155,30 @@
 		const targetHref = nav.to?.url.href;
 		if (!targetHref) return;
 		pendingNavigationHref = targetHref;
+		pendingNavigationIsExternal = nav.to?.route?.id == null;
 		nav.cancel();
 	});
 
 	function confirmLeave() {
 		const href = pendingNavigationHref;
+		const external = pendingNavigationIsExternal;
 		pendingNavigationHref = null;
+		pendingNavigationIsExternal = false;
 		if (!href) return;
 		bypassNavigationGuard = true;
-		goto(href);
+		if (external) {
+			// SvelteKit's goto() only supports app-owned routes. For external or
+			// non-SvelteKit destinations we must use window.location, otherwise
+			// confirming the dialog throws and the user is trapped.
+			window.location.href = href;
+		} else {
+			goto(href);
+		}
 	}
 
 	function cancelLeave() {
 		pendingNavigationHref = null;
+		pendingNavigationIsExternal = false;
 	}
 
 	async function save(): Promise<boolean> {
