@@ -112,6 +112,23 @@
 		};
 	});
 
+	// beforeunload warning: protects users from losing work when they close the
+	// tab or navigate away while the editor has unsaved edits, an in-flight save,
+	// or a queued/active upload. Modern browsers ignore the returned string in
+	// favor of their generic "Leave site?" dialog, but preventDefault + a
+	// non-empty returnValue are required to trigger it at all.
+	$effect(() => {
+		function onBeforeUnload(e: BeforeUnloadEvent) {
+			if (editorState.isDirty || isSaving || isUploading) {
+				e.preventDefault();
+				// Legacy Chromium/Firefox still honor returnValue.
+				e.returnValue = '';
+			}
+		}
+		window.addEventListener('beforeunload', onBeforeUnload);
+		return () => window.removeEventListener('beforeunload', onBeforeUnload);
+	});
+
 	async function save(): Promise<boolean> {
 		if (!editorState.fabricCanvas || isSaving) return false;
 		isSaving = true;
