@@ -31,21 +31,51 @@
 	// silences svelte-check's "state_referenced_locally" warning — the resync effect
 	// below is what actually keeps this in step with `data`.
 	let isPublished = $state(untrack(() => data.canvas.published));
-	let publishedSyncId = $state(untrack(() => data.canvas.id));
+	let canvasScopedSyncId = $state(untrack(() => data.canvas.id));
 	$effect(() => {
-		if (data.canvas.id !== publishedSyncId) {
-			publishedSyncId = data.canvas.id;
+		if (data.canvas.id !== canvasScopedSyncId) {
+			canvasScopedSyncId = data.canvas.id;
+			// Resync publish state for the newly loaded canvas.
 			isPublished = data.canvas.published;
+			// Reset save-failure state so a stale failure from canvas A doesn't
+			// bleed into canvas B (wrong red pill + wrong retry toast).
+			lastSaveFailed = false;
+			if (failedToastId) {
+				toast.dismiss(failedToastId);
+				failedToastId = null;
+			}
+			// Clear isSaving. If a save was in flight for canvas A when the user
+			// switched, the stale-guard in save() already ignores the returning
+			// response for state purposes, but isSaving itself never gets cleared
+			// there (intentional — so a late A-response doesn't clobber a B-save
+			// in progress). The newly loaded canvas starts from a clean slate.
+			isSaving = false;
 		}
 	});
 	let showPublishModal = $state(false);
 
 	let editorRef: ReturnType<typeof CanvasEditor> | undefined = $state();
-	let saveStatus: string = $state('');
 	let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
 	let isSaving = $state(false);
+	/** True when the last save attempt errored out. Cleared on the next
+	 * successful save. Drives the persistent "Save failed" indicator and
+	 * the sticky error toast. */
+	let lastSaveFailed = $state(false);
+	/** ID of the sticky error toast so we can dismiss it when the user
+	 * either retries successfully or dismisses it manually. */
+	let failedToastId = $state<string | null>(null);
 	let showPreview = $state(false);
 	let previewUrl = $state('');
+
+	/** Derived UI state for the persistent save-status indicator.
+	 * Priority order: failed > saving > dirty > saved. */
+	type SaveStatus = 'saved' | 'dirty' | 'saving' | 'failed';
+	let saveStatus: SaveStatus = $derived.by(() => {
+		if (lastSaveFailed) return 'failed';
+		if (isSaving) return 'saving';
+		if (editorState.isDirty) return 'dirty';
+		return 'saved';
+	});
 
 	// Determine background color from data
 	let backgroundColor = $derived(
@@ -181,37 +211,105 @@
 		pendingNavigationIsExternal = false;
 	}
 
+	function saveStatusLabel(s: SaveStatus): string {
+		switch (s) {
+			case 'saved':
+				return 'All changes saved';
+			case 'dirty':
+				return 'Unsaved changes';
+			case 'saving':
+				return 'Saving…';
+			case 'failed':
+				return 'Save failed';
+		}
+	}
+
+	/** Flips false the moment the editor component starts tearing down.
+	 * Used to gate late save callbacks — if a save's response arrives after
+	 * the user has left /canvas/[id]/edit entirely (data.canvas.id didn't
+	 * change, but the component is gone), we must not run handlers that
+	 * emit UI (e.g. global retry toast) or touch torn-down state. */
+	let isMounted = true;
+
+	// Dismiss any lingering failure toast when the editor unmounts and mark
+	// ourselves unmounted so in-flight saves ignore late responses. Without
+	// this cleanup: (1) a sticky Retry toast leaks onto unrelated routes,
+	// and (2) its Retry action would call save() on a torn-down component.
+	$effect(() => {
+		return () => {
+			isMounted = false;
+			if (failedToastId) {
+				toast.dismiss(failedToastId);
+				failedToastId = null;
+			}
+		};
+	});
+
+	function handleSaveFailure() {
+		lastSaveFailed = true;
+		// If a previous failure toast is still visible, let it continue to
+		// represent the current state instead of stacking a new one.
+		if (failedToastId && toast.items.some((t) => t.id === failedToastId)) return;
+		failedToastId = toast.error('Could not save your canvas.', {
+			action: {
+				label: 'Retry',
+				onClick: () => {
+					failedToastId = null;
+					void save();
+				}
+			}
+		});
+	}
+
+	function handleSaveSuccess() {
+		lastSaveFailed = false;
+		if (failedToastId) {
+			toast.dismiss(failedToastId);
+			failedToastId = null;
+		}
+	}
+
 	async function save(): Promise<boolean> {
 		if (!editorState.fabricCanvas || isSaving) return false;
 		isSaving = true;
 		// Capture generation before save — only mark clean if no new edits during save
 		const genBeforeSave = editorState.editGeneration;
+		// Pin the canvas id at request start. If the user navigates to a
+		// different /canvas/[id]/edit before the response arrives, we must
+		// not flip the new canvas's save-status based on the stale A-response.
+		// We also gate on isMounted so a late response that lands after the
+		// user has left /canvas/[id]/edit entirely (different route, not a
+		// sibling canvas) doesn't leak a retry toast onto unrelated pages.
+		const originCanvasId = data.canvas.id;
+		const isStale = () => !isMounted || data.canvas.id !== originCanvasId;
 		try {
 			const json = editorState.fabricCanvas.toObject(['paramBindings']);
-			const res = await fetch(`/api/canvas/${data.canvas.id}`, {
+			const res = await fetch(`/api/canvas/${originCanvasId}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ templateJson: json })
 			});
+			if (isStale()) return false;
 			if (!res.ok) {
-				saveStatus = 'Save failed';
+				handleSaveFailure();
 				return false;
-			} else {
-				// Only mark clean if no edits happened during the save
-				if (editorState.editGeneration === genBeforeSave) {
-					markClean();
-				}
-				saveStatus = 'Saved';
-				return true;
 			}
+			// Only mark clean if no edits happened during the save
+			if (editorState.editGeneration === genBeforeSave) {
+				markClean();
+			}
+			handleSaveSuccess();
+			return true;
 		} catch {
-			saveStatus = 'Save failed';
+			if (isStale()) return false;
+			handleSaveFailure();
 			return false;
 		} finally {
-			isSaving = false;
-			setTimeout(() => {
-				saveStatus = '';
-			}, 2000);
+			// Only clear isSaving for the originating canvas; if we navigated
+			// away, the resync effect already handled teardown of the new
+			// canvas's state, and setting isSaving here would be wrong for it
+			// (though harmless since save() early-returns if already saving).
+			if (!isStale()) isSaving = false;
 		}
 	}
 
@@ -436,9 +534,10 @@
 
 		<div class="spacer"></div>
 
-		{#if saveStatus}
-			<span class="save-status">{saveStatus}</span>
-		{/if}
+		<span class="save-indicator save-{saveStatus}" title={saveStatusLabel(saveStatus)}>
+			<span class="save-dot" aria-hidden="true"></span>
+			<span class="save-label">{saveStatusLabel(saveStatus)}</span>
+		</span>
 
 		<button class="save-btn" onclick={save} disabled={isSaving}>
 			{isSaving ? 'Saving...' : 'Save'}
@@ -615,9 +714,66 @@
 		flex: 1;
 	}
 
-	.save-status {
-		font-size: 13px;
-		color: #16a34a;
+	.save-indicator {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 12px;
+		font-weight: 500;
+		padding: 3px 10px;
+		border-radius: 9999px;
+		white-space: nowrap;
+		user-select: none;
+	}
+
+	.save-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.save-saved {
+		background: #dcfce7;
+		color: #15803d;
+	}
+	.save-saved .save-dot {
+		background: #16a34a;
+	}
+
+	.save-dirty {
+		background: #f1f5f9;
+		color: #475569;
+	}
+	.save-dirty .save-dot {
+		background: #94a3b8;
+	}
+
+	.save-saving {
+		background: #fef3c7;
+		color: #92400e;
+	}
+	.save-saving .save-dot {
+		background: #d97706;
+		animation: pulse 1s ease-in-out infinite;
+	}
+
+	.save-failed {
+		background: #fee2e2;
+		color: #991b1b;
+	}
+	.save-failed .save-dot {
+		background: #dc2626;
+	}
+
+	@keyframes pulse {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.4;
+		}
 	}
 
 	.save-btn {
