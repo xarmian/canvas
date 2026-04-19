@@ -158,7 +158,14 @@
 	let uploadChain: Promise<void> = Promise.resolve();
 
 	function queueUpload(file: File) {
-		uploadChain = uploadChain.then(() => uploadAndInsertImage(file)).catch(() => {});
+		// Pin the canvas id at *enqueue* time, not when the queued callback
+		// eventually runs. Otherwise a batch dropped on canvas A that's still
+		// waiting in the chain would read the (by-then current) canvas B when
+		// it finally starts.
+		const originCanvasId = data.canvas.id;
+		uploadChain = uploadChain
+			.then(() => uploadAndInsertImage(file, originCanvasId))
+			.catch(() => {});
 		return uploadChain;
 	}
 
@@ -166,7 +173,7 @@
 		fileInput?.click();
 	}
 
-	async function uploadAndInsertImage(file: File) {
+	async function uploadAndInsertImage(file: File, originCanvasId: string) {
 		if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
 			toast.error(`"${file.name}" is not a supported image. Use PNG, JPEG, WebP, or SVG.`);
 			return;
@@ -175,11 +182,6 @@
 			toast.error(`"${file.name}" is larger than 5MB. Please use a smaller image.`);
 			return;
 		}
-
-		// Pin the upload to the canvas that was loaded when the user initiated it.
-		// If they navigate to a different /canvas/[id]/edit during the upload,
-		// we refuse to insert the finished image into the new canvas.
-		const originCanvasId = data.canvas.id;
 
 		isUploading = true;
 		const uploadingId = toast.info(`Uploading "${file.name}"…`, { duration: 0 });
