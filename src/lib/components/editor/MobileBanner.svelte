@@ -8,10 +8,22 @@
 	 * collapse or overlap the canvas. */
 	const MIN_DESKTOP_WIDTH = 1024;
 
+	/** Reads sessionStorage defensively. Strict-privacy modes and some
+	 * sandboxed iframes throw SecurityError on access itself (not just on
+	 * setItem), which would blow up component setup and break the editor
+	 * page before the banner ever rendered. Return false on any failure —
+	 * worst case the banner appears again on a refresh. */
+	function readDismissed(): boolean {
+		if (typeof window === 'undefined') return false;
+		try {
+			return window.sessionStorage.getItem(DISMISS_KEY) === '1';
+		} catch {
+			return false;
+		}
+	}
+
 	let viewportWidth = $state<number>(typeof window !== 'undefined' ? window.innerWidth : Infinity);
-	let dismissed = $state<boolean>(
-		typeof window !== 'undefined' ? window.sessionStorage.getItem(DISMISS_KEY) === '1' : false
-	);
+	let dismissed = $state<boolean>(readDismissed());
 
 	$effect(() => {
 		function onResize() {
