@@ -108,7 +108,13 @@
 				return;
 			}
 
-			await waitForSave();
+			// Bounded wait: save() uses fetch() with no timeout, so a stalled
+			// backend could otherwise freeze this flow indefinitely and block
+			// the only in-UI path to Unpublish. If we time out, continue with
+			// persistOk=false so the modal still opens (with a staleness
+			// warning) and the user can still reach Unpublish.
+			const PUBLISH_SAVE_TIMEOUT_MS = 8000;
+			const waitedOk = await waitForSave(PUBLISH_SAVE_TIMEOUT_MS);
 			if (isStale()) return;
 
 			// save() skips markClean() when edits land *during* the PATCH (to
@@ -120,13 +126,15 @@
 			// clicked solely to hit Unpublish, which does not depend on
 			// template state. The modal shows a staleness warning instead.
 			const MAX_PERSIST_ATTEMPTS = 3;
-			let persistOk = true;
-			for (let i = 0; i < MAX_PERSIST_ATTEMPTS && editorState.isDirty; i++) {
-				const saved = await save();
-				if (isStale()) return;
-				if (!saved) {
-					persistOk = false;
-					break;
+			let persistOk = waitedOk;
+			if (waitedOk) {
+				for (let i = 0; i < MAX_PERSIST_ATTEMPTS && editorState.isDirty; i++) {
+					const saved = await save();
+					if (isStale()) return;
+					if (!saved) {
+						persistOk = false;
+						break;
+					}
 				}
 			}
 			if (isStale()) return;
@@ -571,11 +579,19 @@
 		}
 	}
 
-	/** Wait for any in-flight save to finish */
-	async function waitForSave() {
+	/** Wait for any in-flight save to finish, with an optional timeout. Returns
+	 * true when isSaving is clear, false when the timeout expired first.
+	 * A bounded wait is important for flows (like openPublishModal) that must
+	 * not block the UI indefinitely if the backend or network hangs — the
+	 * caller can surface a stale-state warning instead of leaving the button
+	 * stuck on "Loading…" forever. */
+	async function waitForSave(timeoutMs?: number): Promise<boolean> {
+		const start = Date.now();
 		while (isSaving) {
+			if (timeoutMs !== undefined && Date.now() - start > timeoutMs) return false;
 			await new Promise((r) => setTimeout(r, 100));
 		}
+		return true;
 	}
 
 	// --- Test Parameters panel: drive the preview with bound-param values ---
