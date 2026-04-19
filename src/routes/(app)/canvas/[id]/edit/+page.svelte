@@ -788,8 +788,8 @@
 				class="tool-btn icon-only"
 				onclick={() => editorRef?.undoAction()}
 				disabled={!historyState.canUndo}
-				aria-label="Undo (Ctrl+Z)"
-				title="Undo (Ctrl+Z)"
+				aria-label={historyState.canUndo ? 'Undo (Ctrl+Z)' : 'Nothing to undo'}
+				title={historyState.canUndo ? 'Undo (Ctrl+Z)' : 'Nothing to undo yet'}
 			>
 				<Undo2 size={14} />
 			</button>
@@ -797,8 +797,8 @@
 				class="tool-btn icon-only"
 				onclick={() => editorRef?.redoAction()}
 				disabled={!historyState.canRedo}
-				aria-label="Redo (Ctrl+Shift+Z)"
-				title="Redo (Ctrl+Shift+Z)"
+				aria-label={historyState.canRedo ? 'Redo (Ctrl+Shift+Z)' : 'Nothing to redo'}
+				title={historyState.canRedo ? 'Redo (Ctrl+Shift+Z)' : 'Nothing to redo yet'}
 			>
 				<Redo2 size={14} />
 			</button>
@@ -1085,8 +1085,19 @@
 	}
 
 	.tool-btn:disabled {
-		opacity: 0.4;
-		cursor: default;
+		opacity: 0.45;
+		cursor: not-allowed;
+		background: #f3f4f6;
+		color: #9ca3af;
+		border-color: #e5e7eb;
+	}
+
+	.tool-btn:disabled:hover {
+		background: #f3f4f6;
+	}
+
+	.tool-btn:disabled :global(svg) {
+		color: #9ca3af;
 	}
 
 	.toolbar-sep {
