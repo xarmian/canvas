@@ -68,6 +68,10 @@
 		}
 	});
 	let showPublishModal = $state(false);
+	/** Snapshot of the current bindings in the format PublishModal expects,
+	 * recomputed each time the modal opens so the "Using this template"
+	 * section reflects the freshly-saved canvas, not a stale read. */
+	let publishBindings = $state<{ name: string; default: string; sourceLabel: string }[]>([]);
 
 	let editorRef: ReturnType<typeof CanvasEditor> | undefined = $state();
 	let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -694,7 +698,17 @@
 			type="button"
 			class="publish-btn"
 			class:published={isPublished}
-			onclick={() => (showPublishModal = true)}
+			onclick={() => {
+				// Refresh the bindings snapshot the modal consumes so the docs
+				// panel always reflects the current canvas. Cheap — one walk
+				// of the Fabric object list.
+				publishBindings = collectBoundParams().map((b) => ({
+					name: b.name,
+					default: b.default,
+					sourceLabel: b.sampleLabel
+				}));
+				showPublishModal = true;
+			}}
 		>
 			{isPublished ? 'Published' : 'Publish'}
 		</button>
@@ -745,6 +759,7 @@
 		canvasId={data.canvas.id}
 		slug={data.canvas.slug}
 		published={isPublished}
+		bindings={publishBindings}
 		onClose={() => (showPublishModal = false)}
 		onPublishedChange={(next) => (isPublished = next)}
 		onBeforePublish={async () => {
