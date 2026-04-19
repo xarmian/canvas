@@ -532,7 +532,11 @@
 			const bindings = obj.paramBindings;
 			if (!bindings) continue;
 			for (const [property, binding] of Object.entries(bindings)) {
-				const name = binding?.param?.trim();
+				// Use the raw stored name — the renderer does params[binding.param]
+				// verbatim, so trimming here would show the user a preview URL
+				// that doesn't match runtime lookup for names with whitespace.
+				// We still skip empty strings since the runtime ignores those.
+				const name = binding?.param;
 				if (!name) continue;
 				if (Object.hasOwn(seen, name)) continue;
 				seen[name] = {
