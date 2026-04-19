@@ -91,11 +91,12 @@
 		if (openingPublish) return;
 		openingPublish = true;
 		// Pin canvas id at click time. If the user switches to a different
-		// /canvas/[id]/edit while we're awaiting hydration/save, we must not
-		// apply UI state (publishBindings / showPublishModal) for the wrong
-		// canvas — same rationale as the stale-guard in save().
+		// /canvas/[id]/edit — or leaves the editor entirely — while we're
+		// awaiting hydration/save, we must not apply UI state
+		// (publishBindings / showPublishModal / toasts) for the wrong canvas.
+		// Same rationale as the stale-guard in save().
 		const originCanvasId = data.canvas.id;
-		const isStale = () => data.canvas.id !== originCanvasId;
+		const isStale = () => !isMounted || data.canvas.id !== originCanvasId;
 		try {
 			// Block clicks that land before loadFromJSON() finishes. Without this,
 			// collectBoundParams() could walk a cleared-but-not-yet-repopulated
