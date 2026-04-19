@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { X } from '@lucide/svelte';
 	import { toast, type ToastItem } from '$lib/stores/toast.svelte';
 
 	function dismiss(id: string) {
@@ -26,7 +27,7 @@
 				aria-label="Dismiss"
 				onclick={() => dismiss(item.id)}
 			>
-				&times;
+				<X size={16} />
 			</button>
 		</div>
 	{/each}

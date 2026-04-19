@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { FabricObject } from 'fabric';
+	import { ChevronRight, AlignLeft, AlignCenter, AlignRight } from '@lucide/svelte';
 	import { editorState, markDirty } from './state.svelte.ts';
 
 	// --- Derived properties from the selected object ---
@@ -234,20 +235,29 @@
 								class="btn-group-item"
 								class:active={textAlign === 'left'}
 								onclick={() => setProp('textAlign', 'left')}
-								title="Align left">L</button
+								aria-label="Align left"
+								title="Align left"
 							>
+								<AlignLeft size={14} />
+							</button>
 							<button
 								class="btn-group-item"
 								class:active={textAlign === 'center'}
 								onclick={() => setProp('textAlign', 'center')}
-								title="Align center">C</button
+								aria-label="Align center"
+								title="Align center"
 							>
+								<AlignCenter size={14} />
+							</button>
 							<button
 								class="btn-group-item"
 								class:active={textAlign === 'right'}
 								onclick={() => setProp('textAlign', 'right')}
-								title="Align right">R</button
+								aria-label="Align right"
+								title="Align right"
 							>
+								<AlignRight size={14} />
+							</button>
 						</div>
 					</div>
 				</section>
@@ -273,7 +283,9 @@
 					aria-expanded={positionExpanded}
 				>
 					<span>Position &amp; size</span>
-					<span class="chevron" class:open={positionExpanded} aria-hidden="true">&#9654;</span>
+					<span class="chevron" class:open={positionExpanded} aria-hidden="true"
+						><ChevronRight size={12} strokeWidth={2.5} /></span
+					>
 				</button>
 
 				{#if positionExpanded}
@@ -365,7 +377,9 @@
 							<span class="bound-count" aria-label="{boundCount} bound">{boundCount}</span>
 						{/if}
 					</span>
-					<span class="chevron" class:open={bindingsExpanded} aria-hidden="true">&#9654;</span>
+					<span class="chevron" class:open={bindingsExpanded} aria-hidden="true"
+						><ChevronRight size={12} strokeWidth={2.5} /></span
+					>
 				</button>
 
 				{#if bindingsExpanded}
@@ -541,9 +555,14 @@
 	}
 
 	.chevron {
-		font-size: 10px;
+		display: inline-flex;
+		align-items: center;
 		transition: transform 0.15s ease;
-		color: #999;
+		color: #9ca3af;
+	}
+
+	.btn-group-item :global(svg) {
+		display: block;
 	}
 
 	.chevron.open {
