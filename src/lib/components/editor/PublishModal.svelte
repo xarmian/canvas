@@ -19,6 +19,12 @@
 		/** All unique parameter bindings present on the canvas, used to render
 		 * the "Using this template" documentation section when published. */
 		bindings?: PublishModalBinding[];
+		/** Set when the editor couldn't fully persist pending edits before
+		 * opening the modal — the bindings snapshot may not match what
+		 * /c/[slug]/image.png currently renders. We still render the docs
+		 * section because the Unpublish button lives here, but show an
+		 * inline warning so the user isn't misled. */
+		bindingsStale?: boolean;
 		onClose: () => void;
 		/** Called after a successful publish or unpublish, with the new state. */
 		onPublishedChange: (published: boolean) => void;
@@ -36,6 +42,7 @@
 		slug,
 		published,
 		bindings = [],
+		bindingsStale = false,
 		onClose,
 		onPublishedChange,
 		onBeforePublish
@@ -183,6 +190,13 @@
 
 		<section class="docs-section">
 			<h3 class="docs-title">Using this template</h3>
+
+			{#if bindingsStale}
+				<p class="docs-warning">
+					⚠️ This canvas has unsaved edits. The parameters below may not yet be live on the public
+					URL. Save the canvas, then reopen this dialog for the authoritative docs.
+				</p>
+			{/if}
 
 			{#if bindings.length === 0}
 				<p class="docs-empty">
@@ -414,6 +428,17 @@
 		border: 1px dashed #d1d5db;
 		border-radius: 5px;
 		padding: 0.625rem 0.75rem;
+	}
+
+	.docs-warning {
+		margin: 0 0 0.75rem;
+		padding: 0.5rem 0.75rem;
+		background: #fffbeb;
+		border: 1px solid #fde68a;
+		border-radius: 5px;
+		font-size: 0.75rem;
+		color: #92400e;
+		line-height: 1.45;
 	}
 
 	.docs-table {

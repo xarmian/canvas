@@ -75,6 +75,10 @@
 	 * Fabric state while the canvas was dirty, the "Using this template"
 	 * table and example URLs could describe bindings that aren't yet live. */
 	let publishBindings = $state<{ name: string; default: string; sourceLabel: string }[]>([]);
+	/** True when we opened the modal without being able to persist pending
+	 * edits. Triggers a warning in the docs section but still lets the user
+	 * reach the Unpublish button (which doesn't depend on template state). */
+	let publishBindingsStale = $state(false);
 
 	async function openPublishModal() {
 		if (openingPublish) return;
@@ -94,19 +98,20 @@
 			// avoid clobbering work). A single loop iteration could therefore
 			// return true and still leave us dirty. Loop a few times so that a
 			// stable clean state — matching what the public renderer will
-			// actually serve — precedes the binding snapshot.
+			// actually serve — precedes the binding snapshot. If save fails
+			// (or dirt persists) we still open the modal — the user may have
+			// clicked solely to hit Unpublish, which does not depend on
+			// template state. The modal shows a staleness warning instead.
 			const MAX_PERSIST_ATTEMPTS = 3;
+			let persistOk = true;
 			for (let i = 0; i < MAX_PERSIST_ATTEMPTS && editorState.isDirty; i++) {
 				const saved = await save();
 				if (!saved) {
-					// The failure toast from save() already tells the user to retry.
-					return;
+					persistOk = false;
+					break;
 				}
 			}
-			if (editorState.isDirty) {
-				toast.error('Still saving rapid edits — try Publish again in a moment.');
-				return;
-			}
+			publishBindingsStale = !persistOk || editorState.isDirty;
 			publishBindings = collectBoundParams().map((b) => ({
 				name: b.name,
 				default: b.default,
@@ -813,6 +818,7 @@
 		slug={data.canvas.slug}
 		published={isPublished}
 		bindings={publishBindings}
+		bindingsStale={publishBindingsStale}
 		onClose={() => (showPublishModal = false)}
 		onPublishedChange={(next) => (isPublished = next)}
 		onBeforePublish={async () => {
