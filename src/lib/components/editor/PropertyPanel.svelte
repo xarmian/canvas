@@ -122,12 +122,23 @@
 		return '';
 	}
 
-	function urlExample(paramName: string, defaultValue: string, sample: string): string {
-		// Show the default if one is set (that's literally what a consumer would
-		// see without supplying the param); otherwise show a representative sample.
-		const value = defaultValue || sample;
-		if (!paramName) return '?…';
-		return `?${paramName}=${encodeURIComponent(value)}`;
+	function urlExample(
+		paramName: string,
+		defaultValue: string,
+		sample: string
+	): { defaultUrl: string; sampleUrl: string } {
+		if (!paramName) {
+			return { defaultUrl: '?…', sampleUrl: `?…=${encodeURIComponent(sample)}` };
+		}
+		// Show the user's default verbatim in the "when param is absent" line.
+		// The runtime renderer applies defaults via nullish-merge, so an
+		// empty-string default really does blank out the bound property —
+		// don't substitute a sample for empty here or the preview lies.
+		const defaultUrl = `?${paramName}=${encodeURIComponent(defaultValue)}`;
+		// Separate "try a value" line gives authors something concrete to copy
+		// without misrepresenting runtime behavior.
+		const sampleUrl = `?${paramName}=${encodeURIComponent(sample)}`;
+		return { defaultUrl, sampleUrl };
 	}
 </script>
 
@@ -371,6 +382,7 @@
 								</div>
 
 								{#if bound}
+									{@const urls = urlExample(bound.param, bound.default, prop.sample)}
 									<div class="binding-fields">
 										<div class="field-row">
 											<label class="field-label small" for="bind-{prop.key}-param">
@@ -406,8 +418,12 @@
 											/>
 										</div>
 										<p class="binding-url-preview">
-											<span class="url-preview-label">URL looks like:</span>
-											<code>{urlExample(bound.param, bound.default, prop.sample)}</code>
+											<span class="url-preview-label">With default:</span>
+											<code>{urls.defaultUrl}</code>
+										</p>
+										<p class="binding-url-preview binding-url-sample">
+											<span class="url-preview-label">With a value:</span>
+											<code>{urls.sampleUrl}</code>
 										</p>
 									</div>
 								{/if}
@@ -805,6 +821,11 @@
 		color: #cbd5e1;
 		overflow-x: auto;
 		white-space: nowrap;
+	}
+
+	.binding-url-sample {
+		margin-top: 3px;
+		background: #1e293b;
 	}
 
 	.url-preview-label {
