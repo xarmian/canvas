@@ -52,9 +52,19 @@
 			isSaving = false;
 			// Drop any Test Parameter values entered while previewing canvas A
 			// so they don't leak into canvas B's preview when the user opens it.
+			// Also close the preview panel if it was open, because
+			// collectBoundParams() runs only on togglePreview(); leaving preview
+			// open after the switch would show canvas A's binding list (or
+			// a spurious "no bindings" state) alongside canvas B's render.
+			// Reopening gives the user a fresh, correctly-populated panel.
 			testParams = Object.create(null);
 			boundParams = [];
 			previewQuery = '';
+			if (showPreview) {
+				showPreview = false;
+				previewUrl = '';
+				clearTimeout(previewDebounce);
+			}
 		}
 	});
 	let showPublishModal = $state(false);
