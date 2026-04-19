@@ -176,6 +176,11 @@
 			return;
 		}
 
+		// Pin the upload to the canvas that was loaded when the user initiated it.
+		// If they navigate to a different /canvas/[id]/edit during the upload,
+		// we refuse to insert the finished image into the new canvas.
+		const originCanvasId = data.canvas.id;
+
 		isUploading = true;
 		const uploadingId = toast.info(`Uploading "${file.name}"…`, { duration: 0 });
 		try {
@@ -194,6 +199,12 @@
 				return;
 			}
 			const { url } = (await res.json()) as { url: string };
+			if (data.canvas.id !== originCanvasId) {
+				// User switched canvases during the upload. The asset is saved to
+				// their library but we don't silently inject it into the new canvas.
+				toast.info(`"${file.name}" was uploaded but not added — you switched canvases.`);
+				return;
+			}
 			if (!editorRef) {
 				// Editor may be unavailable if the user navigated away mid-upload.
 				// The upload still succeeded server-side; surface that honestly.
