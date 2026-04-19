@@ -10,9 +10,16 @@
 		onClose: () => void;
 		/** Called after a successful publish or unpublish, with the new state. */
 		onPublishedChange: (published: boolean) => void;
+		/**
+		 * Optional hook invoked before a publish request is sent. Use this to flush
+		 * any pending editor changes so the published canvas reflects the latest
+		 * state, not a stale autosave snapshot. Return false to abort the publish.
+		 */
+		onBeforePublish?: () => Promise<boolean>;
 	}
 
-	let { open, canvasId, slug, published, onClose, onPublishedChange }: Props = $props();
+	let { open, canvasId, slug, published, onClose, onPublishedChange, onBeforePublish }: Props =
+		$props();
 
 	let busy = $state(false);
 
@@ -25,6 +32,17 @@
 		if (busy) return;
 		busy = true;
 		try {
+			// Flush any pending editor changes before publishing so consumers of the
+			// share URL never see a stale render. We skip this on unpublish because
+			// the canvas will be inaccessible anyway.
+			if (next && onBeforePublish) {
+				const flushed = await onBeforePublish();
+				if (!flushed) {
+					toast.error('Could not save pending changes — publish cancelled.');
+					return;
+				}
+			}
+
 			const res = await fetch(`/api/canvas/${canvasId}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },

@@ -16,8 +16,19 @@
 	let { data } = $props();
 
 	// Local copy so the Publish modal can update it after a successful publish/unpublish
-	// without requiring a full page reload. `untrack` makes the initial-capture intent explicit.
+	// without a full page reload. Resynced whenever the loaded canvas changes so that
+	// client-side navigation between different /canvas/[id]/edit records does not
+	// keep showing the prior canvas's publish state. `untrack` on the initial read
+	// silences svelte-check's "state_referenced_locally" warning — the resync effect
+	// below is what actually keeps this in step with `data`.
 	let isPublished = $state(untrack(() => data.canvas.published));
+	let publishedSyncId = $state(untrack(() => data.canvas.id));
+	$effect(() => {
+		if (data.canvas.id !== publishedSyncId) {
+			publishedSyncId = data.canvas.id;
+			isPublished = data.canvas.published;
+		}
+	});
 	let showPublishModal = $state(false);
 
 	let editorRef: ReturnType<typeof CanvasEditor> | undefined = $state();
@@ -236,6 +247,13 @@
 		published={isPublished}
 		onClose={() => (showPublishModal = false)}
 		onPublishedChange={(next) => (isPublished = next)}
+		onBeforePublish={async () => {
+			// Flush pending autosave so the published URL renders the latest edits,
+			// not whatever was last committed before the user hit Publish.
+			await waitForSave();
+			if (!editorState.isDirty) return true;
+			return await save();
+		}}
 	/>
 
 	{#if showPreview && previewUrl}
