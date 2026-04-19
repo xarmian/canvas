@@ -5,6 +5,9 @@
 	import LayerPanel from '$lib/components/editor/LayerPanel.svelte';
 	import PropertyPanel from '$lib/components/editor/PropertyPanel.svelte';
 	import PublishModal from '$lib/components/editor/PublishModal.svelte';
+	import CanvasSettingsModal, {
+		type CanvasSettingsPatch
+	} from '$lib/components/editor/CanvasSettingsModal.svelte';
 	import { editorState, markClean } from '$lib/components/editor/state.svelte';
 	import {
 		historyState,
@@ -37,6 +40,12 @@
 			canvasScopedSyncId = data.canvas.id;
 			// Resync publish state for the newly loaded canvas.
 			isPublished = data.canvas.published;
+			// Resync dimensions + background for the new canvas.
+			canvasWidth = data.canvas.width;
+			canvasHeight = data.canvas.height;
+			canvasBgType = data.canvas.backgroundType as 'color' | 'image';
+			canvasBgValue = data.canvas.backgroundValue;
+			showSettingsModal = false;
 			// Reset save-failure state so a stale failure from canvas A doesn't
 			// bleed into canvas B (wrong red pill + wrong retry toast).
 			lastSaveFailed = false;
@@ -175,10 +184,19 @@
 		return 'saved';
 	});
 
-	// Determine background color from data
-	let backgroundColor = $derived(
-		data.canvas.backgroundType === 'color' ? data.canvas.backgroundValue : '#ffffff'
+	// Locally-tracked canvas dimensions/background so the settings modal can
+	// update them live without a full route reload. Synced to `data` in the
+	// canvas-switch effect. `untrack` on the initial read mirrors the
+	// isPublished pattern and silences svelte-check's state_referenced_locally.
+	let canvasWidth = $state(untrack(() => data.canvas.width));
+	let canvasHeight = $state(untrack(() => data.canvas.height));
+	let canvasBgType = $state<'color' | 'image'>(
+		untrack(() => data.canvas.backgroundType as 'color' | 'image')
 	);
+	let canvasBgValue = $state(untrack(() => data.canvas.backgroundValue));
+	let showSettingsModal = $state(false);
+
+	let backgroundColor = $derived(canvasBgType === 'color' ? canvasBgValue : '#ffffff');
 
 	// Load template JSON once editorState.fabricCanvas is ready — track by canvas ID
 	// Track which hydration is current — incremented on every load to
@@ -767,6 +785,13 @@
 			<span class="toolbar-sep"></span>
 			<button class="tool-btn" onclick={() => editorRef?.addText()}>Add Text</button>
 			<button class="tool-btn" onclick={() => editorRef?.addRect()}>Add Rectangle</button>
+			<button
+				class="tool-btn"
+				onclick={() => (showSettingsModal = true)}
+				title="Canvas size and background"
+			>
+				{canvasWidth}×{canvasHeight}
+			</button>
 			<button class="tool-btn" onclick={openFilePicker} disabled={isUploading}>
 				{isUploading ? 'Uploading…' : 'Add Image'}
 			</button>
@@ -824,8 +849,8 @@
 		>
 			<CanvasEditor
 				bind:this={editorRef}
-				width={data.canvas.width}
-				height={data.canvas.height}
+				width={canvasWidth}
+				height={canvasHeight}
 				{backgroundColor}
 			/>
 			{#if isDraggingFile}
@@ -847,6 +872,33 @@
 		variant="danger"
 		onConfirm={confirmLeave}
 		onCancel={cancelLeave}
+	/>
+
+	<CanvasSettingsModal
+		open={showSettingsModal}
+		canvasId={data.canvas.id}
+		currentWidth={canvasWidth}
+		currentHeight={canvasHeight}
+		currentBackgroundType={canvasBgType}
+		currentBackgroundValue={canvasBgValue}
+		hasContent={(editorState.fabricCanvas?.getObjects().length ?? 0) > 0}
+		onClose={() => (showSettingsModal = false)}
+		onApplied={(patch: CanvasSettingsPatch) => {
+			canvasWidth = patch.width;
+			canvasHeight = patch.height;
+			canvasBgType = patch.backgroundType;
+			canvasBgValue = patch.backgroundValue;
+			// Resize Fabric in place. CanvasEditor keys off width/height props,
+			// but we need to poke Fabric directly so active objects and viewport
+			// update immediately.
+			if (editorState.fabricCanvas) {
+				editorState.fabricCanvas.setDimensions({ width: patch.width, height: patch.height });
+				if (patch.backgroundType === 'color') {
+					editorState.fabricCanvas.backgroundColor = patch.backgroundValue;
+				}
+				editorState.fabricCanvas.renderAll();
+			}
+		}}
 	/>
 
 	<PublishModal
