@@ -224,12 +224,20 @@
 		}
 	}
 
-	// Dismiss any lingering failure toast when the editor unmounts. Without
-	// this, leaving /canvas/[id]/edit after a failed save leaves a sticky
-	// Retry toast on unrelated routes (the Toaster is mounted globally), and
-	// its Retry action would call save() on a torn-down component.
+	/** Flips false the moment the editor component starts tearing down.
+	 * Used to gate late save callbacks — if a save's response arrives after
+	 * the user has left /canvas/[id]/edit entirely (data.canvas.id didn't
+	 * change, but the component is gone), we must not run handlers that
+	 * emit UI (e.g. global retry toast) or touch torn-down state. */
+	let isMounted = true;
+
+	// Dismiss any lingering failure toast when the editor unmounts and mark
+	// ourselves unmounted so in-flight saves ignore late responses. Without
+	// this cleanup: (1) a sticky Retry toast leaks onto unrelated routes,
+	// and (2) its Retry action would call save() on a torn-down component.
 	$effect(() => {
 		return () => {
+			isMounted = false;
 			if (failedToastId) {
 				toast.dismiss(failedToastId);
 				failedToastId = null;
@@ -269,8 +277,11 @@
 		// Pin the canvas id at request start. If the user navigates to a
 		// different /canvas/[id]/edit before the response arrives, we must
 		// not flip the new canvas's save-status based on the stale A-response.
+		// We also gate on isMounted so a late response that lands after the
+		// user has left /canvas/[id]/edit entirely (different route, not a
+		// sibling canvas) doesn't leak a retry toast onto unrelated pages.
 		const originCanvasId = data.canvas.id;
-		const isStale = () => data.canvas.id !== originCanvasId;
+		const isStale = () => !isMounted || data.canvas.id !== originCanvasId;
 		try {
 			const json = editorState.fabricCanvas.toObject(['paramBindings']);
 			const res = await fetch(`/api/canvas/${originCanvasId}`, {
