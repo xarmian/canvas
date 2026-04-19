@@ -152,6 +152,15 @@
 	/** Counts nested dragenter/dragleave events so the overlay only clears when
 	 * the drag leaves the outer container, not when it moves between children. */
 	let dragCounter = 0;
+	/** Chain of pending uploads. Each enqueued file awaits the previous one, so
+	 * concurrent drops/pickers never stack large parallel POSTs even across
+	 * multiple drop events. */
+	let uploadChain: Promise<void> = Promise.resolve();
+
+	function queueUpload(file: File) {
+		uploadChain = uploadChain.then(() => uploadAndInsertImage(file)).catch(() => {});
+		return uploadChain;
+	}
 
 	function openFilePicker() {
 		fileInput?.click();
@@ -185,7 +194,13 @@
 				return;
 			}
 			const { url } = (await res.json()) as { url: string };
-			await editorRef?.addImageFromUrl(url);
+			if (!editorRef) {
+				// Editor may be unavailable if the user navigated away mid-upload.
+				// The upload still succeeded server-side; surface that honestly.
+				toast.error('Image uploaded but editor was unavailable — refresh and try again.');
+				return;
+			}
+			await editorRef.addImageFromUrl(url);
 			toast.success('Image added');
 		} catch {
 			toast.error('Upload failed. Check your connection and try again.');
@@ -198,7 +213,7 @@
 	function onFileInputChange(e: Event) {
 		const target = e.target as HTMLInputElement;
 		const file = target.files?.[0];
-		if (file) uploadAndInsertImage(file);
+		if (file) queueUpload(file);
 		// Reset so selecting the same file twice in a row still fires change
 		target.value = '';
 	}
@@ -239,12 +254,12 @@
 			toast.error('Drop an image file (PNG, JPEG, WebP, or SVG).');
 			return;
 		}
-		// Upload sequentially to avoid stacking multiple large requests at once.
-		(async () => {
-			for (const file of files) {
-				await uploadAndInsertImage(file);
-			}
-		})();
+		// Route through the shared upload chain so a second drop (or file-picker
+		// upload) initiated while the first batch is still in flight doesn't
+		// stack parallel requests — they queue end-to-end instead.
+		for (const file of files) {
+			queueUpload(file);
+		}
 	}
 
 	/** Wait for any in-flight save to finish */
