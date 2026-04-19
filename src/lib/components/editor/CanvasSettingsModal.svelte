@@ -66,6 +66,15 @@
 	);
 	let selectedPreset = $state(untrack(() => matchPreset(currentWidth, currentHeight)));
 	let saving = $state(false);
+	/** Flips false when the component unmounts so in-flight apply() calls
+	 * can detect departure from /canvas/[id]/edit and skip UI mutations
+	 * (onApplied, toasts) that would otherwise leak onto unrelated pages. */
+	let isMounted = true;
+	$effect(() => {
+		return () => {
+			isMounted = false;
+		};
+	});
 
 	$effect(() => {
 		if (open) {
@@ -132,7 +141,10 @@
 		// different /canvas/[id]/edit while the PATCH is in flight, we must
 		// not apply canvas A's dimensions/background to canvas B (which
 		// would resize/recolor the wrong canvas + show a misleading toast).
+		// Unmount is the same class of problem — don't flush UI when the
+		// editor is gone.
 		const originCanvasId = canvasId;
+		const isStale = () => !isMounted || canvasId !== originCanvasId;
 		saving = true;
 		try {
 			const patch: CanvasSettingsPatch = {
@@ -146,7 +158,7 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(patch)
 			});
-			if (canvasId !== originCanvasId) return;
+			if (isStale()) return;
 			if (!res.ok) {
 				toast.error('Failed to update canvas settings.');
 				return;
@@ -155,10 +167,14 @@
 			toast.success('Canvas settings updated');
 			onClose();
 		} catch {
-			if (canvasId !== originCanvasId) return;
+			if (isStale()) return;
 			toast.error('Failed to update canvas settings.');
 		} finally {
-			saving = false;
+			// Only clear the saving flag for the originating canvas. A stale
+			// late completion must not re-enable the button on canvas B if
+			// canvas B has its own PATCH in flight (would allow double-submit).
+			// The canvas-switch $effect above is what resets saving on switch.
+			if (!isStale()) saving = false;
 		}
 	}
 </script>
