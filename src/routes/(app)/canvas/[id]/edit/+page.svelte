@@ -771,7 +771,8 @@
 				</div>
 			</div>
 			<div class="preview-url">
-				<code>/c/{data.canvas.slug}/image.png{previewQuery ? previewQuery.slice(1) : ''}</code>
+				<code>/c/{data.canvas.slug}/image.png{previewQuery ? `?${previewQuery.slice(1)}` : ''}</code
+				>
 			</div>
 		</div>
 	{/if}
