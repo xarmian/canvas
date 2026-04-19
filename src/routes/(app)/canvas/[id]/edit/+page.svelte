@@ -1,6 +1,17 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { beforeNavigate, goto } from '$app/navigation';
+	import {
+		ArrowLeft,
+		Undo2,
+		Redo2,
+		Type as TypeIcon,
+		Square,
+		Image as ImageIcon,
+		Trash2,
+		Eye,
+		EyeOff
+	} from '@lucide/svelte';
 	import CanvasEditor from '$lib/components/editor/Canvas.svelte';
 	import LayerPanel from '$lib/components/editor/LayerPanel.svelte';
 	import PropertyPanel from '$lib/components/editor/PropertyPanel.svelte';
@@ -766,25 +777,40 @@
 
 <div class="editor-layout">
 	<header class="toolbar">
-		<a href="/" class="back-link">&#8592; Dashboard</a>
+		<a href="/" class="back-link" aria-label="Back to dashboard">
+			<ArrowLeft size={14} aria-hidden="true" />
+			<span>Dashboard</span>
+		</a>
 		<span class="canvas-name">{data.canvas.name}</span>
 
 		<div class="toolbar-actions">
 			<button
-				class="tool-btn"
+				class="tool-btn icon-only"
 				onclick={() => editorRef?.undoAction()}
 				disabled={!historyState.canUndo}
-				title="Undo (Ctrl+Z)">↩</button
+				aria-label="Undo (Ctrl+Z)"
+				title="Undo (Ctrl+Z)"
 			>
+				<Undo2 size={14} />
+			</button>
 			<button
-				class="tool-btn"
+				class="tool-btn icon-only"
 				onclick={() => editorRef?.redoAction()}
 				disabled={!historyState.canRedo}
-				title="Redo (Ctrl+Shift+Z)">↪</button
+				aria-label="Redo (Ctrl+Shift+Z)"
+				title="Redo (Ctrl+Shift+Z)"
 			>
+				<Redo2 size={14} />
+			</button>
 			<span class="toolbar-sep"></span>
-			<button class="tool-btn" onclick={() => editorRef?.addText()}>Add Text</button>
-			<button class="tool-btn" onclick={() => editorRef?.addRect()}>Add Rectangle</button>
+			<button class="tool-btn" onclick={() => editorRef?.addText()}>
+				<TypeIcon size={14} />
+				<span>Text</span>
+			</button>
+			<button class="tool-btn" onclick={() => editorRef?.addRect()}>
+				<Square size={14} />
+				<span>Rectangle</span>
+			</button>
 			<button
 				class="tool-btn"
 				onclick={() => (showSettingsModal = true)}
@@ -793,7 +819,8 @@
 				{canvasWidth}×{canvasHeight}
 			</button>
 			<button class="tool-btn" onclick={openFilePicker} disabled={isUploading}>
-				{isUploading ? 'Uploading…' : 'Add Image'}
+				<ImageIcon size={14} />
+				<span>{isUploading ? 'Uploading…' : 'Image'}</span>
 			</button>
 			<input
 				bind:this={fileInput}
@@ -803,13 +830,20 @@
 				style="display: none;"
 			/>
 			<button class="tool-btn delete-btn" onclick={() => editorRef?.deleteSelected()}>
-				Delete
+				<Trash2 size={14} />
+				<span>Delete</span>
 			</button>
 		</div>
 
 		<span class="toolbar-sep"></span>
 		<button class="tool-btn" class:active={showPreview} onclick={togglePreview}>
-			{showPreview ? '✕ Close Preview' : '👁 Preview'}
+			{#if showPreview}
+				<EyeOff size={14} />
+				<span>Close Preview</span>
+			{:else}
+				<Eye size={14} />
+				<span>Preview</span>
+			{/if}
 		</button>
 
 		<div class="spacer"></div>
@@ -999,6 +1033,9 @@
 		text-decoration: none;
 		font-size: 14px;
 		white-space: nowrap;
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
 	}
 
 	.back-link:hover {
@@ -1028,6 +1065,19 @@
 		background: #fff;
 		cursor: pointer;
 		white-space: nowrap;
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		color: #1e293b;
+	}
+
+	.tool-btn.icon-only {
+		padding: 4px 6px;
+	}
+
+	.tool-btn :global(svg) {
+		display: block;
+		flex-shrink: 0;
 	}
 
 	.tool-btn:hover {

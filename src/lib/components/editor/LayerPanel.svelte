@@ -1,12 +1,24 @@
 <script lang="ts">
 	import type { FabricObject } from 'fabric';
+	import {
+		Type,
+		Image as ImageIcon,
+		Square,
+		Eye,
+		EyeOff,
+		Lock,
+		Unlock,
+		ChevronUp,
+		ChevronDown
+	} from '@lucide/svelte';
+	import type { Component } from 'svelte';
 	import { editorState, syncObjects, setSelectedObject, markDirty } from './state.svelte.ts';
 
-	function getIcon(obj: FabricObject): string {
+	function getIconComponent(obj: FabricObject): Component {
 		const t = obj.type?.toLowerCase() ?? '';
-		if (t === 'i-text' || t === 'itext' || t === 'textbox' || t === 'text') return '📝';
-		if (t === 'image' || t === 'fabricimage') return '🖼️';
-		return '▪️';
+		if (t === 'i-text' || t === 'itext' || t === 'textbox' || t === 'text') return Type;
+		if (t === 'image' || t === 'fabricimage') return ImageIcon;
+		return Square;
 	}
 
 	function getLabel(obj: FabricObject): string {
@@ -70,6 +82,7 @@
 
 	<div class="layer-list" role="listbox" aria-label="Canvas layers">
 		{#each reversed as obj (obj)}
+			{@const LayerIcon = getIconComponent(obj)}
 			<div
 				class="layer-row"
 				class:selected={editorState.selectedObject === obj}
@@ -81,52 +94,66 @@
 				role="option"
 				aria-selected={editorState.selectedObject === obj}
 			>
-				<span class="icon">{getIcon(obj)}</span>
+				<span class="icon" aria-hidden="true">
+					<LayerIcon size={14} strokeWidth={2} />
+				</span>
 				<span class="label">{getLabel(obj)}</span>
 
 				<span class="actions">
 					<button
 						class="action-btn"
 						title={obj.visible ? 'Hide' : 'Show'}
+						aria-label={obj.visible ? 'Hide layer' : 'Show layer'}
 						onclick={(e) => {
 							e.stopPropagation();
 							toggleVisibility(obj);
 						}}
 					>
-						{obj.visible ? '👁️' : '👁️‍🗨️'}
+						{#if obj.visible}
+							<Eye size={14} />
+						{:else}
+							<EyeOff size={14} />
+						{/if}
 					</button>
 
 					<button
 						class="action-btn"
 						title={obj.selectable ? 'Lock' : 'Unlock'}
+						aria-label={obj.selectable ? 'Lock layer' : 'Unlock layer'}
 						onclick={(e) => {
 							e.stopPropagation();
 							toggleLock(obj);
 						}}
 					>
-						{obj.selectable ? '🔓' : '🔒'}
+						{#if obj.selectable}
+							<Unlock size={14} />
+						{:else}
+							<Lock size={14} />
+						{/if}
 					</button>
 
 					<button
 						class="action-btn"
 						title="Move up"
+						aria-label="Move layer up"
 						onclick={(e) => {
 							e.stopPropagation();
 							moveUp(obj);
 						}}
 					>
-						▲
+						<ChevronUp size={14} />
 					</button>
 
 					<button
 						class="action-btn"
 						title="Move down"
+						aria-label="Move layer down"
 						onclick={(e) => {
 							e.stopPropagation();
 							moveDown(obj);
 						}}
 					>
-						▼
+						<ChevronDown size={14} />
 					</button>
 				</span>
 			</div>
@@ -201,7 +228,14 @@
 	.icon {
 		flex-shrink: 0;
 		width: 20px;
-		text-align: center;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		color: #475569;
+	}
+
+	.action-btn :global(svg) {
+		display: block;
 	}
 
 	.label {
