@@ -1,8 +1,13 @@
 <script lang="ts">
+	import { ConfirmDialog } from '$lib/components/ui';
+	import { toast } from '$lib/stores/toast.svelte';
+
 	let { data } = $props();
 
 	let deletedIds: string[] = $state([]);
 	let canvases = $derived(data.canvases.filter((c) => !deletedIds.includes(c.id)));
+
+	let confirmingDelete = $state<{ id: string; name: string } | null>(null);
 
 	function formatRelativeTime(date: Date): string {
 		const now = new Date();
@@ -18,14 +23,29 @@
 		return 'just now';
 	}
 
-	async function deleteCanvas(id: string) {
-		if (!window.confirm('Are you sure you want to delete this canvas?')) return;
+	function requestDelete(id: string, name: string) {
+		confirmingDelete = { id, name };
+	}
 
-		const res = await fetch(`/api/canvas/${id}`, { method: 'DELETE' });
-		if (res.ok) {
-			deletedIds.push(id);
-		} else {
-			alert('Failed to delete canvas.');
+	async function confirmDelete() {
+		if (!confirmingDelete) return;
+		const { id, name } = confirmingDelete;
+		confirmingDelete = null;
+
+		try {
+			const res = await fetch(`/api/canvas/${id}`, { method: 'DELETE' });
+			if (res.ok) {
+				deletedIds.push(id);
+				toast.success(`Deleted "${name}"`);
+			} else {
+				toast.error(`Failed to delete "${name}"`, {
+					action: { label: 'Retry', onClick: () => requestDelete(id, name) }
+				});
+			}
+		} catch {
+			toast.error(`Failed to delete "${name}"`, {
+				action: { label: 'Retry', onClick: () => requestDelete(id, name) }
+			});
 		}
 	}
 </script>
@@ -59,13 +79,28 @@
 					</div>
 					<div class="card-actions">
 						<a href="/canvas/{canvas.id}/edit" class="btn btn-edit">Edit</a>
-						<button class="btn btn-delete" onclick={() => deleteCanvas(canvas.id)}>Delete</button>
+						<button class="btn btn-delete" onclick={() => requestDelete(canvas.id, canvas.name)}>
+							Delete
+						</button>
 					</div>
 				</div>
 			{/each}
 		</div>
 	{/if}
 </div>
+
+<ConfirmDialog
+	open={confirmingDelete !== null}
+	title="Delete canvas?"
+	message={confirmingDelete
+		? `"${confirmingDelete.name}" will be permanently removed. This can't be undone.`
+		: ''}
+	confirmLabel="Delete"
+	cancelLabel="Cancel"
+	variant="danger"
+	onConfirm={confirmDelete}
+	onCancel={() => (confirmingDelete = null)}
+/>
 
 <style>
 	.dashboard {
