@@ -65,9 +65,92 @@
 				previewUrl = '';
 				clearTimeout(previewDebounce);
 			}
+			// Any in-flight openPublishModal() for canvas A has been orphaned
+			// by the switch; make sure we don't leave the button stuck in
+			// "Loading…" for canvas B.
+			openingPublish = false;
+			showPublishModal = false;
+			publishBindings = [];
+			publishBindingsStale = false;
 		}
 	});
 	let showPublishModal = $state(false);
+	let openingPublish = $state(false);
+	/** Snapshot of the current bindings in the format PublishModal expects.
+	 * Only refreshed after any pending edits are persisted — the public
+	 * renderer reads templateJson from the DB, so if we snapshotted from live
+	 * Fabric state while the canvas was dirty, the "Using this template"
+	 * table and example URLs could describe bindings that aren't yet live. */
+	let publishBindings = $state<{ name: string; default: string; sourceLabel: string }[]>([]);
+	/** True when we opened the modal without being able to persist pending
+	 * edits. Triggers a warning in the docs section but still lets the user
+	 * reach the Unpublish button (which doesn't depend on template state). */
+	let publishBindingsStale = $state(false);
+
+	async function openPublishModal() {
+		if (openingPublish) return;
+		openingPublish = true;
+		// Pin canvas id at click time. If the user switches to a different
+		// /canvas/[id]/edit — or leaves the editor entirely — while we're
+		// awaiting hydration/save, we must not apply UI state
+		// (publishBindings / showPublishModal / toasts) for the wrong canvas.
+		// Same rationale as the stale-guard in save().
+		const originCanvasId = data.canvas.id;
+		const isStale = () => !isMounted || data.canvas.id !== originCanvasId;
+		try {
+			// Block clicks that land before loadFromJSON() finishes. Without this,
+			// collectBoundParams() could walk a cleared-but-not-yet-repopulated
+			// Fabric canvas and snapshot an empty bindings list.
+			const hydrated = await waitForHydration();
+			if (isStale()) return;
+			if (!hydrated) {
+				toast.error('Canvas is still loading — try Publish again in a moment.');
+				return;
+			}
+
+			// Bounded wait: save() uses fetch() with no timeout, so a stalled
+			// backend could otherwise freeze this flow indefinitely and block
+			// the only in-UI path to Unpublish. If we time out, continue with
+			// persistOk=false so the modal still opens (with a staleness
+			// warning) and the user can still reach Unpublish.
+			const PUBLISH_SAVE_TIMEOUT_MS = 8000;
+			const waitedOk = await waitForSave(PUBLISH_SAVE_TIMEOUT_MS);
+			if (isStale()) return;
+
+			// save() skips markClean() when edits land *during* the PATCH (to
+			// avoid clobbering work). A single loop iteration could therefore
+			// return true and still leave us dirty. Loop a few times so that a
+			// stable clean state — matching what the public renderer will
+			// actually serve — precedes the binding snapshot. If save fails
+			// (or dirt persists) we still open the modal — the user may have
+			// clicked solely to hit Unpublish, which does not depend on
+			// template state. The modal shows a staleness warning instead.
+			const MAX_PERSIST_ATTEMPTS = 3;
+			let persistOk = waitedOk;
+			if (waitedOk) {
+				for (let i = 0; i < MAX_PERSIST_ATTEMPTS && editorState.isDirty; i++) {
+					const saved = await save();
+					if (isStale()) return;
+					if (!saved) {
+						persistOk = false;
+						break;
+					}
+				}
+			}
+			if (isStale()) return;
+			publishBindingsStale = !persistOk || editorState.isDirty;
+			publishBindings = collectBoundParams().map((b) => ({
+				name: b.name,
+				default: b.default,
+				sourceLabel: b.sampleLabel
+			}));
+			showPublishModal = true;
+		} finally {
+			// Clear the loading flag only if we're still on the originating
+			// canvas — otherwise the canvas-switch resync effect owns state.
+			if (!isStale()) openingPublish = false;
+		}
+	}
 
 	let editorRef: ReturnType<typeof CanvasEditor> | undefined = $state();
 	let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -102,9 +185,15 @@
 	// invalidate stale completions from overlapping navigations
 	let loadedCanvasId = $state('');
 	let hydrationToken = $state(0);
+	/** True once loadFromJSON(...) has completed for the currently-loaded
+	 * canvas id. Serialized edits (save, publish-docs snapshot) must wait
+	 * for this to avoid operating on a cleared-but-not-yet-populated
+	 * Fabric canvas. */
+	let hydrationComplete = $state(false);
 	$effect(() => {
 		if (editorState.fabricCanvas && loadedCanvasId !== data.canvas.id) {
 			loadedCanvasId = data.canvas.id;
+			hydrationComplete = false;
 			const thisToken = ++hydrationToken;
 			const canvas = editorState.fabricCanvas;
 
@@ -134,14 +223,25 @@
 						if (hydrationToken !== thisToken) return;
 						endSuppressSnapshots();
 						saveSnapshot(canvas);
+						hydrationComplete = true;
 					});
 			} else {
 				// Empty canvas — end suppression and save initial blank snapshot
 				endSuppressSnapshots();
 				saveSnapshot(canvas);
+				hydrationComplete = true;
 			}
 		}
 	});
+
+	async function waitForHydration(timeoutMs = 5000): Promise<boolean> {
+		const start = Date.now();
+		while (!hydrationComplete) {
+			if (Date.now() - start > timeoutMs) return false;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		return true;
+	}
 
 	// Auto-save: debounce 2 seconds after any edit (watches editorState.editGeneration for re-triggers)
 	$effect(() => {
@@ -479,11 +579,19 @@
 		}
 	}
 
-	/** Wait for any in-flight save to finish */
-	async function waitForSave() {
+	/** Wait for any in-flight save to finish, with an optional timeout. Returns
+	 * true when isSaving is clear, false when the timeout expired first.
+	 * A bounded wait is important for flows (like openPublishModal) that must
+	 * not block the UI indefinitely if the backend or network hangs — the
+	 * caller can surface a stale-state warning instead of leaving the button
+	 * stuck on "Loading…" forever. */
+	async function waitForSave(timeoutMs?: number): Promise<boolean> {
+		const start = Date.now();
 		while (isSaving) {
+			if (timeoutMs !== undefined && Date.now() - start > timeoutMs) return false;
 			await new Promise((r) => setTimeout(r, 100));
 		}
+		return true;
 	}
 
 	// --- Test Parameters panel: drive the preview with bound-param values ---
@@ -694,9 +802,10 @@
 			type="button"
 			class="publish-btn"
 			class:published={isPublished}
-			onclick={() => (showPublishModal = true)}
+			disabled={openingPublish}
+			onclick={openPublishModal}
 		>
-			{isPublished ? 'Published' : 'Publish'}
+			{openingPublish ? 'Loading…' : isPublished ? 'Published' : 'Publish'}
 		</button>
 	</header>
 
@@ -745,6 +854,8 @@
 		canvasId={data.canvas.id}
 		slug={data.canvas.slug}
 		published={isPublished}
+		bindings={publishBindings}
+		bindingsStale={publishBindingsStale}
 		onClose={() => (showPublishModal = false)}
 		onPublishedChange={(next) => (isPublished = next)}
 		onBeforePublish={async () => {
