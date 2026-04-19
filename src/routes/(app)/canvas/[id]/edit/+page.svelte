@@ -224,6 +224,19 @@
 		}
 	}
 
+	// Dismiss any lingering failure toast when the editor unmounts. Without
+	// this, leaving /canvas/[id]/edit after a failed save leaves a sticky
+	// Retry toast on unrelated routes (the Toaster is mounted globally), and
+	// its Retry action would call save() on a torn-down component.
+	$effect(() => {
+		return () => {
+			if (failedToastId) {
+				toast.dismiss(failedToastId);
+				failedToastId = null;
+			}
+		};
+	});
+
 	function handleSaveFailure() {
 		lastSaveFailed = true;
 		// If a previous failure toast is still visible, let it continue to
