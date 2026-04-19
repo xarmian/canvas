@@ -503,21 +503,23 @@
 
 	/** Collect a deduped list of {name, default} across every paramBinding in the
 	 * current canvas. Two bindings with the same name win with the first-seen
-	 * default — matches how the runtime merges. Uses a plain record rather than
-	 * a Map to keep eslint-plugin-svelte's reactivity rule happy. */
+	 * default — matches how the runtime merges. Uses Object.create(null) plus
+	 * Object.hasOwn() so identifiers inherited from Object.prototype (e.g.
+	 * "constructor", "toString", "hasOwnProperty") aren't misread as already
+	 * present and silently dropped. */
 	function collectBoundParams(): BoundParamInfo[] {
 		if (!editorState.fabricCanvas) return [];
 		const json = editorState.fabricCanvas.toObject(['paramBindings']) as {
 			objects?: FabricLikeObject[];
 		};
-		const seen: Record<string, BoundParamInfo> = {};
+		const seen: Record<string, BoundParamInfo> = Object.create(null);
 		for (const obj of json.objects ?? []) {
 			const bindings = obj.paramBindings;
 			if (!bindings) continue;
 			for (const [property, binding] of Object.entries(bindings)) {
 				const name = binding?.param?.trim();
 				if (!name) continue;
-				if (seen[name]) continue;
+				if (Object.hasOwn(seen, name)) continue;
 				seen[name] = {
 					name,
 					default: binding?.default ?? '',
@@ -532,7 +534,9 @@
 	/** User-typed test values, keyed by param name. Starts empty (so the default
 	 * is applied) and the user types to override. Separate from boundParams so
 	 * edits survive re-discovery of bindings. */
-	let testParams = $state<Record<string, string>>({});
+	// Null-prototype object so parameter names that collide with Object.prototype
+	// members ("constructor", "toString", …) don't shadow inherited properties.
+	let testParams = $state<Record<string, string>>(Object.create(null));
 	/** The query-string portion driving the preview image, updated only after a
 	 * 300ms debounce so the user can type without thrashing the server. */
 	let previewQuery = $state('');
@@ -542,7 +546,8 @@
 	function buildPreviewQuery(values: Record<string, string>): string {
 		// Build the query string manually (encodeURIComponent) rather than via
 		// URLSearchParams to keep eslint-plugin-svelte's reactivity rule happy —
-		// this is a pure helper, not a reactive source.
+		// this is a pure helper, not a reactive source. Object.entries is safe
+		// against prototype pollution (it only yields own enumerable keys).
 		const parts: string[] = [];
 		for (const [k, v] of Object.entries(values)) {
 			if (v === '') continue; // empty means "fall through to binding default"
@@ -560,7 +565,12 @@
 	}
 
 	function setTestParam(name: string, value: string) {
-		testParams = { ...testParams, [name]: value };
+		// Rebuild with a null-prototype object to preserve prototype-pollution
+		// safety for identifiers like "constructor" or "toString".
+		const next: Record<string, string> = Object.create(null);
+		for (const [k, v] of Object.entries(testParams)) next[k] = v;
+		next[name] = value;
+		testParams = next;
 		schedulePreviewRefresh();
 	}
 
@@ -583,12 +593,14 @@
 
 		// Discover bound params from the freshly-saved template and seed test
 		// inputs with empty strings (so defaults take effect). Preserve any
-		// existing user-typed values for params that still exist.
+		// existing user-typed values for params that still exist. Uses a
+		// null-prototype object so parameter names like "constructor" or
+		// "toString" are handled correctly (prototype-pollution safe).
 		const discovered = collectBoundParams();
 		boundParams = discovered;
-		const nextTest: Record<string, string> = {};
+		const nextTest: Record<string, string> = Object.create(null);
 		for (const p of discovered) {
-			nextTest[p.name] = testParams[p.name] ?? '';
+			nextTest[p.name] = Object.hasOwn(testParams, p.name) ? testParams[p.name] : '';
 		}
 		testParams = nextTest;
 
