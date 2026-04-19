@@ -16,6 +16,7 @@
 	import LayerPanel from '$lib/components/editor/LayerPanel.svelte';
 	import PropertyPanel from '$lib/components/editor/PropertyPanel.svelte';
 	import PublishModal from '$lib/components/editor/PublishModal.svelte';
+	import MobileBanner from '$lib/components/editor/MobileBanner.svelte';
 	import CanvasSettingsModal, {
 		type CanvasSettingsPatch
 	} from '$lib/components/editor/CanvasSettingsModal.svelte';
@@ -774,6 +775,8 @@
 <svelte:head>
 	<title>Edit: {data.canvas.name} | Canvas</title>
 </svelte:head>
+
+<MobileBanner />
 
 <div class="editor-layout">
 	<header class="toolbar">
