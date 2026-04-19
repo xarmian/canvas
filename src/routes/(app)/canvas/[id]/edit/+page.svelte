@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import CanvasEditor from '$lib/components/editor/Canvas.svelte';
 	import LayerPanel from '$lib/components/editor/LayerPanel.svelte';
 	import PropertyPanel from '$lib/components/editor/PropertyPanel.svelte';
+	import PublishModal from '$lib/components/editor/PublishModal.svelte';
 	import { editorState, markClean } from '$lib/components/editor/state.svelte';
 	import {
 		historyState,
@@ -12,6 +14,22 @@
 	} from '$lib/components/editor/history.svelte';
 
 	let { data } = $props();
+
+	// Local copy so the Publish modal can update it after a successful publish/unpublish
+	// without a full page reload. Resynced whenever the loaded canvas changes so that
+	// client-side navigation between different /canvas/[id]/edit records does not
+	// keep showing the prior canvas's publish state. `untrack` on the initial read
+	// silences svelte-check's "state_referenced_locally" warning — the resync effect
+	// below is what actually keeps this in step with `data`.
+	let isPublished = $state(untrack(() => data.canvas.published));
+	let publishedSyncId = $state(untrack(() => data.canvas.id));
+	$effect(() => {
+		if (data.canvas.id !== publishedSyncId) {
+			publishedSyncId = data.canvas.id;
+			isPublished = data.canvas.published;
+		}
+	});
+	let showPublishModal = $state(false);
 
 	let editorRef: ReturnType<typeof CanvasEditor> | undefined = $state();
 	let saveStatus: string = $state('');
@@ -197,9 +215,14 @@
 			{isSaving ? 'Saving...' : 'Save'}
 		</button>
 
-		<span class="publish-badge" class:published={data.canvas.published}>
-			{data.canvas.published ? 'Published' : 'Draft'}
-		</span>
+		<button
+			type="button"
+			class="publish-btn"
+			class:published={isPublished}
+			onclick={() => (showPublishModal = true)}
+		>
+			{isPublished ? 'Published' : 'Publish'}
+		</button>
 	</header>
 
 	<div class="main-area">
@@ -216,6 +239,22 @@
 
 		<PropertyPanel />
 	</div>
+
+	<PublishModal
+		open={showPublishModal}
+		canvasId={data.canvas.id}
+		slug={data.canvas.slug}
+		published={isPublished}
+		onClose={() => (showPublishModal = false)}
+		onPublishedChange={(next) => (isPublished = next)}
+		onBeforePublish={async () => {
+			// Flush pending autosave so the published URL renders the latest edits,
+			// not whatever was last committed before the user hit Publish.
+			await waitForSave();
+			if (!editorState.isDirty) return true;
+			return await save();
+		}}
+	/>
 
 	{#if showPreview && previewUrl}
 		<div class="preview-panel">
@@ -348,18 +387,35 @@
 		cursor: not-allowed;
 	}
 
-	.publish-badge {
-		font-size: 12px;
-		padding: 2px 8px;
-		border-radius: 9999px;
-		background: #f1f5f9;
-		color: #9ca3af;
+	.publish-btn {
+		font-size: 13px;
+		font-weight: 500;
+		padding: 5px 12px;
+		border-radius: 4px;
+		background: #fff;
+		color: #374151;
+		border: 1px solid #d1d5db;
+		cursor: pointer;
 		white-space: nowrap;
 	}
 
-	.publish-badge.published {
+	.publish-btn:hover {
+		background: #f3f4f6;
+	}
+
+	.publish-btn:focus-visible {
+		outline: 2px solid #2563eb;
+		outline-offset: 2px;
+	}
+
+	.publish-btn.published {
 		background: #dcfce7;
-		color: #16a34a;
+		color: #15803d;
+		border-color: #86efac;
+	}
+
+	.publish-btn.published:hover {
+		background: #bbf7d0;
 	}
 
 	.main-area {
