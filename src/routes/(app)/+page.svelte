@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { ConfirmDialog } from '$lib/components/ui';
 	import { toast } from '$lib/stores/toast.svelte';
+	import { STARTER_CANVAS } from '$lib/templates/starter';
 
 	let { data } = $props();
 
@@ -8,6 +10,29 @@
 	let canvases = $derived(data.canvases.filter((c) => !deletedIds.includes(c.id)));
 
 	let confirmingDelete = $state<{ id: string; name: string } | null>(null);
+	let creatingExample = $state(false);
+
+	async function tryExample() {
+		if (creatingExample) return;
+		creatingExample = true;
+		try {
+			const res = await fetch('/api/canvas', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(STARTER_CANVAS)
+			});
+			if (!res.ok) {
+				toast.error('Could not create example canvas. Try again or start from scratch.');
+				return;
+			}
+			const canvas = (await res.json()) as { id: string };
+			goto(`/canvas/${canvas.id}/edit`);
+		} catch {
+			toast.error('Could not create example canvas. Check your connection and try again.');
+		} finally {
+			creatingExample = false;
+		}
+	}
 
 	function formatRelativeTime(date: Date): string {
 		const now = new Date();
@@ -62,8 +87,31 @@
 
 	{#if canvases.length === 0}
 		<div class="empty">
-			<p>You don't have any canvases yet.</p>
-			<a href="/new" class="btn btn-primary">Create your first canvas</a>
+			<h2 class="empty-title">Design once, share anywhere</h2>
+			<p class="empty-lede">
+				Canvas lets you design a template visually, then generate infinite variants by passing URL
+				parameters. Great for OG images, social cards, and any dynamic preview you share.
+			</p>
+			<ol class="empty-steps">
+				<li>Design a template with text and images</li>
+				<li>Bind any property to a <code>?name=value</code> URL parameter</li>
+				<li>Publish, copy the URL, and share</li>
+			</ol>
+			<div class="empty-actions">
+				<a href="/new" class="btn btn-primary">Create your first canvas</a>
+				<button
+					type="button"
+					class="btn btn-secondary"
+					disabled={creatingExample}
+					onclick={tryExample}
+				>
+					{creatingExample ? 'Loading example…' : 'Try an example'}
+				</button>
+			</div>
+			<p class="empty-hint">
+				The example is a ready-to-edit OG card with bound parameters for title, subtitle, and accent
+				color — open it, then click Preview to see parameter testing live.
+			</p>
 		</div>
 	{:else}
 		<div class="grid">
@@ -160,14 +208,79 @@
 	}
 
 	.empty {
+		max-width: 560px;
+		margin: 0 auto;
 		text-align: center;
-		padding: 4rem 1rem;
-		color: #666;
+		padding: 3rem 1.5rem;
+		color: #334155;
 	}
 
-	.empty p {
-		margin-bottom: 1rem;
-		font-size: 1.05rem;
+	.empty-title {
+		margin: 0 0 0.6rem;
+		font-size: 1.5rem;
+		font-weight: 700;
+		color: #0f172a;
+	}
+
+	.empty-lede {
+		margin: 0 0 1.25rem;
+		font-size: 1rem;
+		line-height: 1.55;
+		color: #475569;
+	}
+
+	.empty-steps {
+		margin: 0 auto 1.5rem;
+		padding: 0.75rem 1rem 0.75rem 2.5rem;
+		text-align: left;
+		background: #f8fafc;
+		border: 1px solid #e2e8f0;
+		border-radius: 8px;
+		font-size: 0.9rem;
+		color: #334155;
+		max-width: 420px;
+	}
+
+	.empty-steps li {
+		margin: 0.2rem 0;
+		line-height: 1.5;
+	}
+
+	.empty-steps code {
+		background: #e2e8f0;
+		padding: 0.05rem 0.35rem;
+		border-radius: 3px;
+		font-size: 0.85em;
+	}
+
+	.empty-actions {
+		display: flex;
+		gap: 0.5rem;
+		justify-content: center;
+		flex-wrap: wrap;
+		margin-bottom: 0.75rem;
+	}
+
+	.btn-secondary {
+		background: #fff;
+		color: #111;
+		border: 1px solid #d1d5db;
+	}
+
+	.btn-secondary:hover {
+		background: #f3f4f6;
+	}
+
+	.btn-secondary:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.empty-hint {
+		margin: 0;
+		font-size: 0.8125rem;
+		color: #94a3b8;
+		line-height: 1.5;
 	}
 
 	.grid {

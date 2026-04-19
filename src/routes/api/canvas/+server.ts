@@ -18,15 +18,30 @@ export const GET: RequestHandler = async ({ locals }) => {
 	return json(userCanvases);
 };
 
-/** Create a new canvas */
+/** Create a new canvas. Optional templateJson lets starter-template flows
+ * seed a pre-built canvas; otherwise a blank one is created. */
 export const POST: RequestHandler = async ({ request, locals }) => {
 	if (!locals.user) error(401, 'Unauthorized');
 
 	const body = await request.json();
-	const { name, width, height, backgroundType, backgroundValue } = body;
+	const { name, width, height, backgroundType, backgroundValue, templateJson } = body;
 
 	if (!name || typeof name !== 'string' || name.trim().length === 0) {
 		error(400, 'Canvas name is required');
+	}
+
+	// Minimal shape check on templateJson — we store it as JSONB, but anything
+	// other than a plain object with an `objects` array will break the renderer.
+	let safeTemplate: { version: string; objects: unknown[] } = { version: '1.0', objects: [] };
+	if (templateJson !== undefined) {
+		if (
+			typeof templateJson !== 'object' ||
+			templateJson === null ||
+			!Array.isArray((templateJson as { objects?: unknown }).objects)
+		) {
+			error(400, 'templateJson must be an object with an "objects" array');
+		}
+		safeTemplate = templateJson as { version: string; objects: unknown[] };
 	}
 
 	const slug = `${name
@@ -44,7 +59,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			height: height || 630,
 			backgroundType: backgroundType || 'color',
 			backgroundValue: backgroundValue || '#ffffff',
-			templateJson: { version: '1.0', objects: [] }
+			templateJson: safeTemplate
 		})
 		.returning();
 
