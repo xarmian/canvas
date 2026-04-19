@@ -39,15 +39,15 @@ Returns a rendered PNG in ~35ms.
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Frontend | SvelteKit + Svelte 5 |
-| Editor | Fabric.js v7 |
-| Rendering | @napi-rs/canvas (Skia) + Sharp |
-| Database | PostgreSQL + Drizzle ORM |
-| Auth | Better Auth |
-| Storage | S3-compatible (MinIO) |
-| Deployment | Docker Compose |
+| Layer      | Technology                     |
+| ---------- | ------------------------------ |
+| Frontend   | SvelteKit + Svelte 5           |
+| Editor     | Fabric.js v7                   |
+| Rendering  | @napi-rs/canvas (Skia) + Sharp |
+| Database   | PostgreSQL + Drizzle ORM       |
+| Auth       | Better Auth                    |
+| Storage    | S3-compatible (MinIO)          |
+| Deployment | Docker Compose                 |
 
 ## Quick Start
 
@@ -148,18 +148,18 @@ canvas/
 
 See [`.env.example`](.env.example) for all configuration options.
 
-| Variable | Description |
-|---|---|
-| `DATABASE_URL` | PostgreSQL connection string |
+| Variable             | Description                                                      |
+| -------------------- | ---------------------------------------------------------------- |
+| `DATABASE_URL`       | PostgreSQL connection string                                     |
 | `BETTER_AUTH_SECRET` | Session signing secret (generate with `openssl rand -base64 32`) |
-| `BETTER_AUTH_URL` | Public app URL for auth callbacks |
-| `S3_ENDPOINT` | S3-compatible storage endpoint |
-| `S3_ACCESS_KEY` | Storage access key |
-| `S3_SECRET_KEY` | Storage secret key |
-| `S3_BUCKET` | Storage bucket name |
-| `S3_PUBLIC_URL` | Public URL for accessing stored assets |
-| `STORAGE_LOCAL` | Set to `true` for local filesystem storage (dev) |
-| `PUBLIC_APP_URL` | Public-facing app URL |
+| `BETTER_AUTH_URL`    | Public app URL for auth callbacks                                |
+| `S3_ENDPOINT`        | S3-compatible storage endpoint                                   |
+| `S3_ACCESS_KEY`      | Storage access key                                               |
+| `S3_SECRET_KEY`      | Storage secret key                                               |
+| `S3_BUCKET`          | Storage bucket name                                              |
+| `S3_PUBLIC_URL`      | Public URL for accessing stored assets                           |
+| `STORAGE_LOCAL`      | Set to `true` for local filesystem storage (dev)                 |
+| `PUBLIC_APP_URL`     | Public-facing app URL                                            |
 
 ## Scripts
 
