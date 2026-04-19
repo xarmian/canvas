@@ -31,11 +31,19 @@
 	// silences svelte-check's "state_referenced_locally" warning — the resync effect
 	// below is what actually keeps this in step with `data`.
 	let isPublished = $state(untrack(() => data.canvas.published));
-	let publishedSyncId = $state(untrack(() => data.canvas.id));
+	let canvasScopedSyncId = $state(untrack(() => data.canvas.id));
 	$effect(() => {
-		if (data.canvas.id !== publishedSyncId) {
-			publishedSyncId = data.canvas.id;
+		if (data.canvas.id !== canvasScopedSyncId) {
+			canvasScopedSyncId = data.canvas.id;
+			// Resync publish state for the newly loaded canvas.
 			isPublished = data.canvas.published;
+			// Reset save-failure state so a stale failure from canvas A doesn't
+			// bleed into canvas B (wrong red pill + wrong retry toast).
+			lastSaveFailed = false;
+			if (failedToastId) {
+				toast.dismiss(failedToastId);
+				failedToastId = null;
+			}
 		}
 	});
 	let showPublishModal = $state(false);
