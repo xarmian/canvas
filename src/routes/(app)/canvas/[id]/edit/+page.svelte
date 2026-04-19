@@ -50,6 +50,11 @@
 			// there (intentional — so a late A-response doesn't clobber a B-save
 			// in progress). The newly loaded canvas starts from a clean slate.
 			isSaving = false;
+			// Drop any Test Parameter values entered while previewing canvas A
+			// so they don't leak into canvas B's preview when the user opens it.
+			testParams = Object.create(null);
+			boundParams = [];
+			previewQuery = '';
 		}
 	});
 	let showPublishModal = $state(false);
