@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { beforeNavigate, goto } from '$app/navigation';
 	import CanvasEditor from '$lib/components/editor/Canvas.svelte';
 	import LayerPanel from '$lib/components/editor/LayerPanel.svelte';
 	import PropertyPanel from '$lib/components/editor/PropertyPanel.svelte';
@@ -13,6 +14,7 @@
 		endSuppressSnapshots
 	} from '$lib/components/editor/history.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
+	import { ConfirmDialog } from '$lib/components/ui';
 
 	/** Accepted by /api/upload for image uploads. Must stay in sync with
 	 * server-side ALLOWED_IMAGE_TYPES. */
@@ -111,6 +113,73 @@
 			clearTimeout(autoSaveTimer);
 		};
 	});
+
+	// beforeunload warning: protects users from losing work when they close the
+	// tab, reload, or navigate to an *external* URL while the editor has unsaved
+	// edits, an in-flight save, or a queued/active upload. Modern browsers
+	// render their generic "Leave site?" dialog; legacy engines honor returnValue.
+	$effect(() => {
+		function onBeforeUnload(e: BeforeUnloadEvent) {
+			if (hasPendingWork()) {
+				e.preventDefault();
+				e.returnValue = '';
+			}
+		}
+		window.addEventListener('beforeunload', onBeforeUnload);
+		return () => window.removeEventListener('beforeunload', onBeforeUnload);
+	});
+
+	// SvelteKit client-side navigation guard. `beforeunload` alone doesn't fire
+	// on SPA transitions (e.g. clicking the Dashboard link in the toolbar), so
+	// without this the editor would unmount silently and pending work would be
+	// lost. We cancel the navigation and show a styled confirm dialog; if the
+	// user confirms, we set a one-shot bypass flag and re-issue the goto.
+	let pendingNavigationHref = $state<string | null>(null);
+	/** True when the blocked destination isn't an app-owned SvelteKit route
+	 * (route.id === null) — e.g. external link, non-SvelteKit URL, or
+	 * browser-back to an external referrer. Those can't be re-issued via
+	 * goto(); they need window.location. */
+	let pendingNavigationIsExternal = false;
+	let bypassNavigationGuard = false;
+
+	function hasPendingWork(): boolean {
+		return editorState.isDirty || isSaving || isUploading;
+	}
+
+	beforeNavigate((nav) => {
+		if (bypassNavigationGuard) {
+			bypassNavigationGuard = false;
+			return;
+		}
+		if (!hasPendingWork()) return;
+		const targetHref = nav.to?.url.href;
+		if (!targetHref) return;
+		pendingNavigationHref = targetHref;
+		pendingNavigationIsExternal = nav.to?.route?.id == null;
+		nav.cancel();
+	});
+
+	function confirmLeave() {
+		const href = pendingNavigationHref;
+		const external = pendingNavigationIsExternal;
+		pendingNavigationHref = null;
+		pendingNavigationIsExternal = false;
+		if (!href) return;
+		bypassNavigationGuard = true;
+		if (external) {
+			// SvelteKit's goto() only supports app-owned routes. For external or
+			// non-SvelteKit destinations we must use window.location, otherwise
+			// confirming the dialog throws and the user is trapped.
+			window.location.href = href;
+		} else {
+			goto(href);
+		}
+	}
+
+	function cancelLeave() {
+		pendingNavigationHref = null;
+		pendingNavigationIsExternal = false;
+	}
 
 	async function save(): Promise<boolean> {
 		if (!editorState.fabricCanvas || isSaving) return false;
@@ -413,6 +482,17 @@
 
 		<PropertyPanel />
 	</div>
+
+	<ConfirmDialog
+		open={pendingNavigationHref !== null}
+		title="Leave without saving?"
+		message="You have unsaved changes. Leaving now will discard them."
+		confirmLabel="Leave anyway"
+		cancelLabel="Stay"
+		variant="danger"
+		onConfirm={confirmLeave}
+		onCancel={cancelLeave}
+	/>
 
 	<PublishModal
 		open={showPublishModal}
