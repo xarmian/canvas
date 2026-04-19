@@ -44,6 +44,12 @@
 				toast.dismiss(failedToastId);
 				failedToastId = null;
 			}
+			// Clear isSaving. If a save was in flight for canvas A when the user
+			// switched, the stale-guard in save() already ignores the returning
+			// response for state purposes, but isSaving itself never gets cleared
+			// there (intentional — so a late A-response doesn't clobber a B-save
+			// in progress). The newly loaded canvas starts from a clean slate.
+			isSaving = false;
 		}
 	});
 	let showPublishModal = $state(false);
