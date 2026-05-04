@@ -7,7 +7,7 @@ import { render } from '$lib/engine';
 import type { CanvasTemplate, FabricCanvasJson, OutputFormat } from '$lib/engine';
 import { validateParams } from '$lib/server/canvas-params';
 import { getDefaultRenderCache } from '$lib/server/render-cache';
-import { ensureUserFontsRegistered } from '$lib/server/user-fonts';
+import { ensureUserFontsRegistered, getLiveUserFontFamilies } from '$lib/server/user-fonts';
 
 const renderCache = getDefaultRenderCache();
 
@@ -18,6 +18,21 @@ function parseFormat(file: string): { format: OutputFormat; contentType: string 
 		return { format: 'jpeg', contentType: 'image/jpeg' };
 	if (file === 'image.webp') return { format: 'webp', contentType: 'image/webp' };
 	return null;
+}
+
+/** Replace any user-namespaced fontFamily that's no longer in the live
+ *  asset set with 'Inter'. User-namespaced families are recognizable by
+ *  the `u-` prefix that scopedFontFamily emits; bundled families
+ *  ("Inter", "Arial", ...) are preserved as-is. */
+function sanitizeFontFamilies(json: FabricCanvasJson, liveFamilies: Set<string>): FabricCanvasJson {
+	const objects = (json.objects ?? []).map((obj) => {
+		const family = (obj as { fontFamily?: string }).fontFamily;
+		if (typeof family === 'string' && family.startsWith('u-') && !liveFamilies.has(family)) {
+			return { ...obj, fontFamily: 'Inter' };
+		}
+		return obj;
+	});
+	return { ...json, objects };
 }
 
 /** Build a cache key from slug + content version + params + format.
@@ -118,13 +133,26 @@ export const GET: RequestHandler = async ({ params, url }) => {
 	// font set instead of 500-ing the public render URL.
 	await ensureUserFontsRegistered(canvas.userId);
 
-	// Build template
+	// Build template, then sanitize fontFamily references that point at
+	// deleted fonts. GlobalFonts has no unregister API — once a font has
+	// been registered in this process, it stays in Skia's table. So a
+	// canvas whose author deleted the asset would keep rendering with
+	// the deleted bytes until the server restarted. Swapping to 'Inter'
+	// here gives consistent fallback behavior in-process AND across
+	// restarts. The cache key already includes canvas.updatedAt, so a
+	// post-delete edit busts the cache and serves the swapped output.
+	const liveFamilies = await getLiveUserFontFamilies(canvas.userId);
+	const sanitizedJson = sanitizeFontFamilies(
+		(canvas.templateJson as unknown as FabricCanvasJson) ?? { objects: [] },
+		liveFamilies
+	);
+
 	const template: CanvasTemplate = {
 		width: canvas.width,
 		height: canvas.height,
 		backgroundType: canvas.backgroundType as 'color' | 'image',
 		backgroundValue: canvas.backgroundValue,
-		templateJson: (canvas.templateJson as unknown as FabricCanvasJson) ?? { objects: [] }
+		templateJson: sanitizedJson
 	};
 
 	// Render

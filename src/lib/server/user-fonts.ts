@@ -87,6 +87,19 @@ async function loadFontRows(userId: string): Promise<FontRow[]> {
 }
 
 /**
+ * Return the set of currently-alive user font families for `userId`,
+ * each in scoped form. The render endpoint uses this to swap any
+ * fontFamily references in templateJson that point to a deleted
+ * font — without that, a canvas keeps drawing with the deleted
+ * font's bytes until the server process restarts (GlobalFonts has
+ * no unregister API).
+ */
+export async function getLiveUserFontFamilies(userId: string): Promise<Set<string>> {
+	const rows = await loadFontRows(userId);
+	return new Set(rows.map((r) => scopedFontFamily(userId, deriveFontFamily(r.filename))));
+}
+
+/**
  * Download and register every font asset belonging to `userId` that
  * hasn't already been registered in this process. Best-effort: a
  * failure on one font is logged and skipped so it can't block a

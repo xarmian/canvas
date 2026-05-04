@@ -31,8 +31,14 @@ test.describe('Custom fonts', () => {
 			buffer: interRegular
 		});
 
-		// Wait for the font list to reflect the upload.
-		await expect(page.getByText('CanvasTestFont').first()).toBeVisible({ timeout: 10_000 });
+		// Wait for the font row to actually appear in the list. Matching
+		// `getByText('CanvasTestFont')` is fragile — the upload toast
+		// transiently contains the same text, which would let the test
+		// proceed before the upload+listing round-trip finished and
+		// then race the navigation that follows.
+		await expect(page.locator('.font-family', { hasText: 'CanvasTestFont' })).toBeVisible({
+			timeout: 15_000
+		});
 
 		// Open the editor for a fresh canvas, add a text layer, and
 		// verify the font dropdown lists the uploaded family.
