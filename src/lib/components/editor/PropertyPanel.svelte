@@ -246,7 +246,7 @@
 						>
 							{#each fontStore.fonts as font (font.family)}
 								<option value={font.family}>
-									{font.family}{font.source === 'user' ? ' (uploaded)' : ''}
+									{font.displayName}{font.source === 'user' ? ' (uploaded)' : ''}
 								</option>
 							{/each}
 							<!-- If the canvas references a custom family that hasn't

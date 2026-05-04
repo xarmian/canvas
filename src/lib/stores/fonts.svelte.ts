@@ -14,23 +14,32 @@
  */
 
 export interface FontEntry {
+	/** The string stored in templateJson and used as the CSS family
+	 *  name. For bundled fonts this is the canonical name (e.g. "Inter").
+	 *  For user fonts this is the userId-namespaced form returned by
+	 *  /api/fonts so two users uploading "Brand.ttf" can't collide in
+	 *  the process-global GlobalFonts registry. */
 	family: string;
+	/** What the dropdown shows. For bundled fonts this matches `family`;
+	 *  for user fonts this is the un-namespaced derived name. */
+	displayName: string;
 	source: 'bundled' | 'user';
-	/** URL where the font can be loaded from (for user fonts). Bundled
-	 *  fonts are served via system or @font-face in the page CSS and
-	 *  don't need a URL surfaced here. */
+	/** URL where the font can be loaded from (for user fonts). */
 	url?: string;
+	/** Asset id (user fonts only) — used to dedup adds and to remove
+	 *  entries that are no longer present in /api/fonts. */
+	assetId?: string;
 }
 
 /** Bundled families. The renderer registers these via initDefaultFonts;
  *  the editor relies on the system or page-level @font-face to make
  *  them available client-side. Order roughly matches v0.1 frequency. */
 export const BUNDLED_FONTS: readonly FontEntry[] = [
-	{ family: 'Inter', source: 'bundled' },
-	{ family: 'Arial', source: 'bundled' },
-	{ family: 'Georgia', source: 'bundled' },
-	{ family: 'Courier New', source: 'bundled' },
-	{ family: 'Times New Roman', source: 'bundled' }
+	{ family: 'Inter', displayName: 'Inter', source: 'bundled' },
+	{ family: 'Arial', displayName: 'Arial', source: 'bundled' },
+	{ family: 'Georgia', displayName: 'Georgia', source: 'bundled' },
+	{ family: 'Courier New', displayName: 'Courier New', source: 'bundled' },
+	{ family: 'Times New Roman', displayName: 'Times New Roman', source: 'bundled' }
 ] as const;
 
 interface FontStoreShape {
@@ -81,15 +90,10 @@ function createFontStore() {
 				return;
 			}
 			const body = (await res.json()) as {
-				items: { id: string; family: string; url: string }[];
+				items: { id: string; family: string; displayName: string; url: string }[];
 			};
 
-			// Add each not-yet-loaded font to document.fonts. We don't
-			// await each load() — adding the FontFace makes its name
-			// resolvable for Fabric's metric calls almost immediately,
-			// and a missing render here is recoverable on the next
-			// Fabric repaint. We do await Promise.all at the end so
-			// callers can know "everything that's coming has arrived".
+			// Add each not-yet-loaded font to document.fonts.
 			const loadPromises: Promise<unknown>[] = [];
 			for (const item of body.items) {
 				if (loadedIds[item.id]) continue;
@@ -107,14 +111,53 @@ function createFontStore() {
 							return null;
 						})
 					);
-					// Surface immediately so the picker shows it.
-					if (!state.fonts.some((f) => f.family === item.family)) {
-						state.fonts = [...state.fonts, { family: item.family, source: 'user', url: item.url }];
-					}
 				} catch (err) {
 					console.error('[fonts] FontFace constructor failed', item.family, err);
 				}
 			}
+
+			// Reconcile the visible list against the API response so a
+			// font deleted elsewhere (other tab, /assets page) disappears
+			// from the picker on the next editor open. We keep all
+			// bundled entries plus exactly the user fonts the API still
+			// reports — bundled entries are always present, and any
+			// previously-shown user font that's no longer returned is
+			// dropped (also clearing its loadedIds entry so a re-upload
+			// can re-register).
+			const apiFamilies = new Set(body.items.map((i) => i.family));
+			const apiAssetIds = new Set(body.items.map((i) => i.id));
+			const droppedAssetIds = Object.keys(loadedIds).filter(
+				(id) => !apiAssetIds.has(id) && !id.startsWith('bundled:')
+			);
+			for (const id of droppedAssetIds) delete loadedIds[id];
+
+			const nextFonts: FontEntry[] = [...BUNDLED_FONTS];
+			for (const item of body.items) {
+				if (!nextFonts.some((f) => f.family === item.family)) {
+					nextFonts.push({
+						family: item.family,
+						displayName: item.displayName,
+						source: 'user',
+						url: item.url,
+						assetId: item.id
+					});
+				}
+			}
+			// Preserve any stale entries that the FontFace.load catch
+			// already removed (so we don't resurrect a known-broken
+			// family). Stale = was in state.fonts but not in apiFamilies
+			// AND was a user font.
+			for (const f of state.fonts) {
+				if (
+					f.source === 'user' &&
+					!apiFamilies.has(f.family) &&
+					nextFonts.findIndex((nf) => nf.family === f.family) === -1
+				) {
+					// dropped — do not add back
+					continue;
+				}
+			}
+			state.fonts = nextFonts;
 
 			await Promise.all(loadPromises);
 			state.userFontsLoaded = true;

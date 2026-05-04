@@ -163,7 +163,11 @@
 	interface FontItem {
 		id: string;
 		filename: string;
+		/** Userid-namespaced family — what's stored in templateJson and
+		 *  registered with FontFace. */
 		family: string;
+		/** Un-namespaced derived family — what we show in the UI. */
+		displayName: string;
 		url: string;
 		contentType: string;
 		sizeBytes: number;
@@ -463,7 +467,7 @@
 					<li class="font-row">
 						<div class="font-row-main">
 							<div class="font-family" style="font-family: {JSON.stringify(font.family)}">
-								{font.family}
+								{font.displayName}
 							</div>
 							<div class="font-meta">
 								{font.filename} · {formatBytes(font.sizeBytes)} · {formatDate(font.createdAt)}
@@ -472,7 +476,7 @@
 						<button
 							type="button"
 							class="btn btn-delete"
-							aria-label={`Delete font ${font.family}`}
+							aria-label={`Delete font ${font.displayName}`}
 							onclick={() => requestFontDelete(font)}
 						>
 							<Trash2 size={14} aria-hidden="true" />
@@ -554,7 +558,7 @@
 	open={confirmingFont !== null}
 	title="Delete font?"
 	message={confirmingFont
-		? `"${confirmingFont.filename}" will be permanently removed. Any text using "${confirmingFont.family}" will fall back to a default font on the next render.`
+		? `"${confirmingFont.filename}" will be permanently removed. Any text using "${confirmingFont.displayName}" will fall back to a default font on the next render.`
 		: ''}
 	confirmLabel="Delete"
 	cancelLabel="Cancel"

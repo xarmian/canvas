@@ -4,7 +4,7 @@ import { db } from '$lib/server/db';
 import { assets } from '$lib/server/db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { getStorage } from '$lib/server/storage';
-import { fontAssetWhere, deriveFontFamily } from '$lib/server/user-fonts';
+import { fontAssetWhere, deriveFontFamily, scopedFontFamily } from '$lib/server/user-fonts';
 
 /**
  * GET /api/fonts — list the current user's uploaded font assets.
@@ -25,15 +25,26 @@ export const GET: RequestHandler = async ({ locals }) => {
 		.orderBy(desc(assets.createdAt));
 
 	const storage = getStorage();
-	const items = rows.map((a) => ({
-		id: a.id,
-		filename: a.filename,
-		family: deriveFontFamily(a.filename),
-		url: storage.getUrl(a.storageKey),
-		contentType: a.contentType,
-		sizeBytes: a.sizeBytes,
-		createdAt: a.createdAt
-	}));
+	const items = rows.map((a) => {
+		const displayName = deriveFontFamily(a.filename);
+		return {
+			id: a.id,
+			filename: a.filename,
+			/** What the editor's font picker shows — the human-readable
+			 *  derived name. */
+			displayName,
+			/** What gets stored in templateJson and registered with both
+			 *  the browser FontFace API and the server-side GlobalFonts.
+			 *  Namespaced with the owner id so two users (or the same
+			 *  user across re-uploads with the same filename) can't
+			 *  collide in the process-global registry. */
+			family: scopedFontFamily(locals.user!.id, displayName),
+			url: storage.getUrl(a.storageKey),
+			contentType: a.contentType,
+			sizeBytes: a.sizeBytes,
+			createdAt: a.createdAt
+		};
+	});
 
 	return json({ items });
 };

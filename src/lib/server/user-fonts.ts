@@ -45,6 +45,18 @@ export function deriveFontFamily(filename: string): string {
 	return trimmed;
 }
 
+/**
+ * Namespace a user's derived family name with their user id so two
+ * users (or the same user with re-uploads under a different file
+ * name) can't collide in the process-global GlobalFonts registry.
+ * The display name shown in the picker is still the un-namespaced
+ * derived family — the namespaced form is what gets stored in
+ * templateJson and resolved by the renderer.
+ */
+export function scopedFontFamily(userId: string, derivedFamily: string): string {
+	return `u-${userId}__${derivedFamily}`;
+}
+
 /** Build a Drizzle WHERE for "is a font asset" (matches our two
  *  ALLOWED_FONT_TYPES MIME shapes — `font/*` and `application/x-font-*` /
  *  `application/font-*`). Kept here so /api/fonts and this loader stay
@@ -90,7 +102,7 @@ export async function ensureUserFontsRegistered(userId: string): Promise<void> {
 		pending.map(async (row) => {
 			try {
 				const buffer = await storage.read(row.storageKey);
-				registerFontFromBuffer(buffer, deriveFontFamily(row.filename));
+				registerFontFromBuffer(buffer, scopedFontFamily(userId, deriveFontFamily(row.filename)));
 				registered.add(row.id);
 			} catch (err) {
 				console.error('[user-fonts] failed to register', {

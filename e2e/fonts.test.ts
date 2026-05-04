@@ -43,11 +43,17 @@ test.describe('Custom fonts', () => {
 		// the dropdown. Assert the option is present.
 		const fontSelect = page.locator('#prop-font');
 		await expect(fontSelect).toBeVisible();
-		await expect(fontSelect.locator('option', { hasText: 'CanvasTestFont' })).toHaveCount(1);
+		const userOption = fontSelect.locator('option', { hasText: 'CanvasTestFont' });
+		await expect(userOption).toHaveCount(1);
 
-		// Select it and verify the value was applied (Fabric mirrors
-		// fontFamily back into the property panel).
-		await fontSelect.selectOption('CanvasTestFont');
-		await expect(fontSelect).toHaveValue('CanvasTestFont');
+		// The option's value is the userId-namespaced family (e.g.
+		// u-<id>__CanvasTestFont) so two users uploading the same
+		// filename can't collide in the server-side GlobalFonts
+		// registry. Select by label so the test doesn't depend on
+		// the namespace shape.
+		const value = await userOption.getAttribute('value');
+		expect(value).toBeTruthy();
+		await fontSelect.selectOption({ value: value! });
+		await expect(fontSelect).toHaveValue(value!);
 	});
 });
