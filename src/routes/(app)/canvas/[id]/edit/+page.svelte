@@ -899,73 +899,68 @@
 		</button>
 	</header>
 
-	<svelte:boundary
-		onerror={(err: unknown) => {
-			// Surface in console so the dev can see the stack; the user
-			// only sees the friendly recovery UI below.
-			console.error('[editor boundary] unhandled error during render:', err);
-		}}
-	>
-		<div class="main-area" data-testid="editor-main-area">
-			<LayerPanel />
+	<div class="main-area" data-testid="editor-main-area">
+		<LayerPanel />
 
-			<div
-				class="canvas-container"
-				class:drag-over={isDraggingFile}
-				ondragenter={onDragEnter}
-				ondragover={onDragOver}
-				ondragleave={onDragLeave}
-				ondrop={onDrop}
-				role="region"
-				aria-label="Canvas — drop an image here to add it"
-			>
-				<CanvasEditor
-					bind:this={editorRef}
-					width={canvasWidth}
-					height={canvasHeight}
-					{backgroundColor}
-				/>
-				{#if isDraggingFile}
-					<div class="drop-overlay" aria-hidden="true">
-						<div class="drop-hint">Drop to add image</div>
-					</div>
-				{/if}
-			</div>
-
-			<PropertyPanel />
+		<div
+			class="canvas-container"
+			class:drag-over={isDraggingFile}
+			ondragenter={onDragEnter}
+			ondragover={onDragOver}
+			ondragleave={onDragLeave}
+			ondrop={onDrop}
+			role="region"
+			aria-label="Canvas — drop an image here to add it"
+		>
+			<!-- Why CanvasEditor is OUTSIDE the boundary: a render error
+				inside CanvasEditor tears down the Fabric canvas, which
+				resets editorState.isDirty=false on cleanup. With the
+				boundary wrapping CanvasEditor, the user could lose
+				unsaved edits without ever seeing the navigation-guard
+				warning. We let render errors in CanvasEditor bubble to
+				the route-level +error.svelte (shipped in TASK-54) — a
+				full-page error is the honest signal that the canvas
+				state is unrecoverable. PropertyPanel below is a separate
+				story: its bindings/conditional-rules editor can throw
+				on malformed data, and recovering it without losing the
+				Fabric state is the actual win. -->
+			<CanvasEditor
+				bind:this={editorRef}
+				width={canvasWidth}
+				height={canvasHeight}
+				{backgroundColor}
+			/>
+			{#if isDraggingFile}
+				<div class="drop-overlay" aria-hidden="true">
+					<div class="drop-hint">Drop to add image</div>
+				</div>
+			{/if}
 		</div>
 
-		{#snippet failed(err: unknown, reset: () => void)}
-			<!-- Svelte 5 boundary failed-state snippet. Caught by render-time
-				errors below the boundary; async event-handler exceptions
-				escape this and land in the existing toast paths instead.
-				The retry path resets the boundary, which re-renders the
-				subtree from scratch. The "reload" path is for cases where
-				resetting alone isn't enough (e.g. bad templateJson on
-				disk) — a full page reload re-runs the load function and
-				gives the user the most-recent saved state. -->
-			<div class="editor-error" role="alert">
-				<div class="editor-error-card">
-					<AlertTriangleIcon size={32} aria-hidden="true" />
-					<h2>The editor hit a problem</h2>
-					<p>
-						Something went wrong rendering the canvas. Your work is saved on the server up to the
-						last successful save.
-					</p>
+		<svelte:boundary
+			onerror={(err: unknown) => {
+				console.error('[property-panel boundary] unhandled error during render:', err);
+			}}
+		>
+			<PropertyPanel />
+
+			{#snippet failed(err: unknown, reset: () => void)}
+				<!-- Property-panel-only failure. The Fabric canvas next to
+					us is still healthy, so the user's unsaved work is
+					still tracked by editorState.isDirty and the
+					beforeNavigate guard still fires. -->
+				<aside class="property-panel-error" role="alert">
+					<AlertTriangleIcon size={28} aria-hidden="true" />
+					<h2>Property panel error</h2>
+					<p>The properties for the selected layer couldn't render.</p>
 					{#if err instanceof Error && err.message}
 						<p class="editor-error-detail"><code>{err.message}</code></p>
 					{/if}
-					<div class="editor-error-actions">
-						<button type="button" class="btn btn-primary" onclick={reset}>Retry</button>
-						<button type="button" class="btn btn-secondary" onclick={() => location.reload()}>
-							Reload editor
-						</button>
-						<a href="/" class="btn btn-secondary">Back to dashboard</a>
-					</div>
-				</div>
-			</div>
-		{/snippet}
-	</svelte:boundary>
+					<button type="button" class="btn btn-primary" onclick={reset}>Retry</button>
+				</aside>
+			{/snippet}
+		</svelte:boundary>
+	</div>
 
 	<ConfirmDialog
 		open={pendingNavigationHref !== null}
@@ -1304,42 +1299,34 @@
 		background: #bbf7d0;
 	}
 
-	.editor-error {
-		flex: 1;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: #f8fafc;
-		padding: 2rem 1rem;
+	.property-panel-error {
+		width: 280px;
+		min-width: 280px;
+		padding: 1.25rem 1rem;
+		border-left: 1px solid #ddd;
+		background: #fff;
+		font-family: system-ui, sans-serif;
+		text-align: center;
 	}
 
-	.editor-error-card {
-		max-width: 32rem;
-		text-align: center;
-		background: #fff;
-		border: 1px solid #fee2e2;
-		border-radius: 8px;
-		padding: 1.5rem;
+	.property-panel-error :global(svg) {
+		color: #dc2626;
+		display: block;
+		margin: 0 auto 0.5rem;
+	}
+
+	.property-panel-error h2 {
+		margin: 0 0 0.5rem;
+		font-size: 0.95rem;
+		font-weight: 700;
 		color: #1e293b;
 	}
 
-	.editor-error-card :global(svg) {
-		color: #dc2626;
-		display: block;
-		margin: 0 auto 0.75rem;
-	}
-
-	.editor-error-card h2 {
-		margin: 0 0 0.5rem;
-		font-size: 1.125rem;
-		font-weight: 700;
-	}
-
-	.editor-error-card p {
-		margin: 0 0 0.5rem;
-		font-size: 0.875rem;
-		line-height: 1.5;
+	.property-panel-error p {
+		margin: 0 0 0.75rem;
+		font-size: 0.8125rem;
 		color: #475569;
+		line-height: 1.5;
 	}
 
 	.editor-error-detail code {
@@ -1353,35 +1340,18 @@
 		overflow-x: auto;
 	}
 
-	.editor-error-actions {
-		display: flex;
-		gap: 0.5rem;
-		justify-content: center;
-		flex-wrap: wrap;
-		margin-top: 1rem;
-	}
-
-	.editor-error-actions .btn {
-		padding: 0.5rem 1rem;
-		border-radius: 6px;
-		font-size: 0.875rem;
+	.property-panel-error .btn {
+		padding: 0.4rem 0.85rem;
+		border-radius: 5px;
+		font-size: 0.8125rem;
 		font-weight: 500;
-		text-decoration: none;
 		border: 1px solid transparent;
 		cursor: pointer;
-		display: inline-flex;
-		align-items: center;
 	}
 
-	.editor-error-actions .btn-primary {
+	.property-panel-error .btn-primary {
 		background: #2563eb;
 		color: #fff;
-	}
-
-	.editor-error-actions .btn-secondary {
-		background: #fff;
-		color: #374151;
-		border-color: #d1d5db;
 	}
 
 	.main-area {
