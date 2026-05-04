@@ -156,7 +156,14 @@ export async function addImageLayer(
 	page: Page,
 	file: { name: string; mimeType: string; buffer: Buffer }
 ): Promise<void> {
+	// As of TASK-62 the toolbar Image button opens an Add Image modal
+	// (Upload / From library tabs) instead of triggering a file input
+	// directly. We open the modal, then drive the modal's hidden input.
+	await page.getByTestId('toolbar-add-image').click();
+	// The Upload tab is the default; setInputFiles works on the modal's
+	// hidden file input even though it's display:none.
 	const fileInput = page.locator('input[type="file"]');
+	await expect(fileInput).toHaveCount(1);
 	// Snapshot the layer count before upload so we can wait for it to
 	// increment. Polling on the toolbar text is unreliable: 'Image' is
 	// already the toolbar label before upload starts, so a too-fast

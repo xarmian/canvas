@@ -21,6 +21,7 @@
 	import CanvasSettingsModal, {
 		type CanvasSettingsPatch
 	} from '$lib/components/editor/CanvasSettingsModal.svelte';
+	import AddImageModal from '$lib/components/editor/AddImageModal.svelte';
 	import { editorState, markClean } from '$lib/components/editor/state.svelte';
 	import {
 		historyState,
@@ -319,7 +320,7 @@
 	let bypassNavigationGuard = false;
 
 	function hasPendingWork(): boolean {
-		return editorState.isDirty || isSaving || isUploading;
+		return editorState.isDirty || isSaving || isUploading || isInsertingImage;
 	}
 
 	beforeNavigate((nav) => {
@@ -459,8 +460,20 @@
 		}
 	}
 
-	let fileInput = $state<HTMLInputElement | null>(null);
 	let isUploading = $state(false);
+	/** True while a successfully-uploaded or library-picked image is being
+	 * loaded into Fabric (FabricImage.fromURL → addImageFromUrl). The
+	 * upload-state guard alone misses this window: the modal flips
+	 * isUploading=false the moment the fetch settles, but the actual
+	 * Fabric insert is still pending. Without this flag, a fast nav after
+	 * selecting from the library — or right at the moment a fresh upload
+	 * resolves — can unmount the editor mid-insert. */
+	let isInsertingImage = $state(false);
+	/** Toggles the Upload/Library tabbed picker that replaced the bare
+	 * file-input button on the toolbar. Drag-drop onto the canvas still
+	 * uses the unmodaled queueUpload() path below — we don't want a drop
+	 * to pop a modal in front of where the user just dropped. */
+	let showAddImageModal = $state(false);
 	let isDraggingFile = $state(false);
 	/** Counts nested dragenter/dragleave events so the overlay only clears when
 	 * the drag leaves the outer container, not when it moves between children. */
@@ -482,8 +495,55 @@
 		return uploadChain;
 	}
 
-	function openFilePicker() {
-		fileInput?.click();
+	/** Insert a previously-uploaded asset (from the From-library tab) into
+	 *  the canvas. Mirrors the post-upload tail of `uploadAndInsertImage`
+	 *  but skips the upload itself — the URL is already in storage.
+	 *
+	 *  Wrapping the await in isInsertingImage=true/false keeps
+	 *  hasPendingWork() truthful during the FabricImage.fromURL window so
+	 *  the navigation guard fires if the user clicks away mid-insert. */
+	async function insertExistingAsset(url: string, originCanvasId: string) {
+		if (data.canvas.id !== originCanvasId) {
+			toast.info('Image was not added — you switched canvases.');
+			return;
+		}
+		if (!editorRef) {
+			toast.error('Editor was unavailable — refresh and try again.');
+			return;
+		}
+		isInsertingImage = true;
+		try {
+			const inserted = await editorRef.addImageFromUrl(url);
+			if (inserted) {
+				toast.success('Image added');
+			} else {
+				toast.error('Could not add image — try again.');
+			}
+		} catch (err) {
+			// FabricImage.fromURL can reject on broken/missing assets, CORS
+			// failures, or decode errors. Surface a user-visible error
+			// instead of letting it become an unhandled rejection.
+			console.error('[editor] insertExistingAsset failed', err);
+			if (data.canvas.id === originCanvasId) {
+				toast.error('Could not load that image — it may be broken or unavailable.');
+			}
+		} finally {
+			// Only clear the flag if we're still on the originating canvas.
+			// If the user switched canvases mid-insert, the resync effect
+			// has already taken ownership of editor state.
+			if (data.canvas.id === originCanvasId) isInsertingImage = false;
+		}
+	}
+
+	/** Bridge for AddImageModal's onSelect — runs whether the URL came from
+	 *  a fresh upload (modal handled upload itself) or a library pick. We
+	 *  don't reuse queueUpload() here because (a) there's nothing to upload,
+	 *  and (b) serializing inserts behind the upload chain would needlessly
+	 *  block the library-tab insertion on any in-flight drag-drop upload. */
+	function onAddImageModalSelect(url: string) {
+		const originCanvasId = data.canvas.id;
+		showAddImageModal = false;
+		void insertExistingAsset(url, originCanvasId);
 	}
 
 	async function uploadAndInsertImage(file: File, originCanvasId: string) {
@@ -540,14 +600,6 @@
 			toast.dismiss(uploadingId);
 			isUploading = false;
 		}
-	}
-
-	function onFileInputChange(e: Event) {
-		const target = e.target as HTMLInputElement;
-		const file = target.files?.[0];
-		if (file) queueUpload(file);
-		// Reset so selecting the same file twice in a row still fires change
-		target.value = '';
 	}
 
 	function hasFileDrag(e: DragEvent): boolean {
@@ -846,19 +898,12 @@
 			<button
 				class="tool-btn"
 				data-testid="toolbar-add-image"
-				onclick={openFilePicker}
+				onclick={() => (showAddImageModal = true)}
 				disabled={isUploading}
 			>
 				<ImageIcon size={14} />
 				<span>{isUploading ? 'Uploading…' : 'Image'}</span>
 			</button>
-			<input
-				bind:this={fileInput}
-				type="file"
-				accept={ACCEPTED_IMAGE_TYPES.join(',')}
-				onchange={onFileInputChange}
-				style="display: none;"
-			/>
 			<button class="tool-btn delete-btn" onclick={() => editorRef?.deleteSelected()}>
 				<Trash2 size={14} />
 				<span>Delete</span>
@@ -998,6 +1043,15 @@
 				editorState.fabricCanvas.renderAll();
 			}
 		}}
+	/>
+
+	<AddImageModal
+		open={showAddImageModal}
+		acceptedTypes={ACCEPTED_IMAGE_TYPES}
+		maxBytes={MAX_IMAGE_BYTES}
+		onClose={() => (showAddImageModal = false)}
+		onSelect={onAddImageModalSelect}
+		onUploadingChange={(v) => (isUploading = v)}
 	/>
 
 	<PublishModal
