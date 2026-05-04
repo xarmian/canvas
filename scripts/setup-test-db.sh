@@ -85,10 +85,11 @@ fi
 
 # The reset (DROP/CREATE) runs via `docker compose exec` against the local
 # compose `db` service, while drizzle-kit push connects to the URL directly.
-# If the URL host points somewhere other than the compose service, the two
-# halves operate on different databases — the script would create the test
-# DB on the wrong host or migrate one and reset another. Refuse loudly
-# instead of silently splitting.
+# If the URL host or port points somewhere other than the compose service,
+# the two halves operate on different databases — the script would create
+# the test DB on the wrong server or migrate one and reset another. Refuse
+# loudly instead of silently splitting.
+EXPECTED_PORT="${TEST_DB_EXPECTED_PORT:-5432}"
 case "$DB_HOST" in
 	localhost|127.0.0.1) ;;
 	*)
@@ -100,6 +101,15 @@ case "$DB_HOST" in
 		exit 1
 		;;
 esac
+if [ "$DB_PORT" != "$EXPECTED_PORT" ]; then
+	echo "[setup-test-db] Refusing: TEST_DATABASE_URL port '${DB_PORT}' does" >&2
+	echo "[setup-test-db] not match the compose '${COMPOSE_SERVICE}' service" >&2
+	echo "[setup-test-db] port (${EXPECTED_PORT}). The reset and the migration" >&2
+	echo "[setup-test-db] would target different databases." >&2
+	echo "[setup-test-db] If you've remapped the compose port, set" >&2
+	echo "[setup-test-db] TEST_DB_EXPECTED_PORT to the new published port." >&2
+	exit 1
+fi
 
 # Sanity: the dev `db` container must be up. We exec psql inside it so this
 # script doesn't require psql installed on the host.
