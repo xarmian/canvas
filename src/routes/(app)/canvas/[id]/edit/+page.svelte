@@ -1139,6 +1139,75 @@
 			</button>
 		</div>
 
+		{#if editorState.activeObjects.length >= 2}
+			<span class="toolbar-sep"></span>
+			<div
+				class="align-group"
+				role="group"
+				aria-label="Align selected objects"
+				data-testid="align-toolbar"
+			>
+				<button
+					class="tool-btn icon-only"
+					data-testid="align-left"
+					title="Align left"
+					aria-label="Align left"
+					onclick={() => editorRef?.alignSelected('left')}>⫷</button
+				>
+				<button
+					class="tool-btn icon-only"
+					data-testid="align-center-h"
+					title="Align horizontal center"
+					aria-label="Align horizontal center"
+					onclick={() => editorRef?.alignSelected('center-h')}>⊻</button
+				>
+				<button
+					class="tool-btn icon-only"
+					data-testid="align-right"
+					title="Align right"
+					aria-label="Align right"
+					onclick={() => editorRef?.alignSelected('right')}>⫸</button
+				>
+				<button
+					class="tool-btn icon-only"
+					data-testid="align-top"
+					title="Align top"
+					aria-label="Align top"
+					onclick={() => editorRef?.alignSelected('top')}>⫶</button
+				>
+				<button
+					class="tool-btn icon-only"
+					data-testid="align-center-v"
+					title="Align vertical center"
+					aria-label="Align vertical center"
+					onclick={() => editorRef?.alignSelected('center-v')}>⊞</button
+				>
+				<button
+					class="tool-btn icon-only"
+					data-testid="align-bottom"
+					title="Align bottom"
+					aria-label="Align bottom"
+					onclick={() => editorRef?.alignSelected('bottom')}>⫶</button
+				>
+				{#if editorState.activeObjects.length >= 3}
+					<button
+						class="tool-btn icon-only"
+						data-testid="distribute-h"
+						title="Distribute horizontally"
+						aria-label="Distribute horizontally"
+						onclick={() => editorRef?.distributeSelected('h')}>↔</button
+					>
+					<button
+						class="tool-btn icon-only"
+						data-testid="distribute-v"
+						title="Distribute vertically"
+						aria-label="Distribute vertically"
+						onclick={() => editorRef?.distributeSelected('v')}>↕</button
+					>
+				{/if}
+			</div>
+		{/if}
+
 		<span class="toolbar-sep"></span>
 		<button class="tool-btn" class:active={showPreview} onclick={togglePreview}>
 			{#if showPreview}
@@ -1184,7 +1253,9 @@
 	</header>
 
 	<div class="main-area" data-testid="editor-main-area">
-		<LayerPanel />
+		<LayerPanel
+			onToggleSelect={(obj, additive) => editorRef?.toggleLayerSelection(obj, additive)}
+		/>
 
 		<div
 			class="canvas-container"

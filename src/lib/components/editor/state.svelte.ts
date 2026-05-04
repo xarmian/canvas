@@ -15,6 +15,14 @@ let snapshotCallback: (() => void) | null = null;
 export const editorState = $state({
 	fabricCanvas: null as Canvas | null,
 	selectedObject: null as FabricObject | null,
+	/**
+	 * All currently-active objects on the canvas — single-select has
+	 * length 1, multi-select (Fabric ActiveSelection) has length 2+.
+	 * Tracked separately from `selectedObject` because the property panel
+	 * is single-object oriented (selectedObject = first), while the
+	 * layer panel and the new align toolbar need the whole set.
+	 */
+	activeObjects: [] as FabricObject[],
 	objects: [] as FabricObject[],
 	isDirty: false,
 	editGeneration: 0
@@ -50,6 +58,7 @@ export function markClean() {
 export function setFabricCanvas(canvas: Canvas | null) {
 	editorState.fabricCanvas = canvas;
 	editorState.selectedObject = null;
+	editorState.activeObjects = [];
 	editorState.objects = [];
 	editorState.isDirty = false;
 	editorState.editGeneration = 0;
@@ -58,4 +67,14 @@ export function setFabricCanvas(canvas: Canvas | null) {
 /** Set the currently selected object */
 export function setSelectedObject(obj: FabricObject | null) {
 	editorState.selectedObject = obj;
+}
+
+/**
+ * Update the reactive multi-select tracking array. Must be called any
+ * time selection:created / selection:updated / selection:cleared fires
+ * (or any code path that mutates the canvas's active object) so the
+ * layer panel + align toolbar reflect the truth.
+ */
+export function setActiveObjects(objects: FabricObject[]) {
+	editorState.activeObjects = [...objects];
 }
