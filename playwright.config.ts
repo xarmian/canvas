@@ -44,7 +44,18 @@ export default defineConfig({
 			BETTER_AUTH_URL: BASE_URL,
 			// Some auth/session helpers also read PUBLIC_APP_URL when building
 			// share URLs in server load functions; keep them aligned.
-			PUBLIC_APP_URL: BASE_URL
+			PUBLIC_APP_URL: BASE_URL,
+			// Lower the render-route protection limits so the throttle e2e
+			// can reach 429/503 without thousands of requests. Production
+			// defaults are 60/min + concurrency 4 — see render-throttle.ts.
+			//
+			// Other render-touching tests (render-cache, render-etag,
+			// render-avif-dpr) deliberately use unique X-Forwarded-For
+			// headers per-test so they don't exhaust each other's buckets;
+			// the throttle test itself uses 127.0.0.1 directly.
+			RENDER_RATE_PER_MIN: '5',
+			RENDER_CONCURRENCY: '2',
+			RENDER_QUEUE_TIMEOUT_MS: '500'
 		}
 	},
 	use: {

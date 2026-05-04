@@ -9,6 +9,13 @@ import type { CanvasTemplate, FabricCanvasJson, OutputFormat } from '$lib/engine
 import { validateParams } from '$lib/server/canvas-params';
 import { getDefaultRenderCache } from '$lib/server/render-cache';
 import { ensureUserFontsRegistered, getLiveUserFontDescriptors } from '$lib/server/user-fonts';
+import {
+	acquireRenderSlot,
+	checkRateLimit,
+	getClientIp,
+	RenderBusyError,
+	RENDER_THROTTLE_CONFIG
+} from '$lib/server/render-throttle';
 
 const renderCache = getDefaultRenderCache();
 
@@ -156,7 +163,7 @@ function pickCacheControl(requestedVersion: string | null, currentVersionToken: 
 	return 'public, max-age=60, s-maxage=300';
 }
 
-export const GET: RequestHandler = async ({ params, url, request }) => {
+export const GET: RequestHandler = async ({ params, url, request, getClientAddress }) => {
 	// Parse format from filename
 	const formatInfo = parseFormat(params.file);
 	if (!formatInfo) {
@@ -296,51 +303,97 @@ export const GET: RequestHandler = async ({ params, url, request }) => {
 		});
 	}
 
-	// Register the canvas owner's uploaded fonts before rendering. No-op
-	// after the first render in this process unless new fonts have been
-	// uploaded since. Failure is logged inside ensureUserFontsRegistered
-	// and is non-fatal — the renderer will fall back to the default
-	// font set instead of 500-ing the public render URL.
-	await ensureUserFontsRegistered(canvas.userId);
+	// Cache miss → we're going to do real CPU work. Apply throttle layers
+	// in this order: per-IP rate limit first (cheap, fails fast), then the
+	// process-wide concurrency semaphore (waits up to QUEUE_TIMEOUT_MS for
+	// a slot). Both are intentionally bypassed on cache hit above so a hot
+	// URL can absorb burst traffic without burning rate budget.
+	const ip = getClientIp(request.headers, getClientAddress());
+	const limit = checkRateLimit(ip);
+	if (!limit.allowed) {
+		console.warn(
+			`[render] rate-limited ip=${ip} slug=${params.slug} retryAfter=${limit.retryAfterSeconds}s`
+		);
+		return new Response('Too Many Requests', {
+			status: 429,
+			headers: {
+				'Retry-After': String(limit.retryAfterSeconds),
+				'X-RateLimit-Limit': String(limit.limit),
+				'X-RateLimit-Remaining': '0'
+			}
+		});
+	}
 
-	// Sanitize fontFamily references that point at deleted fonts.
-	// GlobalFonts has no unregister API — once a font has been
-	// registered in this process, it stays in Skia's table. Without the
-	// swap, a canvas whose author deleted the asset would keep
-	// rendering with the deleted bytes until the server restarted.
-	// Cache freshness is handled by the fontSetVersion in the key above.
-	const sanitizedJson = sanitizeFontFamilies(
-		(canvas.templateJson as unknown as FabricCanvasJson) ?? { objects: [] },
-		liveFamilies
-	);
-
-	const template: CanvasTemplate = {
-		width: canvas.width,
-		height: canvas.height,
-		backgroundType: canvas.backgroundType as 'color' | 'image',
-		backgroundValue: canvas.backgroundValue,
-		templateJson: sanitizedJson
-	};
-
-	// Render
-	const buffer = await render(template, queryParams, {
-		format: formatInfo.format,
-		quality: 85,
-		dpr
-	});
-
-	// Persist to filesystem cache. The FsRenderCache handles LRU
-	// eviction internally based on CACHE_MAX_MB.
-	await renderCache.set(key, formatInfo.format, buffer);
-
-	return new Response(new Uint8Array(buffer), {
-		headers: {
-			'Content-Type': formatInfo.contentType,
-			'Cache-Control': cacheControl,
-			ETag: etag,
-			'Last-Modified': lastModified,
-			Vary: 'Accept',
-			'X-Cache': 'MISS'
+	let releaseSlot: () => void;
+	try {
+		releaseSlot = await acquireRenderSlot();
+	} catch (err) {
+		if (err instanceof RenderBusyError) {
+			console.warn(
+				`[render] queue-timeout ip=${ip} slug=${params.slug} concurrency=${RENDER_THROTTLE_CONFIG.concurrency}`
+			);
+			return new Response('Service Unavailable', {
+				status: 503,
+				headers: {
+					'Retry-After': String(err.retryAfterSeconds),
+					'X-RateLimit-Limit': String(limit.limit),
+					'X-RateLimit-Remaining': String(limit.remaining)
+				}
+			});
 		}
-	});
+		throw err;
+	}
+
+	try {
+		// Register the canvas owner's uploaded fonts before rendering. No-op
+		// after the first render in this process unless new fonts have been
+		// uploaded since. Failure is logged inside ensureUserFontsRegistered
+		// and is non-fatal — the renderer will fall back to the default
+		// font set instead of 500-ing the public render URL.
+		await ensureUserFontsRegistered(canvas.userId);
+
+		// Sanitize fontFamily references that point at deleted fonts.
+		// GlobalFonts has no unregister API — once a font has been
+		// registered in this process, it stays in Skia's table. Without the
+		// swap, a canvas whose author deleted the asset would keep
+		// rendering with the deleted bytes until the server restarted.
+		// Cache freshness is handled by the fontSetVersion in the key above.
+		const sanitizedJson = sanitizeFontFamilies(
+			(canvas.templateJson as unknown as FabricCanvasJson) ?? { objects: [] },
+			liveFamilies
+		);
+
+		const template: CanvasTemplate = {
+			width: canvas.width,
+			height: canvas.height,
+			backgroundType: canvas.backgroundType as 'color' | 'image',
+			backgroundValue: canvas.backgroundValue,
+			templateJson: sanitizedJson
+		};
+
+		const buffer = await render(template, queryParams, {
+			format: formatInfo.format,
+			quality: 85,
+			dpr
+		});
+
+		// Persist to filesystem cache. The FsRenderCache handles LRU
+		// eviction internally based on CACHE_MAX_MB.
+		await renderCache.set(key, formatInfo.format, buffer);
+
+		return new Response(new Uint8Array(buffer), {
+			headers: {
+				'Content-Type': formatInfo.contentType,
+				'Cache-Control': cacheControl,
+				ETag: etag,
+				'Last-Modified': lastModified,
+				Vary: 'Accept',
+				'X-Cache': 'MISS',
+				'X-RateLimit-Limit': String(limit.limit),
+				'X-RateLimit-Remaining': String(limit.remaining)
+			}
+		});
+	} finally {
+		releaseSlot();
+	}
 };

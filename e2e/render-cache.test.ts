@@ -7,7 +7,14 @@
 import { test, expect } from '@playwright/test';
 import { stat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { signupAndLogin, createCanvas, gotoEditor, addTextLayer, publish } from './helpers';
+import {
+	signupAndLogin,
+	createCanvas,
+	gotoEditor,
+	addTextLayer,
+	publish,
+	uniqueXffHeaders
+} from './helpers';
 
 const CACHE_DIR = './.cache/render';
 
@@ -39,21 +46,25 @@ test('render cache: MISS → HIT, distinct keys, persists to disk', async ({ pag
 
 	const sizeBefore = await dirSize(CACHE_DIR);
 
+	// Use a unique X-Forwarded-For so the per-IP rate limit (TASK-72)
+	// doesn't conflate this test's bucket with other render tests'.
+	const headers = uniqueXffHeaders();
+
 	// 1. First fetch: MISS — render runs, byte response served, cache
 	// receives a write afterwards.
-	const first = await request.get(imageUrl);
+	const first = await request.get(imageUrl, { headers });
 	expect(first.status()).toBe(200);
 	expect(first.headers()['x-cache']).toBe('MISS');
 
 	// 2. Second fetch (same URL): HIT — served from disk cache.
-	const second = await request.get(imageUrl);
+	const second = await request.get(imageUrl, { headers });
 	expect(second.status()).toBe(200);
 	expect(second.headers()['x-cache']).toBe('HIT');
 	// Bytes match exactly — same render.
 	expect((await first.body()).equals(await second.body())).toBe(true);
 
 	// 3. Different params hash to a different cache entry → MISS again.
-	const distinct = await request.get(`${imageUrl}?title=Other`);
+	const distinct = await request.get(`${imageUrl}?title=Other`, { headers });
 	expect(distinct.status()).toBe(200);
 	expect(distinct.headers()['x-cache']).toBe('MISS');
 
