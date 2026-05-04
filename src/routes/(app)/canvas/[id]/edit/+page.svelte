@@ -10,7 +10,8 @@
 		Image as ImageIcon,
 		Trash2,
 		Eye,
-		EyeOff
+		EyeOff,
+		AlertTriangle as AlertTriangleIcon
 	} from '@lucide/svelte';
 	import CanvasEditor from '$lib/components/editor/Canvas.svelte';
 	import LayerPanel from '$lib/components/editor/LayerPanel.svelte';
@@ -898,7 +899,7 @@
 		</button>
 	</header>
 
-	<div class="main-area">
+	<div class="main-area" data-testid="editor-main-area">
 		<LayerPanel />
 
 		<div
@@ -911,6 +912,18 @@
 			role="region"
 			aria-label="Canvas — drop an image here to add it"
 		>
+			<!-- Why CanvasEditor is OUTSIDE the boundary: a render error
+				inside CanvasEditor tears down the Fabric canvas, which
+				resets editorState.isDirty=false on cleanup. With the
+				boundary wrapping CanvasEditor, the user could lose
+				unsaved edits without ever seeing the navigation-guard
+				warning. We let render errors in CanvasEditor bubble to
+				the route-level +error.svelte (shipped in TASK-54) — a
+				full-page error is the honest signal that the canvas
+				state is unrecoverable. PropertyPanel below is a separate
+				story: its bindings/conditional-rules editor can throw
+				on malformed data, and recovering it without losing the
+				Fabric state is the actual win. -->
 			<CanvasEditor
 				bind:this={editorRef}
 				width={canvasWidth}
@@ -924,7 +937,29 @@
 			{/if}
 		</div>
 
-		<PropertyPanel />
+		<svelte:boundary
+			onerror={(err: unknown) => {
+				console.error('[property-panel boundary] unhandled error during render:', err);
+			}}
+		>
+			<PropertyPanel />
+
+			{#snippet failed(err: unknown, reset: () => void)}
+				<!-- Property-panel-only failure. The Fabric canvas next to
+					us is still healthy, so the user's unsaved work is
+					still tracked by editorState.isDirty and the
+					beforeNavigate guard still fires. -->
+				<aside class="property-panel-error" role="alert">
+					<AlertTriangleIcon size={28} aria-hidden="true" />
+					<h2>Property panel error</h2>
+					<p>The properties for the selected layer couldn't render.</p>
+					{#if err instanceof Error && err.message}
+						<p class="editor-error-detail"><code>{err.message}</code></p>
+					{/if}
+					<button type="button" class="btn btn-primary" onclick={reset}>Retry</button>
+				</aside>
+			{/snippet}
+		</svelte:boundary>
 	</div>
 
 	<ConfirmDialog
@@ -1262,6 +1297,61 @@
 
 	.publish-btn.published:hover {
 		background: #bbf7d0;
+	}
+
+	.property-panel-error {
+		width: 280px;
+		min-width: 280px;
+		padding: 1.25rem 1rem;
+		border-left: 1px solid #ddd;
+		background: #fff;
+		font-family: system-ui, sans-serif;
+		text-align: center;
+	}
+
+	.property-panel-error :global(svg) {
+		color: #dc2626;
+		display: block;
+		margin: 0 auto 0.5rem;
+	}
+
+	.property-panel-error h2 {
+		margin: 0 0 0.5rem;
+		font-size: 0.95rem;
+		font-weight: 700;
+		color: #1e293b;
+	}
+
+	.property-panel-error p {
+		margin: 0 0 0.75rem;
+		font-size: 0.8125rem;
+		color: #475569;
+		line-height: 1.5;
+	}
+
+	.editor-error-detail code {
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.75rem;
+		background: #f1f5f9;
+		padding: 0.15rem 0.35rem;
+		border-radius: 3px;
+		display: inline-block;
+		max-width: 100%;
+		overflow-x: auto;
+	}
+
+	.property-panel-error .btn {
+		padding: 0.4rem 0.85rem;
+		border-radius: 5px;
+		font-size: 0.8125rem;
+		font-weight: 500;
+		border: 1px solid transparent;
+		cursor: pointer;
+	}
+
+	.property-panel-error .btn-primary {
+		background: #2563eb;
+		color: #fff;
 	}
 
 	.main-area {
