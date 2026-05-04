@@ -46,8 +46,11 @@
 	);
 
 	// Parameter bindings
-	let paramBindings: Record<string, { param: string; default: string }> = $derived(
-		getObjProp<Record<string, { param: string; default: string }>>('paramBindings', {})
+	let paramBindings: Record<string, { param: string; default: string; format?: string }> = $derived(
+		getObjProp<Record<string, { param: string; default: string; format?: string }>>(
+			'paramBindings',
+			{}
+		)
 	);
 
 	let bindingsExpanded = $state(false);
@@ -80,13 +83,20 @@
 		markDirty();
 	}
 
-	function setBinding(property: string, field: 'param' | 'default', value: string) {
+	function setBinding(property: string, field: 'param' | 'default' | 'format', value: string) {
 		if (!editorState.selectedObject) return;
 		const current = { ...paramBindings };
 		if (!current[property]) {
 			current[property] = { param: '', default: '' };
 		}
-		current[property] = { ...current[property], [field]: value };
+		const next = { ...current[property], [field]: value };
+		// Persist an empty format as undefined so the renderer's formatter
+		// fall-through (parseFormat('') → null) is reached cleanly via the
+		// type contract instead of an empty-string round-trip.
+		if (field === 'format' && !value) {
+			delete (next as { format?: string }).format;
+		}
+		current[property] = next;
 		setProp('paramBindings', current);
 	}
 
@@ -358,6 +368,38 @@
 												placeholder="used when URL omits this param"
 											/>
 										</div>
+										{#if prop.key === 'text'}
+											<!-- Formatters apply only to text content. fill (color) and src
+												(image URL) are passed through as-is by the renderer. -->
+											<div class="field-row">
+												<label class="field-label small" for="bind-{prop.key}-format">
+													Format
+												</label>
+												<select
+													id="bind-{prop.key}-format"
+													class="field-select"
+													value={bound.format ?? ''}
+													onchange={(e) => setBinding(prop.key, 'format', e.currentTarget.value)}
+												>
+													<option value="">No formatting</option>
+													<option value="number">Number (1,234)</option>
+													<option value="number:2">Number 2dp (1,234.56)</option>
+													<option value="currency:USD">Currency USD ($1,234.56)</option>
+													<option value="currency:EUR">Currency EUR (€1,234.56)</option>
+													<option value="percent">Percent (12%)</option>
+													<option value="percent:1">Percent 1dp (12.3%)</option>
+													<option value="signed-percent">Signed % (+12% / −12%)</option>
+													<option value="signed-percent:1">Signed % 1dp (+12.3%)</option>
+													<option value="date:short">Date short (Jan 1, 2026)</option>
+													<option value="date:long">Date long (January 1, 2026)</option>
+													<option value="date:relative">Date relative (2 days ago)</option>
+												</select>
+											</div>
+											<p class="binding-format-hint">
+												Pass a number or ISO date as <code>?{bound.param || 'name'}=…</code>; it's
+												formatted before rendering.
+											</p>
+										{/if}
 										<p class="binding-url-preview">
 											<span class="url-preview-label">With default:</span>
 											<code>{urls.defaultUrl}</code>
@@ -823,6 +865,21 @@
 
 	.binding-toggle.active:hover {
 		background: #fcd34d;
+	}
+
+	.binding-format-hint {
+		margin: 4px 0 6px 56px;
+		font-size: 10.5px;
+		color: #6b7280;
+		line-height: 1.4;
+	}
+
+	.binding-format-hint code {
+		background: #f1f5f9;
+		padding: 0 0.25rem;
+		border-radius: 3px;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 10.5px;
 	}
 
 	.binding-fields {

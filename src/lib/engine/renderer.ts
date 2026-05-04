@@ -10,6 +10,7 @@ import type {
 import { drawWrappedText } from './text.js';
 import { loadRemoteImage, loadImagesParallel } from './images.js';
 import { initDefaultFonts } from './fonts.js';
+import { applyFormat } from './formatters.js';
 
 /** Properties that should remain numeric when bound to URL params */
 const NUMERIC_PROPS = new Set([
@@ -52,13 +53,17 @@ function mergeParams(
 		if (!obj.paramBindings) continue;
 
 		for (const [prop, binding] of Object.entries(obj.paramBindings)) {
-			const value = params[binding.param] ?? binding.default;
-			if (value !== undefined) {
-				const coerced = coerceParamValue(prop, value);
-				if (coerced !== undefined) {
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any
-					(obj as any)[prop] = coerced;
-				}
+			const rawValue = params[binding.param] ?? binding.default;
+			if (rawValue === undefined) continue;
+			// Numeric properties bypass the formatter — they go straight through
+			// coerceParamValue so the binding stays a Number on the Fabric object.
+			// For text-typed properties (text content, src, fill) we apply the
+			// pipe formatter first so the renderer sees the user-facing string.
+			const value = NUMERIC_PROPS.has(prop) ? rawValue : applyFormat(rawValue, binding.format);
+			const coerced = coerceParamValue(prop, value);
+			if (coerced !== undefined) {
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				(obj as any)[prop] = coerced;
 			}
 		}
 	}

@@ -15,6 +15,14 @@ export interface ParamBinding {
 	param: string;
 	/** Default value if parameter is not provided */
 	default?: string;
+	/**
+	 * Optional pipe formatter applied at render time, e.g. "currency:USD",
+	 * "signed-percent:1", "date:short". See $lib/engine/formatters for the
+	 * supported names and fall-through semantics. Only applies to text-typed
+	 * properties (text content, not fill/src) — the renderer skips it for
+	 * NUMERIC_PROPS where coercion runs instead.
+	 */
+	format?: string;
 }
 
 /** Parameter bindings map: property name → binding config */
