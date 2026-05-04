@@ -20,6 +20,8 @@
 	let emailFilledAndValid = $derived(email !== '' && EMAIL_RE.test(email));
 	let passwordLong = $derived(password.length >= PASSWORD_MIN);
 
+	let nameHint = $derived(submitted && name.trim() === '' ? 'Enter your name.' : '');
+
 	let emailHint = $derived.by(() => {
 		if (!submitted) return '';
 		if (email === '') return 'Enter your email address.';
@@ -125,7 +127,18 @@
 		<form onsubmit={handleSubmit} novalidate>
 			<label class="field">
 				<span>Name</span>
-				<input type="text" bind:value={name} required autocomplete="name" />
+				<input
+					type="text"
+					bind:value={name}
+					required
+					autocomplete="name"
+					aria-invalid={nameHint ? 'true' : 'false'}
+					aria-describedby={nameHint ? 'name-hint' : undefined}
+					class:invalid={!!nameHint}
+				/>
+				{#if nameHint}
+					<span id="name-hint" class="hint hint-error">{nameHint}</span>
+				{/if}
 			</label>
 
 			<label class="field">
