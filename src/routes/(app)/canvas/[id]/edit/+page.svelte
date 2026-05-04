@@ -519,6 +519,14 @@
 			} else {
 				toast.error('Could not add image — try again.');
 			}
+		} catch (err) {
+			// FabricImage.fromURL can reject on broken/missing assets, CORS
+			// failures, or decode errors. Surface a user-visible error
+			// instead of letting it become an unhandled rejection.
+			console.error('[editor] insertExistingAsset failed', err);
+			if (data.canvas.id === originCanvasId) {
+				toast.error('Could not load that image — it may be broken or unavailable.');
+			}
 		} finally {
 			// Only clear the flag if we're still on the originating canvas.
 			// If the user switched canvases mid-insert, the resync effect

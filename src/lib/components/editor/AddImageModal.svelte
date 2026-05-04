@@ -42,10 +42,11 @@
 	type Tab = 'upload' | 'library';
 	let activeTab = $state<Tab>('upload');
 
-	// Library state. We fetch lazily (only when the modal opens for the
-	// first time AND/OR the user clicks Library) to avoid hammering the
-	// API every editor-mount; refetch when the modal reopens so newly
-	// uploaded assets from elsewhere appear without a page reload.
+	// Library state. We fetch on each open() so newly uploaded assets
+	// from elsewhere (drag-drop in the editor, /assets page) are picked
+	// up without a full page reload. The fetch is silent for re-opens
+	// (no spinner) — `library` keeps the previous results visible while
+	// the refresh lands.
 	let library = $state<AssetItem[]>([]);
 	let libraryTotal = $state(0);
 	let libraryOffset = $state(0);
@@ -60,14 +61,12 @@
 
 	$effect(() => {
 		if (open) {
-			// Reset to upload tab on reopen so the user lands on the same
-			// flow they had before, regardless of where they left the modal.
-			if (!libraryLoaded) {
-				// Prefetch the library in the background — no spinner — so
-				// the Library tab is instant when clicked. Failure is
-				// swallowed; the tab will retry on click.
-				void loadLibrary(0).catch(() => {});
-			}
+			// Refresh on every open so assets uploaded elsewhere (drag-drop
+			// in the editor, /assets page) appear without a page reload.
+			// Background fetch — no spinner — keeps any cached results
+			// visible while the refresh lands. Failure is swallowed; the
+			// tab will retry on click via the same loadLibrary path.
+			void loadLibrary(0).catch(() => {});
 		}
 		// Note: we don't clear isUploading on close — an in-flight upload
 		// is still in flight, and the parent's hasPendingWork() must keep
