@@ -24,4 +24,10 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Playwright
 test-results/
+playwright-report/
+
+# Codex CLI scratch
+.codex
