@@ -184,15 +184,21 @@ export function validateParams(
 		if (!present) {
 			if (hasDefault) {
 				resolved[def.name] = def.defaultValue as string;
+				// Fall through to the type check below — a non-numeric
+				// default on a type=number param should fail just as
+				// loudly as a non-numeric URL value would.
+			} else {
+				if (def.required) {
+					return { ok: false, field: def.name, reason: 'missing required parameter' };
+				}
 				continue;
 			}
-			if (def.required) {
-				return { ok: false, field: def.name, reason: 'missing required parameter' };
-			}
-			continue;
 		}
-		// Present — validate type.
-		const value = queryParams[def.name];
+		// Validate the resolved value's type. This branch runs whether
+		// the value came from the URL or from a default — the previous
+		// shape skipped type-check on default-applied values, which let
+		// a misconfigured default poison the published canvas.
+		const value = resolved[def.name];
 		if (def.type === 'number') {
 			const n = Number(value);
 			if (!Number.isFinite(n)) {
