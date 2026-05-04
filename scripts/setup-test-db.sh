@@ -83,6 +83,24 @@ if ! [[ "$DB_USER" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
 	exit 1
 fi
 
+# The reset (DROP/CREATE) runs via `docker compose exec` against the local
+# compose `db` service, while drizzle-kit push connects to the URL directly.
+# If the URL host points somewhere other than the compose service, the two
+# halves operate on different databases — the script would create the test
+# DB on the wrong host or migrate one and reset another. Refuse loudly
+# instead of silently splitting.
+case "$DB_HOST" in
+	localhost|127.0.0.1) ;;
+	*)
+		echo "[setup-test-db] Refusing: TEST_DATABASE_URL host '${DB_HOST}' is" >&2
+		echo "[setup-test-db] not localhost/127.0.0.1. This script only manages" >&2
+		echo "[setup-test-db] the local docker compose '${COMPOSE_SERVICE}' service." >&2
+		echo "[setup-test-db] To run E2E against a remote DB, reset it yourself" >&2
+		echo "[setup-test-db] and skip this bootstrap (point Playwright directly)." >&2
+		exit 1
+		;;
+esac
+
 # Sanity: the dev `db` container must be up. We exec psql inside it so this
 # script doesn't require psql installed on the host.
 if ! docker compose ps --status running --services | grep -q "^${COMPOSE_SERVICE}$"; then
