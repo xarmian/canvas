@@ -220,6 +220,10 @@
 		for (const obj of editorState.fabricCanvas.getActiveObjects()) {
 			editorState.fabricCanvas.bringObjectForward(obj);
 		}
+		// syncObjects() refreshes editorState.objects so the LayerPanel
+		// reflects the new order. Without it the panel keeps showing the
+		// stale order until any other sync-triggering edit happens.
+		syncObjects();
 		editorState.fabricCanvas.requestRenderAll();
 		markDirty();
 	}
@@ -230,6 +234,7 @@
 		for (const obj of editorState.fabricCanvas.getActiveObjects()) {
 			editorState.fabricCanvas.sendObjectBackwards(obj);
 		}
+		syncObjects();
 		editorState.fabricCanvas.requestRenderAll();
 		markDirty();
 	}
@@ -240,6 +245,7 @@
 		for (const obj of editorState.fabricCanvas.getActiveObjects()) {
 			editorState.fabricCanvas.bringObjectToFront(obj);
 		}
+		syncObjects();
 		editorState.fabricCanvas.requestRenderAll();
 		markDirty();
 	}
@@ -250,6 +256,7 @@
 		for (const obj of editorState.fabricCanvas.getActiveObjects()) {
 			editorState.fabricCanvas.sendObjectToBack(obj);
 		}
+		syncObjects();
 		editorState.fabricCanvas.requestRenderAll();
 		markDirty();
 	}

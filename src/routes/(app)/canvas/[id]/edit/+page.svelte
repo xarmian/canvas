@@ -385,6 +385,19 @@
 		return false;
 	}
 
+	/** True when a Fabric IText on the canvas is in editing mode. The
+	 *  global keydown listener routes via `window`, so a `?` keystroke
+	 *  while the user is typing into a canvas text object would otherwise
+	 *  open the cheatsheet instead of inserting the character. The
+	 *  isTypingTarget() check above only catches DOM text inputs;
+	 *  Fabric's IText has its own internal text buffer, not a DOM input. */
+	function isCanvasTextEditing(): boolean {
+		const active = editorState.fabricCanvas?.getActiveObject();
+		if (!active) return false;
+		// Fabric's IText sets isEditing while the cursor is active.
+		return active.type === 'i-text' && (active as { isEditing?: boolean }).isEditing === true;
+	}
+
 	// Editor-wide keyboard shortcuts. Lives on `window` because the canvas
 	// wrapper only gets keydowns when focused, and the property panel can
 	// steal focus mid-edit. Filtering via `isTypingTarget` keeps the
@@ -392,6 +405,7 @@
 	$effect(() => {
 		function onKey(e: KeyboardEvent) {
 			if (isTypingTarget(e.target)) return;
+			if (isCanvasTextEditing()) return;
 			// `?` opens the cheatsheet. Modal Esc closes itself, so we don't
 			// also need a global toggle.
 			if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey) {
