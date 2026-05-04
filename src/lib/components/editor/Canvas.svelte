@@ -154,6 +154,113 @@
 		if (editorState.fabricCanvas) redo(editorState.fabricCanvas).then(() => syncObjects());
 	}
 
+	/**
+	 * Nudge every selected object by (dx, dy) pixels. Used by arrow-key
+	 * shortcuts in the editor — Shift expands the step from 1 to 10.
+	 *
+	 * Operates on `getActiveObjects()` so a multi-select selection (TASK-68)
+	 * gets every member moved together, not just the active one. Skip when
+	 * an IText is in editing mode — the IText itself owns arrow-key
+	 * handling for caret movement.
+	 */
+	export function nudgeSelected(dx: number, dy: number) {
+		if (!editorState.fabricCanvas) return;
+		const active = editorState.fabricCanvas.getActiveObject();
+		if (active && active.type === 'i-text' && (active as IText).isEditing) return;
+		const objects = editorState.fabricCanvas.getActiveObjects();
+		if (objects.length === 0) return;
+		for (const obj of objects) {
+			obj.set({ left: (obj.left ?? 0) + dx, top: (obj.top ?? 0) + dy });
+			obj.setCoords();
+		}
+		// ActiveSelection (the parent of multi-selected objects) needs its
+		// own bounding box recomputed, otherwise the rotate/scale handles
+		// stay where they were before the nudge.
+		const activeSelection = editorState.fabricCanvas.getActiveObject();
+		if (activeSelection && objects.length > 1) activeSelection.setCoords();
+		editorState.fabricCanvas.requestRenderAll();
+		markDirty();
+	}
+
+	/**
+	 * Duplicate every selected object in place, offset by (10, 10) so the
+	 * copy is visible. The new copies become the active selection so a
+	 * follow-up keystroke (delete, nudge, another duplicate) targets them.
+	 *
+	 * Uses Fabric's `clone()` which preserves paramBindings + conditional
+	 * styles + every other custom prop, since clone() round-trips through
+	 * toObject/fromObject under the hood.
+	 */
+	export async function duplicateSelected() {
+		if (!editorState.fabricCanvas) return;
+		const objects = editorState.fabricCanvas.getActiveObjects();
+		if (objects.length === 0) return;
+		// IText editing should not swallow Cmd/Ctrl+D — but we still skip
+		// when the user is mid-edit so we don't interrupt typing.
+		const active = editorState.fabricCanvas.getActiveObject();
+		if (active && active.type === 'i-text' && (active as IText).isEditing) return;
+		const clones = await Promise.all(
+			objects.map((o) => o.clone(['paramBindings', 'conditionalStyles']))
+		);
+		editorState.fabricCanvas.discardActiveObject();
+		for (const clone of clones) {
+			clone.set({ left: (clone.left ?? 0) + 10, top: (clone.top ?? 0) + 10 });
+			editorState.fabricCanvas.add(clone);
+		}
+		// Re-select the clones so the next action targets them.
+		if (clones.length === 1) {
+			editorState.fabricCanvas.setActiveObject(clones[0]);
+		}
+		editorState.fabricCanvas.requestRenderAll();
+	}
+
+	/** Move every selected object forward one z-step. */
+	export function bringSelectedForward() {
+		if (!editorState.fabricCanvas) return;
+		for (const obj of editorState.fabricCanvas.getActiveObjects()) {
+			editorState.fabricCanvas.bringObjectForward(obj);
+		}
+		editorState.fabricCanvas.requestRenderAll();
+		markDirty();
+	}
+
+	/** Move every selected object backward one z-step. */
+	export function sendSelectedBackward() {
+		if (!editorState.fabricCanvas) return;
+		for (const obj of editorState.fabricCanvas.getActiveObjects()) {
+			editorState.fabricCanvas.sendObjectBackwards(obj);
+		}
+		editorState.fabricCanvas.requestRenderAll();
+		markDirty();
+	}
+
+	/** Move every selected object to the very top of the z-stack. */
+	export function bringSelectedToFront() {
+		if (!editorState.fabricCanvas) return;
+		for (const obj of editorState.fabricCanvas.getActiveObjects()) {
+			editorState.fabricCanvas.bringObjectToFront(obj);
+		}
+		editorState.fabricCanvas.requestRenderAll();
+		markDirty();
+	}
+
+	/** Move every selected object to the very bottom of the z-stack. */
+	export function sendSelectedToBack() {
+		if (!editorState.fabricCanvas) return;
+		for (const obj of editorState.fabricCanvas.getActiveObjects()) {
+			editorState.fabricCanvas.sendObjectToBack(obj);
+		}
+		editorState.fabricCanvas.requestRenderAll();
+		markDirty();
+	}
+
+	/** Clear the active selection. Bound to Escape in the global handler. */
+	export function deselectAll() {
+		if (!editorState.fabricCanvas) return;
+		editorState.fabricCanvas.discardActiveObject();
+		editorState.fabricCanvas.requestRenderAll();
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
 		const key = e.key.toLowerCase();
 		// Redo: Ctrl+Shift+Z / Cmd+Shift+Z (check before undo since both match 'z')
