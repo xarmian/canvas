@@ -779,7 +779,7 @@
 <MobileBanner />
 
 <div class="editor-layout">
-	<header class="toolbar">
+	<header class="toolbar" data-testid="editor-toolbar">
 		<a href="/" class="back-link" aria-label="Back to dashboard">
 			<ArrowLeft size={14} aria-hidden="true" />
 			<span>Dashboard</span>
@@ -806,7 +806,7 @@
 				<Redo2 size={14} />
 			</button>
 			<span class="toolbar-sep"></span>
-			<button class="tool-btn" onclick={() => editorRef?.addText()}>
+			<button class="tool-btn" data-testid="toolbar-add-text" onclick={() => editorRef?.addText()}>
 				<TypeIcon size={14} />
 				<span>Text</span>
 			</button>
@@ -821,7 +821,12 @@
 			>
 				{canvasWidth}×{canvasHeight}
 			</button>
-			<button class="tool-btn" onclick={openFilePicker} disabled={isUploading}>
+			<button
+				class="tool-btn"
+				data-testid="toolbar-add-image"
+				onclick={openFilePicker}
+				disabled={isUploading}
+			>
 				<ImageIcon size={14} />
 				<span>{isUploading ? 'Uploading…' : 'Image'}</span>
 			</button>
@@ -863,6 +868,7 @@
 		<button
 			type="button"
 			class="publish-btn"
+			data-testid="toolbar-publish"
 			class:published={isPublished}
 			disabled={openingPublish}
 			onclick={openPublishModal}

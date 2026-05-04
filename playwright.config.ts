@@ -37,8 +37,14 @@ export default defineConfig({
 		timeout: 120_000,
 		env: {
 			DATABASE_URL: TEST_DATABASE_URL,
-			// Disable HMR overlays etc. that interfere with deterministic tests.
-			NODE_ENV: 'test'
+			// Better Auth derives callback/redirect URLs from BETTER_AUTH_URL
+			// (or the request Host); without it the client-side wrapper warns
+			// at startup and some flows can produce inconsistent cookies.
+			// Pin it to the test base URL so flows match the dev experience.
+			BETTER_AUTH_URL: BASE_URL,
+			// Some auth/session helpers also read PUBLIC_APP_URL when building
+			// share URLs in server load functions; keep them aligned.
+			PUBLIC_APP_URL: BASE_URL
 		}
 	},
 	use: {
