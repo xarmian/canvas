@@ -14,28 +14,45 @@ import { signupAndLogin, createCanvas, gotoEditor, addTextLayer, publish } from 
 
 test.describe('v0.2 UX regressions', () => {
 	test('no native window.prompt/confirm/alert during any user flow', async ({ page }) => {
-		// Override the natives BEFORE navigation so any call from app code
-		// pushes onto the array. We assert it stayed empty after walking the
-		// full happy path — same flow shape as TASK-47 but condensed.
+		// Two guards, both surviving cross-document navigation:
+		//
+		// (a) page.on('dialog') — Playwright's hook for actual native
+		//     dialogs. Fires for window.alert/confirm/prompt and for
+		//     beforeunload prompts. Survives every navigation and gives us
+		//     a Node-side array that doesn't get reset per document.
+		//
+		// (b) exposeBinding('__recordNativeDialogCall') — receives calls
+		//     from page-side overrides we install via addInitScript. The
+		//     binding is bound once and persists across navigations even
+		//     though the in-page array does not. This catches any code
+		//     path that monkey-patched a copy of prompt/confirm/alert
+		//     before our overrides ran (rare but possible).
+		const dialogCalls: string[] = [];
+		page.on('dialog', (d) => {
+			dialogCalls.push(`${d.type()}(${JSON.stringify(d.message())})`);
+			void d.dismiss();
+		});
+
+		const overrideCalls: string[] = [];
+		await page.exposeBinding('__recordNativeDialogCall', (_source, payload: string) => {
+			overrideCalls.push(payload);
+		});
 		await page.addInitScript(() => {
-			const w = window as unknown as {
-				__nativeDialogCalls: string[];
-				prompt: typeof window.prompt;
-				confirm: typeof window.confirm;
-				alert: typeof window.alert;
-			};
-			w.__nativeDialogCalls = [];
-			w.prompt = (...args: unknown[]) => {
-				w.__nativeDialogCalls.push(`prompt(${JSON.stringify(args)})`);
+			type Recorder = (payload: string) => void;
+			const recorder = (window as unknown as { __recordNativeDialogCall?: Recorder })
+				.__recordNativeDialogCall;
+			if (!recorder) return;
+			window.prompt = ((...args: unknown[]) => {
+				recorder(`prompt(${JSON.stringify(args)})`);
 				return null;
-			};
-			w.confirm = (...args: unknown[]) => {
-				w.__nativeDialogCalls.push(`confirm(${JSON.stringify(args)})`);
+			}) as typeof window.prompt;
+			window.confirm = ((...args: unknown[]) => {
+				recorder(`confirm(${JSON.stringify(args)})`);
 				return false;
-			};
-			w.alert = (...args: unknown[]) => {
-				w.__nativeDialogCalls.push(`alert(${JSON.stringify(args)})`);
-			};
+			}) as typeof window.confirm;
+			window.alert = ((...args: unknown[]) => {
+				recorder(`alert(${JSON.stringify(args)})`);
+			}) as typeof window.alert;
 		});
 
 		await signupAndLogin(page);
@@ -44,10 +61,10 @@ test.describe('v0.2 UX regressions', () => {
 		await addTextLayer(page, 'Hello');
 		await publish(page);
 
-		const calls = await page.evaluate(
-			() => (window as unknown as { __nativeDialogCalls: string[] }).__nativeDialogCalls
-		);
-		expect(calls, 'No native dialogs should fire during signup → publish').toEqual([]);
+		expect(
+			[...dialogCalls, ...overrideCalls],
+			'No native dialogs should fire during signup → publish'
+		).toEqual([]);
 	});
 
 	test('editor route shows the mobile banner below 1024px', async ({ page }) => {
