@@ -46,15 +46,31 @@ export function deriveFontFamily(filename: string): string {
 }
 
 /**
- * Namespace a user's derived family name with their user id so two
- * users (or the same user with re-uploads under a different file
- * name) can't collide in the process-global GlobalFonts registry.
+ * Namespace a font family with the upload's asset id so that two
+ * users — or the same user re-uploading after a delete — can't
+ * collide in the process-global GlobalFonts registry. Asset IDs
+ * are UUIDs, so each upload gets a unique alias even when the
+ * filename and derived family are identical.
+ *
+ * Why per-asset (not per-user): GlobalFonts.register ignores a
+ * second registration under the same alias. If we keyed by user,
+ * a delete-then-reupload of `Brand.ttf` would re-register new
+ * bytes under the same family — but Skia would keep using the
+ * original bytes for the rest of the process lifetime. Per-asset
+ * scoping makes the new upload its own family, so it draws fresh.
+ *
+ * Trade-off: a re-upload after delete leaves the canvas's
+ * templateJson pointing at the now-gone old family. The render
+ * endpoint's sanitizer swaps it to 'Inter'; the user has to
+ * re-pick the (new) family in the editor. Documented in the
+ * /assets delete dialog.
+ *
  * The display name shown in the picker is still the un-namespaced
  * derived family — the namespaced form is what gets stored in
  * templateJson and resolved by the renderer.
  */
-export function scopedFontFamily(userId: string, derivedFamily: string): string {
-	return `u-${userId}__${derivedFamily}`;
+export function scopedFontFamily(assetId: string, derivedFamily: string): string {
+	return `u-${assetId}__${derivedFamily}`;
 }
 
 /** Build a Drizzle WHERE for "is a font asset" (matches our two
@@ -96,7 +112,7 @@ async function loadFontRows(userId: string): Promise<FontRow[]> {
  */
 export async function getLiveUserFontFamilies(userId: string): Promise<Set<string>> {
 	const rows = await loadFontRows(userId);
-	return new Set(rows.map((r) => scopedFontFamily(userId, deriveFontFamily(r.filename))));
+	return new Set(rows.map((r) => scopedFontFamily(r.id, deriveFontFamily(r.filename))));
 }
 
 /**
@@ -113,7 +129,7 @@ export async function getLiveUserFontDescriptors(
 	const rows = await loadFontRows(userId);
 	return rows.map((r) => ({
 		id: r.id,
-		family: scopedFontFamily(userId, deriveFontFamily(r.filename))
+		family: scopedFontFamily(r.id, deriveFontFamily(r.filename))
 	}));
 }
 
@@ -133,7 +149,7 @@ export async function ensureUserFontsRegistered(userId: string): Promise<void> {
 		pending.map(async (row) => {
 			try {
 				const buffer = await storage.read(row.storageKey);
-				registerFontFromBuffer(buffer, scopedFontFamily(userId, deriveFontFamily(row.filename)));
+				registerFontFromBuffer(buffer, scopedFontFamily(row.id, deriveFontFamily(row.filename)));
 				registered.add(row.id);
 			} catch (err) {
 				console.error('[user-fonts] failed to register', {

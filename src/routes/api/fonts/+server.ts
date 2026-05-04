@@ -35,10 +35,12 @@ export const GET: RequestHandler = async ({ locals }) => {
 			displayName,
 			/** What gets stored in templateJson and registered with both
 			 *  the browser FontFace API and the server-side GlobalFonts.
-			 *  Namespaced with the owner id so two users (or the same
-			 *  user across re-uploads with the same filename) can't
-			 *  collide in the process-global registry. */
-			family: scopedFontFamily(locals.user!.id, displayName),
+			 *  Namespaced with the asset id so each upload has a unique
+			 *  alias — necessary because GlobalFonts.register ignores
+			 *  re-registration under the same alias, so delete-then-
+			 *  reupload would otherwise keep the original bytes for the
+			 *  rest of the process lifetime. */
+			family: scopedFontFamily(a.id, displayName),
 			url: storage.getUrl(a.storageKey),
 			contentType: a.contentType,
 			sizeBytes: a.sizeBytes,
