@@ -10,7 +10,8 @@
 		Image as ImageIcon,
 		Trash2,
 		Eye,
-		EyeOff
+		EyeOff,
+		AlertTriangle as AlertTriangleIcon
 	} from '@lucide/svelte';
 	import CanvasEditor from '$lib/components/editor/Canvas.svelte';
 	import LayerPanel from '$lib/components/editor/LayerPanel.svelte';
@@ -898,34 +899,73 @@
 		</button>
 	</header>
 
-	<div class="main-area">
-		<LayerPanel />
+	<svelte:boundary
+		onerror={(err: unknown) => {
+			// Surface in console so the dev can see the stack; the user
+			// only sees the friendly recovery UI below.
+			console.error('[editor boundary] unhandled error during render:', err);
+		}}
+	>
+		<div class="main-area" data-testid="editor-main-area">
+			<LayerPanel />
 
-		<div
-			class="canvas-container"
-			class:drag-over={isDraggingFile}
-			ondragenter={onDragEnter}
-			ondragover={onDragOver}
-			ondragleave={onDragLeave}
-			ondrop={onDrop}
-			role="region"
-			aria-label="Canvas — drop an image here to add it"
-		>
-			<CanvasEditor
-				bind:this={editorRef}
-				width={canvasWidth}
-				height={canvasHeight}
-				{backgroundColor}
-			/>
-			{#if isDraggingFile}
-				<div class="drop-overlay" aria-hidden="true">
-					<div class="drop-hint">Drop to add image</div>
-				</div>
-			{/if}
+			<div
+				class="canvas-container"
+				class:drag-over={isDraggingFile}
+				ondragenter={onDragEnter}
+				ondragover={onDragOver}
+				ondragleave={onDragLeave}
+				ondrop={onDrop}
+				role="region"
+				aria-label="Canvas — drop an image here to add it"
+			>
+				<CanvasEditor
+					bind:this={editorRef}
+					width={canvasWidth}
+					height={canvasHeight}
+					{backgroundColor}
+				/>
+				{#if isDraggingFile}
+					<div class="drop-overlay" aria-hidden="true">
+						<div class="drop-hint">Drop to add image</div>
+					</div>
+				{/if}
+			</div>
+
+			<PropertyPanel />
 		</div>
 
-		<PropertyPanel />
-	</div>
+		{#snippet failed(err: unknown, reset: () => void)}
+			<!-- Svelte 5 boundary failed-state snippet. Caught by render-time
+				errors below the boundary; async event-handler exceptions
+				escape this and land in the existing toast paths instead.
+				The retry path resets the boundary, which re-renders the
+				subtree from scratch. The "reload" path is for cases where
+				resetting alone isn't enough (e.g. bad templateJson on
+				disk) — a full page reload re-runs the load function and
+				gives the user the most-recent saved state. -->
+			<div class="editor-error" role="alert">
+				<div class="editor-error-card">
+					<AlertTriangleIcon size={32} aria-hidden="true" />
+					<h2>The editor hit a problem</h2>
+					<p>
+						Something went wrong rendering the canvas. Your work is saved on the server up to the
+						last successful save.
+					</p>
+					{#if err instanceof Error && err.message}
+						<p class="editor-error-detail"><code>{err.message}</code></p>
+					{/if}
+					<div class="editor-error-actions">
+						<button type="button" class="btn btn-primary" onclick={reset}>Retry</button>
+						<button type="button" class="btn btn-secondary" onclick={() => location.reload()}>
+							Reload editor
+						</button>
+						<a href="/" class="btn btn-secondary">Back to dashboard</a>
+					</div>
+				</div>
+			</div>
+		{/snippet}
+	</svelte:boundary>
 
 	<ConfirmDialog
 		open={pendingNavigationHref !== null}
@@ -1262,6 +1302,86 @@
 
 	.publish-btn.published:hover {
 		background: #bbf7d0;
+	}
+
+	.editor-error {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: #f8fafc;
+		padding: 2rem 1rem;
+	}
+
+	.editor-error-card {
+		max-width: 32rem;
+		text-align: center;
+		background: #fff;
+		border: 1px solid #fee2e2;
+		border-radius: 8px;
+		padding: 1.5rem;
+		color: #1e293b;
+	}
+
+	.editor-error-card :global(svg) {
+		color: #dc2626;
+		display: block;
+		margin: 0 auto 0.75rem;
+	}
+
+	.editor-error-card h2 {
+		margin: 0 0 0.5rem;
+		font-size: 1.125rem;
+		font-weight: 700;
+	}
+
+	.editor-error-card p {
+		margin: 0 0 0.5rem;
+		font-size: 0.875rem;
+		line-height: 1.5;
+		color: #475569;
+	}
+
+	.editor-error-detail code {
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.75rem;
+		background: #f1f5f9;
+		padding: 0.15rem 0.35rem;
+		border-radius: 3px;
+		display: inline-block;
+		max-width: 100%;
+		overflow-x: auto;
+	}
+
+	.editor-error-actions {
+		display: flex;
+		gap: 0.5rem;
+		justify-content: center;
+		flex-wrap: wrap;
+		margin-top: 1rem;
+	}
+
+	.editor-error-actions .btn {
+		padding: 0.5rem 1rem;
+		border-radius: 6px;
+		font-size: 0.875rem;
+		font-weight: 500;
+		text-decoration: none;
+		border: 1px solid transparent;
+		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+	}
+
+	.editor-error-actions .btn-primary {
+		background: #2563eb;
+		color: #fff;
+	}
+
+	.editor-error-actions .btn-secondary {
+		background: #fff;
+		color: #374151;
+		border-color: #d1d5db;
 	}
 
 	.main-area {
