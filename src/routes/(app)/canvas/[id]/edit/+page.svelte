@@ -320,7 +320,7 @@
 	let bypassNavigationGuard = false;
 
 	function hasPendingWork(): boolean {
-		return editorState.isDirty || isSaving || isUploading;
+		return editorState.isDirty || isSaving || isUploading || isInsertingImage;
 	}
 
 	beforeNavigate((nav) => {
@@ -461,6 +461,14 @@
 	}
 
 	let isUploading = $state(false);
+	/** True while a successfully-uploaded or library-picked image is being
+	 * loaded into Fabric (FabricImage.fromURL → addImageFromUrl). The
+	 * upload-state guard alone misses this window: the modal flips
+	 * isUploading=false the moment the fetch settles, but the actual
+	 * Fabric insert is still pending. Without this flag, a fast nav after
+	 * selecting from the library — or right at the moment a fresh upload
+	 * resolves — can unmount the editor mid-insert. */
+	let isInsertingImage = $state(false);
 	/** Toggles the Upload/Library tabbed picker that replaced the bare
 	 * file-input button on the toolbar. Drag-drop onto the canvas still
 	 * uses the unmodaled queueUpload() path below — we don't want a drop
@@ -489,7 +497,11 @@
 
 	/** Insert a previously-uploaded asset (from the From-library tab) into
 	 *  the canvas. Mirrors the post-upload tail of `uploadAndInsertImage`
-	 *  but skips the upload itself — the URL is already in storage. */
+	 *  but skips the upload itself — the URL is already in storage.
+	 *
+	 *  Wrapping the await in isInsertingImage=true/false keeps
+	 *  hasPendingWork() truthful during the FabricImage.fromURL window so
+	 *  the navigation guard fires if the user clicks away mid-insert. */
 	async function insertExistingAsset(url: string, originCanvasId: string) {
 		if (data.canvas.id !== originCanvasId) {
 			toast.info('Image was not added — you switched canvases.');
@@ -499,11 +511,19 @@
 			toast.error('Editor was unavailable — refresh and try again.');
 			return;
 		}
-		const inserted = await editorRef.addImageFromUrl(url);
-		if (inserted) {
-			toast.success('Image added');
-		} else {
-			toast.error('Could not add image — try again.');
+		isInsertingImage = true;
+		try {
+			const inserted = await editorRef.addImageFromUrl(url);
+			if (inserted) {
+				toast.success('Image added');
+			} else {
+				toast.error('Could not add image — try again.');
+			}
+		} finally {
+			// Only clear the flag if we're still on the originating canvas.
+			// If the user switched canvases mid-insert, the resync effect
+			// has already taken ownership of editor state.
+			if (data.canvas.id === originCanvasId) isInsertingImage = false;
 		}
 	}
 
