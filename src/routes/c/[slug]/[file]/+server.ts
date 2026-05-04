@@ -50,22 +50,10 @@ export const GET: RequestHandler = async ({ params, url }) => {
 		queryParams[key] = value;
 	}
 
-	// Check render cache
-	const key = cacheKey(params.slug, queryParams, formatInfo.format);
-	const cached = renderCache.get(key);
-	if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-		return new Response(new Uint8Array(cached.buffer), {
-			headers: {
-				'Content-Type': cached.contentType,
-				'Cache-Control': 'public, max-age=60, s-maxage=300',
-				'X-Cache': 'HIT'
-			}
-		});
-	}
-
-	// Load canvas parameter definitions for validation. validateParams
-	// also applies defaults for missing optionals, so we no longer need
-	// the separate fall-back loop that was here.
+	// Validation runs BEFORE cache lookup so a previously-cached URL
+	// can't bypass newly-enforced required/type constraints. (The
+	// schema rows are read on every request anyway; we'd just be
+	// trading a Postgres roundtrip for a stale cache hit.)
 	const paramDefs = await db
 		.select()
 		.from(canvasParams)
@@ -88,6 +76,23 @@ export const GET: RequestHandler = async ({ params, url }) => {
 		);
 	}
 	Object.assign(queryParams, validation.resolved);
+
+	// Cache key uses the resolved params (post-default), so two requests
+	// that differ only by relying-on-default vs explicit value hit the
+	// same cache entry — and a now-required param that was previously
+	// cached as missing won't serve from cache (the validation above
+	// already returned 400).
+	const key = cacheKey(params.slug, queryParams, formatInfo.format);
+	const cached = renderCache.get(key);
+	if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+		return new Response(new Uint8Array(cached.buffer), {
+			headers: {
+				'Content-Type': cached.contentType,
+				'Cache-Control': 'public, max-age=60, s-maxage=300',
+				'X-Cache': 'HIT'
+			}
+		});
+	}
 
 	// Build template
 	const template: CanvasTemplate = {

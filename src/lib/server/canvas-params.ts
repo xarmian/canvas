@@ -33,7 +33,12 @@ export function deriveCanvasParams(template: FabricCanvasJson | null | undefined
 		const bindings = obj.paramBindings;
 		if (bindings) {
 			for (const binding of Object.values(bindings)) {
-				const name = binding?.param?.trim();
+				// Use the raw stored name — the renderer does
+				// params[binding.param] verbatim, so trimming here would
+				// store a schema row under a different key than the
+				// runtime ever queries. Only skip empty strings (which
+				// the runtime ignores too).
+				const name = binding?.param;
 				if (!name) continue;
 				if (seen.has(name)) continue;
 				seen.set(name, {
@@ -43,7 +48,7 @@ export function deriveCanvasParams(template: FabricCanvasJson | null | undefined
 			}
 		}
 		for (const rule of objWithExtras.conditionalStyles ?? []) {
-			const name = rule.when?.param?.trim();
+			const name = rule.when?.param;
 			if (!name) continue;
 			if (seen.has(name)) continue;
 			seen.set(name, { name, defaultValue: null });
