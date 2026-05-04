@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Canvas, IText, FabricImage, Rect } from 'fabric';
+	import { Canvas, IText, FabricImage, Rect, ActiveSelection } from 'fabric';
 	import {
 		editorState,
 		setFabricCanvas,
@@ -207,9 +207,15 @@
 			clone.set({ left: (clone.left ?? 0) + 10, top: (clone.top ?? 0) + 10 });
 			editorState.fabricCanvas.add(clone);
 		}
-		// Re-select the clones so the next action targets them.
+		// Re-select the clones so the next action targets them. Single
+		// clone → setActiveObject directly. Multiple clones → wrap them
+		// in an ActiveSelection so a follow-up nudge/delete/duplicate
+		// hits every duplicate together (Fabric's multi-select).
 		if (clones.length === 1) {
 			editorState.fabricCanvas.setActiveObject(clones[0]);
+		} else if (clones.length > 1) {
+			const selection = new ActiveSelection(clones, { canvas: editorState.fabricCanvas });
+			editorState.fabricCanvas.setActiveObject(selection);
 		}
 		editorState.fabricCanvas.requestRenderAll();
 	}

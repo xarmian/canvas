@@ -411,6 +411,14 @@
 			// shouldn't be silently dropped just because focus drifted.
 			if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && !e.shiftKey) {
 				e.preventDefault();
+				// Blur the active element so any property-panel input that
+				// commits on `change` (X/Y/W/H/color, fontSize, etc.) flushes
+				// its pending value into Fabric before save() serializes the
+				// canvas. Without this, Cmd+S immediately after typing a new
+				// X value would persist the *previous* X.
+				if (document.activeElement instanceof HTMLElement) {
+					document.activeElement.blur();
+				}
 				void (async () => {
 					if (await save()) toast.success('Saved');
 				})();
