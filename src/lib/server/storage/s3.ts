@@ -2,6 +2,7 @@ import {
 	S3Client,
 	PutObjectCommand,
 	DeleteObjectCommand,
+	GetObjectCommand,
 	type S3ClientConfig
 } from '@aws-sdk/client-s3';
 import type { StorageAdapter } from './types.js';
@@ -52,6 +53,25 @@ export class S3StorageAdapter implements StorageAdapter {
 
 	getUrl(key: string): string {
 		return `${this.publicBaseUrl}/${key}`;
+	}
+
+	async read(key: string): Promise<Buffer> {
+		const res = await this.client.send(
+			new GetObjectCommand({
+				Bucket: this.bucket,
+				Key: key
+			})
+		);
+		if (!res.Body) {
+			throw new Error(`Storage object not found: ${key}`);
+		}
+		// Body is a Readable stream in Node — collect into a Buffer.
+		const chunks: Buffer[] = [];
+		// @ts-expect-error — AsyncIterable typing differs across SDK versions.
+		for await (const chunk of res.Body) {
+			chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+		}
+		return Buffer.concat(chunks);
 	}
 
 	async delete(key: string): Promise<void> {

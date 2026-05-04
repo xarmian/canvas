@@ -9,6 +9,14 @@ export interface StorageAdapter {
 	/** Get the public URL for a stored file */
 	getUrl(key: string): string;
 
+	/** Read a stored file's bytes server-side. Used for renderer-side
+	 *  operations (font registration, future image inlining) where we
+	 *  need the buffer in-process and going through the public URL is
+	 *  either slow (HTTP roundtrip) or wrong (local URLs aren't
+	 *  resolvable without the SvelteKit server already running).
+	 *  Throws if the key isn't found. */
+	read(key: string): Promise<Buffer>;
+
 	/** Delete a stored file */
 	delete(key: string): Promise<void>;
 }

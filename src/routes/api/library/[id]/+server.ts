@@ -4,6 +4,7 @@ import { db } from '$lib/server/db';
 import { assets } from '$lib/server/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { getStorage } from '$lib/server/storage';
+import { forgetUserFontRegistration } from '$lib/server/user-fonts';
 
 /**
  * DELETE /api/library/[id] — remove an asset from storage and the DB.
@@ -38,6 +39,12 @@ export const DELETE: RequestHandler = async ({ params, locals }) => {
 	}
 
 	await db.delete(assets).where(eq(assets.id, asset.id));
+
+	// Invalidate the in-process font-registration tracking so a future
+	// re-upload with the same derived family name re-registers fresh
+	// bytes (no-op for non-font assets — the Set just doesn't contain
+	// them).
+	forgetUserFontRegistration(asset.id);
 
 	return json({ success: true });
 };

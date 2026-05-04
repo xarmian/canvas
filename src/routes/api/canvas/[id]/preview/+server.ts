@@ -5,6 +5,20 @@ import { canvases } from '$lib/server/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { render } from '$lib/engine';
 import type { CanvasTemplate, FabricCanvasJson } from '$lib/engine';
+import { ensureUserFontsRegistered, getLiveUserFontFamilies } from '$lib/server/user-fonts';
+
+/** Match the public render route's sanitizer — kept inline (not
+ *  exported) so the two endpoints don't accidentally drift. */
+function sanitizeFontFamilies(json: FabricCanvasJson, liveFamilies: Set<string>): FabricCanvasJson {
+	const objects = (json.objects ?? []).map((obj) => {
+		const family = (obj as { fontFamily?: string }).fontFamily;
+		if (typeof family === 'string' && family.startsWith('u-') && !liveFamilies.has(family)) {
+			return { ...obj, fontFamily: 'Inter' };
+		}
+		return obj;
+	});
+	return { ...json, objects };
+}
 
 /**
  * Authenticated preview endpoint — renders a canvas image for the owner
@@ -33,12 +47,29 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
 		previewParams[key] = value;
 	}
 
+	// Mirror the public render route so editor preview uses the same
+	// fonts the eventually-published image will. Without this, an editor
+	// preview falls back to default fonts while the published render at
+	// /c/[slug]/image.png uses the uploaded family — diverging output is
+	// the worst possible footgun for preview's "what will my consumers
+	// see" promise.
+	await ensureUserFontsRegistered(canvas.userId);
+
+	// Mirror the public render route: sanitize fontFamily references
+	// that point at deleted fonts so preview matches what the published
+	// render will produce.
+	const liveFamilies = await getLiveUserFontFamilies(canvas.userId);
+	const sanitizedJson = sanitizeFontFamilies(
+		(canvas.templateJson as unknown as FabricCanvasJson) ?? { objects: [] },
+		liveFamilies
+	);
+
 	const template: CanvasTemplate = {
 		width: canvas.width,
 		height: canvas.height,
 		backgroundType: canvas.backgroundType as 'color' | 'image',
 		backgroundValue: canvas.backgroundValue,
-		templateJson: (canvas.templateJson as unknown as FabricCanvasJson) ?? { objects: [] }
+		templateJson: sanitizedJson
 	};
 
 	const buffer = await render(template, previewParams, { format: 'png', quality: 85 });

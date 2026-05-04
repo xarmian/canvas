@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { nanoid } from 'nanoid';
 import { db } from '$lib/server/db';
 import { assets } from '$lib/server/db/schema';
+import { eq, and } from 'drizzle-orm';
 import {
 	getStorage,
 	ALLOWED_IMAGE_TYPES,
@@ -10,6 +11,7 @@ import {
 	MAX_IMAGE_SIZE,
 	MAX_FONT_SIZE
 } from '$lib/server/storage';
+import { deriveFontFamily, fontAssetWhere } from '$lib/server/user-fonts';
 
 const ALLOWED_TYPES = new Set([...ALLOWED_IMAGE_TYPES, ...ALLOWED_FONT_TYPES]);
 
@@ -41,12 +43,25 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		error(400, 'No file provided');
 	}
 
-	// Validate content type
-	const contentType = file.type;
+	// Validate content type. Some browsers/platforms drop the MIME type
+	// for TTF/OTF uploads (file.type === ''), so when it's missing we
+	// infer it from the extension before rejecting. Limited to font
+	// extensions on purpose — silently accepting an empty-MIME PNG would
+	// risk uploading executables masquerading as images.
+	const fallbackTypeFromExt = (() => {
+		if (file.type) return null;
+		const e = file.name.split('.').pop()?.toLowerCase() ?? '';
+		if (e === 'ttf') return 'font/ttf';
+		if (e === 'otf') return 'font/otf';
+		if (e === 'woff') return 'font/woff';
+		if (e === 'woff2') return 'font/woff2';
+		return null;
+	})();
+	const contentType = file.type || fallbackTypeFromExt || '';
 	if (!ALLOWED_TYPES.has(contentType)) {
 		error(
 			400,
-			`Unsupported file type: ${contentType}. Allowed: images (PNG, JPEG, WebP, SVG) and fonts (TTF, OTF, WOFF, WOFF2).`
+			`Unsupported file type: ${contentType || '(none)'}. Allowed: images (PNG, JPEG, WebP, SVG) and fonts (TTF, OTF, WOFF, WOFF2).`
 		);
 	}
 
@@ -71,6 +86,27 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	// Sanitize filename: strip path separators and dot segments, keep only basename
 	const rawName = file.name.split(/[/\\]/).pop() || 'file';
 	const safeName = rawName.replace(/\.\./g, '').replace(/[^a-zA-Z0-9._-]/g, '_') || 'file';
+
+	// Reject duplicate font family for the same user. Two assets with the
+	// same derived family (filename minus extension) would register
+	// multiple buffers under the same userId-namespaced family in the
+	// process-global GlobalFonts registry — Skia would pick whichever
+	// came last. Asking the user to rename gives them deterministic
+	// control over which face their canvases use.
+	if (isFont) {
+		const candidateFamily = deriveFontFamily(safeName);
+		const existing = await db
+			.select({ id: assets.id, filename: assets.filename })
+			.from(assets)
+			.where(and(eq(assets.userId, locals.user.id), fontAssetWhere()));
+		const collision = existing.find((row) => deriveFontFamily(row.filename) === candidateFamily);
+		if (collision) {
+			error(
+				409,
+				`A font named "${candidateFamily}" already exists in your library (${collision.filename}). Rename your file or delete the existing font first.`
+			);
+		}
+	}
 
 	// Generate storage key under public/ prefix (publicly accessible via MinIO)
 	const folder = isFont ? 'fonts' : 'images';

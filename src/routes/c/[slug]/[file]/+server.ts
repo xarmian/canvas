@@ -7,6 +7,7 @@ import { render } from '$lib/engine';
 import type { CanvasTemplate, FabricCanvasJson, OutputFormat } from '$lib/engine';
 import { validateParams } from '$lib/server/canvas-params';
 import { getDefaultRenderCache } from '$lib/server/render-cache';
+import { ensureUserFontsRegistered, getLiveUserFontDescriptors } from '$lib/server/user-fonts';
 
 const renderCache = getDefaultRenderCache();
 
@@ -19,12 +20,33 @@ function parseFormat(file: string): { format: OutputFormat; contentType: string 
 	return null;
 }
 
-/** Build a cache key from slug + content version + params + format.
- * Including a content version (canvas.updatedAt) is critical — without
- * it, edits to templateJson, dimensions, or background would keep
- * serving the stale render from cache until eviction. The persistent
- * cache makes that staleness window unbounded; the in-memory v0.1
- * cache had a 60s TTL papering over the same shape of bug.
+/** Replace any user-namespaced fontFamily that's no longer in the live
+ *  asset set with 'Inter'. User-namespaced families are recognizable by
+ *  the `u-` prefix that scopedFontFamily emits; bundled families
+ *  ("Inter", "Arial", ...) are preserved as-is. */
+function sanitizeFontFamilies(json: FabricCanvasJson, liveFamilies: Set<string>): FabricCanvasJson {
+	const objects = (json.objects ?? []).map((obj) => {
+		const family = (obj as { fontFamily?: string }).fontFamily;
+		if (typeof family === 'string' && family.startsWith('u-') && !liveFamilies.has(family)) {
+			return { ...obj, fontFamily: 'Inter' };
+		}
+		return obj;
+	});
+	return { ...json, objects };
+}
+
+/** Build a cache key from slug + content version + params + format +
+ * the canvas owner's font-library fingerprint.
+ *
+ * Why fontSetVersion is part of the key: GlobalFonts has no unregister
+ * API, so a deleted font keeps rendering from the in-process registry
+ * until restart — and if a render with the deleted font was cached,
+ * the cache would keep serving that output even after we sanitize
+ * unknown families on miss. Mixing the live-family fingerprint into
+ * the key means add/delete of any font for the user busts every
+ * cached render for that user's canvases. The fingerprint is the
+ * sorted family list joined with '|'; small enough to not bloat the
+ * key, and deterministic.
  *
  * Param serialization uses JSON so a key/value containing literal `&`
  * or `=` (e.g. `?q=1%26x=2`) can't collide with a different request
@@ -33,11 +55,12 @@ function cacheKey(
 	slug: string,
 	version: string,
 	params: Record<string, string>,
-	format: string
+	format: string,
+	fontSetVersion: string
 ): string {
 	const sortedEntries = Object.entries(params).sort(([a], [b]) => a.localeCompare(b));
 	const serializedParams = JSON.stringify(sortedEntries);
-	return `${slug}:${version}:${format}:${serializedParams}`;
+	return `${slug}:${version}:${format}:fonts=${fontSetVersion}:${serializedParams}`;
 }
 
 export const GET: RequestHandler = async ({ params, url }) => {
@@ -87,6 +110,20 @@ export const GET: RequestHandler = async ({ params, url }) => {
 	}
 	Object.assign(queryParams, validation.resolved);
 
+	// Compute the live font set BEFORE cache lookup. The cache key
+	// includes a fingerprint of the user's current font library so any
+	// add/delete of any font busts every cached render for that user.
+	// Critically, the fingerprint is built from asset IDs (not just
+	// family names) so delete-then-reupload of the same filename also
+	// busts the cache — re-uploading produces a new asset row with a
+	// new UUID even though the derived family is identical.
+	const liveDescriptors = await getLiveUserFontDescriptors(canvas.userId);
+	const liveFamilies = new Set(liveDescriptors.map((d) => d.family));
+	const fontSetVersion = liveDescriptors
+		.map((d) => d.id)
+		.sort()
+		.join('|');
+
 	// Cache key uses the resolved params (post-default), so two requests
 	// that differ only by relying-on-default vs explicit value hit the
 	// same cache entry — and a now-required param that was previously
@@ -98,7 +135,7 @@ export const GET: RequestHandler = async ({ params, url }) => {
 	// the cache. updatedAt is auto-refreshed on every PATCH via Drizzle
 	// $onUpdate.
 	const version = canvas.updatedAt.toISOString();
-	const key = cacheKey(params.slug, version, queryParams, formatInfo.format);
+	const key = cacheKey(params.slug, version, queryParams, formatInfo.format, fontSetVersion);
 	const cachedBuf = await renderCache.get(key, formatInfo.format);
 	if (cachedBuf) {
 		return new Response(new Uint8Array(cachedBuf), {
@@ -110,13 +147,30 @@ export const GET: RequestHandler = async ({ params, url }) => {
 		});
 	}
 
-	// Build template
+	// Register the canvas owner's uploaded fonts before rendering. No-op
+	// after the first render in this process unless new fonts have been
+	// uploaded since. Failure is logged inside ensureUserFontsRegistered
+	// and is non-fatal — the renderer will fall back to the default
+	// font set instead of 500-ing the public render URL.
+	await ensureUserFontsRegistered(canvas.userId);
+
+	// Sanitize fontFamily references that point at deleted fonts.
+	// GlobalFonts has no unregister API — once a font has been
+	// registered in this process, it stays in Skia's table. Without the
+	// swap, a canvas whose author deleted the asset would keep
+	// rendering with the deleted bytes until the server restarted.
+	// Cache freshness is handled by the fontSetVersion in the key above.
+	const sanitizedJson = sanitizeFontFamilies(
+		(canvas.templateJson as unknown as FabricCanvasJson) ?? { objects: [] },
+		liveFamilies
+	);
+
 	const template: CanvasTemplate = {
 		width: canvas.width,
 		height: canvas.height,
 		backgroundType: canvas.backgroundType as 'color' | 'image',
 		backgroundValue: canvas.backgroundValue,
-		templateJson: (canvas.templateJson as unknown as FabricCanvasJson) ?? { objects: [] }
+		templateJson: sanitizedJson
 	};
 
 	// Render
