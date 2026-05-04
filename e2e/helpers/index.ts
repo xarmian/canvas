@@ -79,6 +79,11 @@ export async function createCanvas(
 	const preset = opts.preset ?? 'OG Image';
 
 	await page.goto('/new');
+	// Same hydration discipline as signupAndLogin — wait for SvelteKit to
+	// attach event handlers before clicking. The /new form's submit button
+	// otherwise triggers a native GET to /new?, the JS-driven goto to the
+	// editor never happens, and waitForURL eventually times out.
+	await page.waitForLoadState('networkidle');
 	await page.getByLabel('Name').fill(name);
 	// Preset is a radio whose visible label includes the size (e.g.
 	// "OG Image 1200×630"). Match by exact preset prefix to avoid coupling
