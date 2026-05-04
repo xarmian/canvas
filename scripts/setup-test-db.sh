@@ -51,6 +51,17 @@ if [ -z "$DB_NAME" ]; then
 	exit 1
 fi
 
+# Strict identifier whitelist. The database name is interpolated into SQL
+# below, so it must not contain anything that could break out — semicolons,
+# spaces, quotes, percent-encoded payloads, etc. Postgres unquoted
+# identifiers already follow this shape (letter/underscore start, then
+# letters/digits/underscores).
+if ! [[ "$DB_NAME" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+	echo "[setup-test-db] Refusing: database name '${DB_NAME}' contains" >&2
+	echo "[setup-test-db] characters outside [A-Za-z0-9_]." >&2
+	exit 1
+fi
+
 # This script issues DROP DATABASE — guard against pointing it at a non-test
 # database (e.g. the dev `canvas` DB). The name must contain "test"; this
 # rules out 'canvas', 'postgres', and other shared DBs without preventing
@@ -64,6 +75,13 @@ case "$DB_NAME" in
 		exit 1
 		;;
 esac
+
+# Same applies to the user — used unquoted as identifier in the OWNER clause.
+if ! [[ "$DB_USER" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+	echo "[setup-test-db] Refusing: user '${DB_USER}' contains characters" >&2
+	echo "[setup-test-db] outside [A-Za-z0-9_]." >&2
+	exit 1
+fi
 
 # Sanity: the dev `db` container must be up. We exec psql inside it so this
 # script doesn't require psql installed on the host.
