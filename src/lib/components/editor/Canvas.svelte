@@ -432,7 +432,13 @@
 		} else {
 			const sel = new ActiveSelection(next, { canvas });
 			canvas.setActiveObject(sel);
-			setSelectedObject(sel);
+			// Keep selectedObject pointing at a real canvas object (the
+			// first member) so the property panel binds to something it
+			// can actually edit. ActiveSelection itself is a transient
+			// wrapper — editing its props would persist nothing. The full
+			// member list lives in activeObjects for the layer panel + the
+			// align toolbar.
+			setSelectedObject(next[0]);
 			setActiveObjects(next);
 		}
 		canvas.requestRenderAll();
