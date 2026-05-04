@@ -97,10 +97,17 @@ function createFontStore() {
 			const loadPromises: Promise<unknown>[] = [];
 			for (const item of body.items) {
 				if (loadedIds[item.id]) continue;
-				loadedIds[item.id] = true;
 				try {
 					const face = new FontFace(item.family, `url(${JSON.stringify(item.url).slice(1, -1)})`);
 					document.fonts.add(face);
+					// Mark loaded only AFTER successful construct + add.
+					// If either step throws, leave loadedIds[item.id]
+					// undefined so the next reconcile gets a fresh
+					// attempt — without this, a one-time constructor
+					// error would permanently strand the asset in the
+					// "skip on retry" state while reconciliation kept
+					// re-adding the family to state.fonts.
+					loadedIds[item.id] = true;
 					loadPromises.push(
 						face.load().catch((err) => {
 							// One bad font shouldn't kill the rest. Drop
