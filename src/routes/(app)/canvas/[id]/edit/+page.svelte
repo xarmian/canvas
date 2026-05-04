@@ -11,6 +11,7 @@
 		Trash2,
 		Eye,
 		EyeOff,
+		Copy,
 		AlertTriangle as AlertTriangleIcon
 	} from '@lucide/svelte';
 	import CanvasEditor from '$lib/components/editor/Canvas.svelte';
@@ -100,6 +101,58 @@
 	});
 	let showPublishModal = $state(false);
 	let openingPublish = $state(false);
+	let duplicating = $state(false);
+
+	/**
+	 * Duplicate the current canvas via POST /api/canvas/[id]/duplicate and
+	 * navigate to the new canvas's editor. Flushes any pending save first
+	 * so the duplicate captures the user's latest edits, not the
+	 * server-persisted snapshot from before the last in-flight change.
+	 *
+	 * Sets `bypassNavigationGuard = true` before goto so the user isn't
+	 * trapped in the leave-without-saving dialog after a successful save —
+	 * the save above already flushed isDirty, but the guard also fires on
+	 * isUploading/isInsertingImage which we cannot safely flush here.
+	 * Those windows are short, so we just skip duplication when they're
+	 * active (rare in practice and obvious from the disabled button).
+	 */
+	async function duplicateInEditor() {
+		if (duplicating) return;
+		if (isUploading || isInsertingImage) {
+			toast.error('Wait for the in-progress upload to finish, then try again.');
+			return;
+		}
+		duplicating = true;
+		try {
+			// Flush any in-flight autosave first so a save() call here
+			// doesn't no-op due to isSaving=true and miss the latest edits.
+			await waitForSave();
+			// Then loop save while still dirty. A single save() can return
+			// true (PATCH succeeded) without markClean(), if editGeneration
+			// changed during the request — meaning more edits arrived
+			// during the save window. Re-saving picks them up. The publish
+			// flow does the equivalent via waitForSave() + save().
+			if (editorState.isDirty) {
+				const ok = await save();
+				if (!ok || editorState.isDirty) {
+					toast.error('Could not save before duplicating. Try again.');
+					return;
+				}
+			}
+			const res = await fetch(`/api/canvas/${data.canvas.id}/duplicate`, { method: 'POST' });
+			if (!res.ok) {
+				toast.error('Could not duplicate this canvas. Try again.');
+				return;
+			}
+			const created = (await res.json()) as { id: string };
+			bypassNavigationGuard = true;
+			await goto(`/canvas/${created.id}/edit`);
+		} catch {
+			toast.error('Could not duplicate this canvas. Check your connection and try again.');
+		} finally {
+			duplicating = false;
+		}
+	}
 	/** Snapshot of the current bindings in the format PublishModal expects.
 	 * Only refreshed after any pending edits are persisted — the public
 	 * renderer reads templateJson from the DB, so if we snapshotted from live
@@ -929,6 +982,16 @@
 			<button class="tool-btn delete-btn" onclick={() => editorRef?.deleteSelected()}>
 				<Trash2 size={14} />
 				<span>Delete</span>
+			</button>
+			<button
+				class="tool-btn"
+				data-testid="toolbar-duplicate"
+				onclick={duplicateInEditor}
+				disabled={duplicating || isUploading || isInsertingImage}
+				title="Duplicate this canvas as a new draft"
+			>
+				<Copy size={14} />
+				<span>{duplicating ? 'Duplicating…' : 'Duplicate'}</span>
 			</button>
 		</div>
 
