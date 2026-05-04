@@ -2,6 +2,7 @@
 	import type { FabricObject } from 'fabric';
 	import { ChevronRight, AlignLeft, AlignCenter, AlignRight } from '@lucide/svelte';
 	import { editorState, markDirty } from './state.svelte.ts';
+	import { fontStore } from '$lib/stores/fonts.svelte';
 
 	// --- Derived properties from the selected object ---
 	// editorState.editGeneration is read to force re-derivation when Fabric mutates
@@ -243,11 +244,19 @@
 							value={fontFamily}
 							onchange={(e) => setProp('fontFamily', e.currentTarget.value)}
 						>
-							<option value="Inter">Inter</option>
-							<option value="Arial">Arial</option>
-							<option value="Georgia">Georgia</option>
-							<option value="Courier New">Courier New</option>
-							<option value="Times New Roman">Times New Roman</option>
+							{#each fontStore.fonts as font (font.family)}
+								<option value={font.family}>
+									{font.family}{font.source === 'user' ? ' (uploaded)' : ''}
+								</option>
+							{/each}
+							<!-- If the canvas references a custom family that hasn't
+								loaded yet (e.g. font asset deleted, network blip),
+								keep the value in the dropdown so the user can still
+								see what's set rather than the picker silently
+								snapping to the first option. -->
+							{#if fontFamily && !fontStore.fonts.some((f) => f.family === fontFamily)}
+								<option value={fontFamily}>{fontFamily} (missing)</option>
+							{/if}
 						</select>
 					</div>
 

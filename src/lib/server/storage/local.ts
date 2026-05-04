@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import type { StorageAdapter } from './types.js';
 
@@ -34,6 +34,14 @@ export class LocalStorageAdapter implements StorageAdapter {
 
 	getUrl(key: string): string {
 		return `${this.publicPrefix}/${key}`;
+	}
+
+	async read(key: string): Promise<Buffer> {
+		const filePath = join(this.basePath, key);
+		if (!existsSync(filePath)) {
+			throw new Error(`Storage object not found: ${key}`);
+		}
+		return readFileSync(filePath);
 	}
 
 	async delete(key: string): Promise<void> {

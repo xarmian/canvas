@@ -7,6 +7,7 @@ import { render } from '$lib/engine';
 import type { CanvasTemplate, FabricCanvasJson, OutputFormat } from '$lib/engine';
 import { validateParams } from '$lib/server/canvas-params';
 import { getDefaultRenderCache } from '$lib/server/render-cache';
+import { ensureUserFontsRegistered } from '$lib/server/user-fonts';
 
 const renderCache = getDefaultRenderCache();
 
@@ -109,6 +110,13 @@ export const GET: RequestHandler = async ({ params, url }) => {
 			}
 		});
 	}
+
+	// Register the canvas owner's uploaded fonts before rendering. No-op
+	// after the first render in this process unless new fonts have been
+	// uploaded since. Failure is logged inside ensureUserFontsRegistered
+	// and is non-fatal — the renderer will fall back to the default
+	// font set instead of 500-ing the public render URL.
+	await ensureUserFontsRegistered(canvas.userId);
 
 	// Build template
 	const template: CanvasTemplate = {

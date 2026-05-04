@@ -32,6 +32,7 @@
 	} from '$lib/components/editor/history.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { ConfirmDialog } from '$lib/components/ui';
+	import { fontStore } from '$lib/stores/fonts.svelte';
 
 	/** Accepted by /api/upload for image uploads. Must stay in sync with
 	 * server-side ALLOWED_IMAGE_TYPES. */
@@ -274,6 +275,27 @@
 		}
 		return true;
 	}
+
+	// Load user fonts and register them with the browser's FontFace API so
+	// the Fabric canvas can render text in custom families. Bundled fonts
+	// are usable immediately; user fonts unlock the dropdown + canvas
+	// rendering once they've loaded. We force a Fabric repaint after the
+	// fetch completes so any text using a still-loading family re-measures
+	// against the now-loaded glyphs (otherwise the canvas keeps fallback
+	// metrics from the initial paint).
+	//
+	// Wrap in `untrack` so reads of fontStore's internal $state inside
+	// loadUserFonts don't subscribe this effect — without it, the
+	// in-function `if (loadingUserFonts) return` guard becomes a tracked
+	// read, every state flip re-runs the effect, and the page never
+	// reaches networkidle.
+	$effect(() => {
+		untrack(() => {
+			void fontStore.loadUserFonts().then(() => {
+				editorState.fabricCanvas?.requestRenderAll();
+			});
+		});
+	});
 
 	// Auto-save: debounce 2 seconds after any edit (watches editorState.editGeneration for re-triggers)
 	$effect(() => {
