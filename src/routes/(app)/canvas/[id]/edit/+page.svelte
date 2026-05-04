@@ -124,9 +124,17 @@
 		}
 		duplicating = true;
 		try {
+			// Flush any in-flight autosave first so a save() call here
+			// doesn't no-op due to isSaving=true and miss the latest edits.
+			await waitForSave();
+			// Then loop save while still dirty. A single save() can return
+			// true (PATCH succeeded) without markClean(), if editGeneration
+			// changed during the request — meaning more edits arrived
+			// during the save window. Re-saving picks them up. The publish
+			// flow does the equivalent via waitForSave() + save().
 			if (editorState.isDirty) {
 				const ok = await save();
-				if (!ok) {
+				if (!ok || editorState.isDirty) {
 					toast.error('Could not save before duplicating. Try again.');
 					return;
 				}
