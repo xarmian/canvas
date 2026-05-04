@@ -5,6 +5,7 @@ import { canvases } from '$lib/server/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { render } from '$lib/engine';
 import type { CanvasTemplate, FabricCanvasJson } from '$lib/engine';
+import { ensureUserFontsRegistered } from '$lib/server/user-fonts';
 
 /**
  * Authenticated preview endpoint — renders a canvas image for the owner
@@ -32,6 +33,14 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
 		if (RESERVED_QUERY_KEYS.has(key)) continue;
 		previewParams[key] = value;
 	}
+
+	// Mirror the public render route so editor preview uses the same
+	// fonts the eventually-published image will. Without this, an editor
+	// preview falls back to default fonts while the published render at
+	// /c/[slug]/image.png uses the uploaded family — diverging output is
+	// the worst possible footgun for preview's "what will my consumers
+	// see" promise.
+	await ensureUserFontsRegistered(canvas.userId);
 
 	const template: CanvasTemplate = {
 		width: canvas.width,

@@ -41,12 +41,25 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		error(400, 'No file provided');
 	}
 
-	// Validate content type
-	const contentType = file.type;
+	// Validate content type. Some browsers/platforms drop the MIME type
+	// for TTF/OTF uploads (file.type === ''), so when it's missing we
+	// infer it from the extension before rejecting. Limited to font
+	// extensions on purpose — silently accepting an empty-MIME PNG would
+	// risk uploading executables masquerading as images.
+	const fallbackTypeFromExt = (() => {
+		if (file.type) return null;
+		const e = file.name.split('.').pop()?.toLowerCase() ?? '';
+		if (e === 'ttf') return 'font/ttf';
+		if (e === 'otf') return 'font/otf';
+		if (e === 'woff') return 'font/woff';
+		if (e === 'woff2') return 'font/woff2';
+		return null;
+	})();
+	const contentType = file.type || fallbackTypeFromExt || '';
 	if (!ALLOWED_TYPES.has(contentType)) {
 		error(
 			400,
-			`Unsupported file type: ${contentType}. Allowed: images (PNG, JPEG, WebP, SVG) and fonts (TTF, OTF, WOFF, WOFF2).`
+			`Unsupported file type: ${contentType || '(none)'}. Allowed: images (PNG, JPEG, WebP, SVG) and fonts (TTF, OTF, WOFF, WOFF2).`
 		);
 	}
 
