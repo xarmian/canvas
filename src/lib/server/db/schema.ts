@@ -34,6 +34,16 @@ export const canvases = pgTable(
 		redirectUrl: text('redirect_url'),
 		ogTitle: text('og_title'),
 		ogDescription: text('og_description'),
+		// Single-string folder for dashboard grouping. NULL = "uncategorized".
+		// Kept as a free-form string (not a separate table) because v0.4
+		// users have small libraries, no nesting, and no per-folder
+		// permissions; any of those needs would mean restructuring anyway.
+		folder: text('folder'),
+		// Free-form tag list. Stored as a Postgres text[] (not jsonb) so we
+		// can index with GIN and use `?| array[...]` operators later.
+		// Empty array (not null) is the default — keeps the dashboard's
+		// `canvas.tags.includes(...)` checks branchless.
+		tags: text('tags').array().notNull().default([]),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true })
 			.notNull()
