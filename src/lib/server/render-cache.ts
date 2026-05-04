@@ -104,9 +104,14 @@ export class FsRenderCache {
 			const buf = await readFile(path);
 			// Refresh atime so this entry counts as recently-used. Best
 			// effort — if utimes fails (read-only mount) the cache still
-			// works, just with slightly stale LRU ordering.
+			// works, just with slightly stale LRU ordering. NOTE: Node's
+			// Date constructor expects milliseconds; an earlier version
+			// of this file passed `now / 1000` and ended up writing 1970
+			// timestamps, which scanIndex then re-read on restart and
+			// happily evicted as "oldest first". Pass `now` verbatim.
 			const now = Date.now();
-			void utimes(path, new Date(now / 1000), new Date(now / 1000)).catch(() => {});
+			const stamp = new Date(now);
+			void utimes(path, stamp, stamp).catch(() => {});
 			entry.atimeMs = now;
 			return buf;
 		} catch {

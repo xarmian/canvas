@@ -19,13 +19,23 @@ function parseFormat(file: string): { format: OutputFormat; contentType: string 
 	return null;
 }
 
-/** Build a cache key from slug + params + format */
-function cacheKey(slug: string, params: Record<string, string>, format: string): string {
+/** Build a cache key from slug + content version + params + format.
+ * Including a content version (canvas.updatedAt) is critical — without
+ * it, edits to templateJson, dimensions, or background would keep
+ * serving the stale render from cache until eviction. The persistent
+ * cache makes that staleness window unbounded; the in-memory v0.1
+ * cache had a 60s TTL papering over the same shape of bug. */
+function cacheKey(
+	slug: string,
+	version: string,
+	params: Record<string, string>,
+	format: string
+): string {
 	const sortedParams = Object.entries(params)
 		.sort(([a], [b]) => a.localeCompare(b))
 		.map(([k, v]) => `${k}=${v}`)
 		.join('&');
-	return `${slug}:${format}:${sortedParams}`;
+	return `${slug}:${version}:${format}:${sortedParams}`;
 }
 
 export const GET: RequestHandler = async ({ params, url }) => {
@@ -80,7 +90,13 @@ export const GET: RequestHandler = async ({ params, url }) => {
 	// same cache entry — and a now-required param that was previously
 	// cached as missing won't serve from cache (the validation above
 	// already returned 400).
-	const key = cacheKey(params.slug, queryParams, formatInfo.format);
+	// Include canvas.updatedAt so any edit (templateJson, dimensions,
+	// background, even canvasParams flag changes that wouldn't change
+	// the rendered bytes but might change validation behavior) busts
+	// the cache. updatedAt is auto-refreshed on every PATCH via Drizzle
+	// $onUpdate.
+	const version = canvas.updatedAt.toISOString();
+	const key = cacheKey(params.slug, version, queryParams, formatInfo.format);
 	const cachedBuf = await renderCache.get(key, formatInfo.format);
 	if (cachedBuf) {
 		return new Response(new Uint8Array(cachedBuf), {
