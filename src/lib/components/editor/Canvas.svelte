@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Canvas, IText, FabricImage, Rect, ActiveSelection } from 'fabric';
+	import { Canvas, IText, FabricImage, Rect, ActiveSelection, type FabricObject } from 'fabric';
 	import {
 		editorState,
 		setFabricCanvas,
 		setSelectedObject,
+		setActiveObjects,
 		syncObjects,
 		markDirty,
 		setSnapshotCallback
@@ -53,14 +54,17 @@
 
 		canvas.on('selection:created', (e) => {
 			setSelectedObject(e.selected[0] ?? null);
+			setActiveObjects(canvas.getActiveObjects());
 		});
 
 		canvas.on('selection:updated', (e) => {
 			setSelectedObject(e.selected[0] ?? null);
+			setActiveObjects(canvas.getActiveObjects());
 		});
 
 		canvas.on('selection:cleared', () => {
 			setSelectedObject(null);
+			setActiveObjects([]);
 		});
 
 		canvas.on('object:modified', () => {
@@ -276,6 +280,168 @@
 		syncObjects();
 		editorState.fabricCanvas.requestRenderAll();
 		markDirty();
+	}
+
+	/**
+	 * Align every selected object inside the bounding rect of the
+	 * selection. `mode` picks the axis + edge:
+	 *   left / center-h / right (horizontal axis)
+	 *   top / center-v / bottom (vertical axis)
+	 *
+	 * Why discard-then-reselect: when objects are members of an
+	 * ActiveSelection, their .left/.top are relative to the selection's
+	 * center, not to canvas (0,0). We work in canvas coords via
+	 * getBoundingRect() — which returns canvas coords — then mutate the
+	 * underlying .left/.top. Discarding first puts the objects back into
+	 * canvas-coord space; rebuilding the selection at the end restores
+	 * the user's multi-select for follow-up actions.
+	 */
+	export function alignSelected(
+		mode: 'left' | 'center-h' | 'right' | 'top' | 'center-v' | 'bottom'
+	) {
+		if (!editorState.fabricCanvas) return;
+		const canvas = editorState.fabricCanvas;
+		const objects = canvas.getActiveObjects();
+		if (objects.length < 2) return;
+		// Discard FIRST, then snapshot bounding rects. ActiveSelection
+		// children report .left/.top relative to the selection's center,
+		// and `getBoundingRect()` reflects that — so reading rects before
+		// discardActiveObject returns coords offset by the selection
+		// transform, which causes the alignment math to no-op.
+		canvas.discardActiveObject();
+		// setCoords after the discard so the rects below reflect post-
+		// discard transforms.
+		for (const o of objects) o.setCoords();
+		const rects = objects.map((o) => ({ obj: o, rect: o.getBoundingRect() }));
+		const minLeft = Math.min(...rects.map((r) => r.rect.left));
+		const maxRight = Math.max(...rects.map((r) => r.rect.left + r.rect.width));
+		const minTop = Math.min(...rects.map((r) => r.rect.top));
+		const maxBottom = Math.max(...rects.map((r) => r.rect.top + r.rect.height));
+		for (const { obj, rect } of rects) {
+			let dx = 0;
+			let dy = 0;
+			if (mode === 'left') dx = minLeft - rect.left;
+			else if (mode === 'right') dx = maxRight - (rect.left + rect.width);
+			else if (mode === 'center-h') dx = (minLeft + maxRight) / 2 - (rect.left + rect.width / 2);
+			else if (mode === 'top') dy = minTop - rect.top;
+			else if (mode === 'bottom') dy = maxBottom - (rect.top + rect.height);
+			else if (mode === 'center-v') dy = (minTop + maxBottom) / 2 - (rect.top + rect.height / 2);
+			obj.set({ left: (obj.left ?? 0) + dx, top: (obj.top ?? 0) + dy });
+			obj.setCoords();
+		}
+		// Deselect after alignment. Re-wrapping into a new ActiveSelection
+		// re-stores child .left/.top in selection-relative space, so a
+		// follow-up alignment op operates on stale relative coords. Users
+		// can shift-click to chain operations; the rare extra click is
+		// worth correctness.
+		setSelectedObject(null);
+		setActiveObjects([]);
+		canvas.requestRenderAll();
+		markDirty();
+	}
+
+	/**
+	 * Equally distribute the centers of every selected object along the
+	 * given axis. Endpoints stay where the user put them; only the inner
+	 * objects move. Needs at least 3 objects (with 2 there's nothing to
+	 * distribute — endpoints are already "even").
+	 */
+	export function distributeSelected(axis: 'h' | 'v') {
+		if (!editorState.fabricCanvas) return;
+		const canvas = editorState.fabricCanvas;
+		const objects = canvas.getActiveObjects();
+		if (objects.length < 3) return;
+		// Same discard-first pattern as alignSelected — see that comment.
+		canvas.discardActiveObject();
+		for (const o of objects) o.setCoords();
+		const data = objects.map((o) => ({ obj: o, rect: o.getBoundingRect() }));
+		if (axis === 'h') {
+			data.sort((a, b) => a.rect.left + a.rect.width / 2 - (b.rect.left + b.rect.width / 2));
+			const first = data[0].rect;
+			const last = data[data.length - 1].rect;
+			const startC = first.left + first.width / 2;
+			const endC = last.left + last.width / 2;
+			const step = (endC - startC) / (data.length - 1);
+			for (let i = 1; i < data.length - 1; i++) {
+				const targetCenter = startC + step * i;
+				const dx = targetCenter - (data[i].rect.left + data[i].rect.width / 2);
+				data[i].obj.set({ left: (data[i].obj.left ?? 0) + dx });
+				data[i].obj.setCoords();
+			}
+		} else {
+			data.sort((a, b) => a.rect.top + a.rect.height / 2 - (b.rect.top + b.rect.height / 2));
+			const first = data[0].rect;
+			const last = data[data.length - 1].rect;
+			const startC = first.top + first.height / 2;
+			const endC = last.top + last.height / 2;
+			const step = (endC - startC) / (data.length - 1);
+			for (let i = 1; i < data.length - 1; i++) {
+				const targetCenter = startC + step * i;
+				const dy = targetCenter - (data[i].rect.top + data[i].rect.height / 2);
+				data[i].obj.set({ top: (data[i].obj.top ?? 0) + dy });
+				data[i].obj.setCoords();
+			}
+		}
+		// Deselect after distribution — see comment in alignSelected.
+		setSelectedObject(null);
+		setActiveObjects([]);
+		canvas.requestRenderAll();
+		markDirty();
+	}
+
+	/**
+	 * Multi-select toggle from a layer-panel click. `additive` true =
+	 * shift/cmd-click; the layer is added to (or removed from) the
+	 * current selection. False = single-select replacement (the default
+	 * row-click behavior).
+	 *
+	 * Lives here, not in LayerPanel, so the same selection bookkeeping
+	 * (ActiveSelection wrapping, syncObjects, setActiveObject) stays in
+	 * one place — and so future toolbar buttons can call it too.
+	 */
+	export function toggleLayerSelection(obj: FabricObject, additive: boolean) {
+		if (!editorState.fabricCanvas) return;
+		const canvas = editorState.fabricCanvas;
+		if (!additive) {
+			canvas.setActiveObject(obj);
+			// Mirror the selection event handlers — Fabric's setActiveObject
+			// fires 'selection:updated' when replacing an existing selection
+			// but NOT 'selection:created' when going from no-selection, and
+			// the layer-panel relies on activeObjects being current
+			// regardless. Setting both here guarantees consistency.
+			setSelectedObject(obj);
+			setActiveObjects([obj]);
+			canvas.requestRenderAll();
+			return;
+		}
+		const existing = canvas.getActiveObjects();
+		let next: FabricObject[];
+		if (existing.includes(obj)) {
+			next = existing.filter((o) => o !== obj);
+		} else {
+			next = [...existing, obj];
+		}
+		canvas.discardActiveObject();
+		if (next.length === 0) {
+			setSelectedObject(null);
+			setActiveObjects([]);
+		} else if (next.length === 1) {
+			canvas.setActiveObject(next[0]);
+			setSelectedObject(next[0]);
+			setActiveObjects([next[0]]);
+		} else {
+			const sel = new ActiveSelection(next, { canvas });
+			canvas.setActiveObject(sel);
+			// Keep selectedObject pointing at a real canvas object (the
+			// first member) so the property panel binds to something it
+			// can actually edit. ActiveSelection itself is a transient
+			// wrapper — editing its props would persist nothing. The full
+			// member list lives in activeObjects for the layer panel + the
+			// align toolbar.
+			setSelectedObject(next[0]);
+			setActiveObjects(next);
+		}
+		canvas.requestRenderAll();
 	}
 
 	/** Clear the active selection. Bound to Escape in the global handler. */

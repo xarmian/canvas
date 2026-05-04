@@ -32,8 +32,22 @@
 		return obj.type ?? 'Object';
 	}
 
-	function selectLayer(obj: FabricObject) {
+	let { onToggleSelect }: { onToggleSelect?: (obj: FabricObject, additive: boolean) => void } =
+		$props();
+
+	function selectLayer(obj: FabricObject, e?: MouseEvent | KeyboardEvent) {
 		if (!editorState.fabricCanvas) return;
+		// Shift/Cmd/Ctrl-click adds (or removes) this layer from the current
+		// active selection. Plain click is single-select replacement. The
+		// actual multi-select bookkeeping lives in Canvas.svelte's
+		// toggleLayerSelection (so the same logic powers any future
+		// toolbar shortcut). We only fall back to local single-select when
+		// the parent didn't wire onToggleSelect (defensive).
+		const additive = !!(e && (e.shiftKey || e.metaKey || e.ctrlKey));
+		if (onToggleSelect) {
+			onToggleSelect(obj, additive);
+			return;
+		}
 		editorState.fabricCanvas.setActiveObject(obj);
 		setSelectedObject(obj);
 		editorState.fabricCanvas.renderAll();
@@ -72,6 +86,16 @@
 	}
 
 	let reversed = $derived([...editorState.objects].reverse());
+
+	/**
+	 * A layer row is "selected" when it's any member of the canvas's
+	 * active objects (single-select → length 1; multi-select → 2+).
+	 * Tracked reactively in editorState.activeObjects so this $derived
+	 * re-renders on every selection change.
+	 */
+	function isSelectedRow(obj: FabricObject): boolean {
+		return editorState.activeObjects.includes(obj);
+	}
 </script>
 
 <aside class="layer-panel">
@@ -85,14 +109,14 @@
 			{@const LayerIcon = getIconComponent(obj)}
 			<div
 				class="layer-row"
-				class:selected={editorState.selectedObject === obj}
-				onclick={() => selectLayer(obj)}
+				class:selected={isSelectedRow(obj)}
+				onclick={(e) => selectLayer(obj, e)}
 				onkeydown={(e) => {
-					if (e.key === 'Enter' || e.key === ' ') selectLayer(obj);
+					if (e.key === 'Enter' || e.key === ' ') selectLayer(obj, e);
 				}}
 				tabindex="0"
 				role="option"
-				aria-selected={editorState.selectedObject === obj}
+				aria-selected={isSelectedRow(obj)}
 			>
 				<span class="icon" aria-hidden="true">
 					<LayerIcon size={14} strokeWidth={2} />
