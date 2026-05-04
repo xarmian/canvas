@@ -17,6 +17,7 @@
 	const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 	let emailLooksValid = $derived(email === '' || EMAIL_RE.test(email));
+	let emailFilledAndValid = $derived(email !== '' && EMAIL_RE.test(email));
 	let passwordLong = $derived(password.length >= PASSWORD_MIN);
 
 	let emailHint = $derived.by(() => {
@@ -31,7 +32,11 @@
 		return '';
 	});
 
-	let formValid = $derived(name.trim() !== '' && emailLooksValid && passwordLong);
+	// Note: emailLooksValid is true on empty input (so the hint stays
+	// quiet pre-submit). For form-validity we need the strictly-filled
+	// version — otherwise an empty email could pass through to the
+	// signup API call.
+	let formValid = $derived(name.trim() !== '' && emailFilledAndValid && passwordLong);
 
 	/** Map raw Better Auth error responses to friendly copy. The shipped
 	 * v0.1 surface dumped the raw error.message, which on duplicate-email
