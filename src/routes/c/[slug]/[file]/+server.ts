@@ -98,22 +98,38 @@ function ifNoneMatchHits(headerValue: string, etag: string): boolean {
 }
 
 /**
- * Pick the right Cache-Control based on whether the request supplied
- * an `?_v=...` matching the canvas's current updatedAt.
+ * The `_v` value the embed-code modal generates and that the route
+ * accepts as immutable-cache opt-in. Includes the font-set fingerprint
+ * because font library changes alter the rendered bytes without
+ * touching canvas.updatedAt — without it, a delete/reupload would let
+ * a stale `_v` serve a 1-year cached render of the old font.
  *
- * - Match: the URL is content-versioned, so any future canvas edit
- *   produces a different `_v` value (and a different URL). Safe to mark
+ * The hash is short (12 hex chars) so URLs stay tidy. Anyone is free
+ * to pass their own `_v=foo` — it won't match this hash and will fall
+ * back to short cache-control (the safe default).
+ */
+function buildVersionToken(canvasUpdatedAtMs: string, fontSetVersion: string): string {
+	return createHash('sha256')
+		.update(`${canvasUpdatedAtMs}|${fontSetVersion}`)
+		.digest('hex')
+		.slice(0, 12);
+}
+
+/**
+ * Pick the right Cache-Control based on whether the request supplied
+ * an `?_v=...` matching the current version token (canvas updatedAt
+ * + font set fingerprint).
+ *
+ * - Match: the URL is fully content-versioned — a canvas edit OR a
+ *   font upload/delete produces a new token. Safe to mark
  *   `immutable, max-age=1y`. Embed-code snippets (TASK-69) emit URLs
  *   in this shape so consumers get true CDN-layer immutable caching.
  * - No `_v` or stale `_v`: keep the existing short window so a canvas
  *   edit is reflected within ~5 minutes for naive consumers that paste
  *   the bare /c/<slug>/image.png URL.
- *
- * The version match is checked against canvas.updatedAt's epoch (ms)
- * so URL builders don't have to ISO-encode timestamps.
  */
-function pickCacheControl(requestedVersion: string | null, canvasUpdatedAtMs: string): string {
-	if (requestedVersion && requestedVersion === canvasUpdatedAtMs) {
+function pickCacheControl(requestedVersion: string | null, currentVersionToken: string): string {
+	if (requestedVersion && requestedVersion === currentVersionToken) {
 		return 'public, max-age=31536000, immutable';
 	}
 	return 'public, max-age=60, s-maxage=300';
@@ -204,7 +220,8 @@ export const GET: RequestHandler = async ({ params, url, request }) => {
 	const etag = buildEtag(key);
 	const updatedAtMs = canvas.updatedAt.getTime().toString();
 	const lastModified = canvas.updatedAt.toUTCString();
-	const cacheControl = pickCacheControl(requestedVersion, updatedAtMs);
+	const versionToken = buildVersionToken(updatedAtMs, fontSetVersion);
+	const cacheControl = pickCacheControl(requestedVersion, versionToken);
 
 	// Conditional GET: 304 short-circuits before we touch storage / cache.
 	// Per RFC 9110: when If-None-Match is present the recipient MUST
@@ -228,26 +245,15 @@ export const GET: RequestHandler = async ({ params, url, request }) => {
 		}
 		// ETag didn't match — fall through to a full render. Skip the
 		// If-Modified-Since branch entirely per RFC 9110.
-	} else {
-		const ifModifiedSince = request.headers.get('if-modified-since');
-		if (ifModifiedSince) {
-			const since = Date.parse(ifModifiedSince);
-			if (
-				!Number.isNaN(since) &&
-				Math.floor(canvas.updatedAt.getTime() / 1000) <= Math.floor(since / 1000)
-			) {
-				return new Response(null, {
-					status: 304,
-					headers: {
-						ETag: etag,
-						'Cache-Control': cacheControl,
-						'Last-Modified': lastModified,
-						Vary: 'Accept'
-					}
-				});
-			}
-		}
 	}
+	// Note: we deliberately do NOT honor If-Modified-Since 304s. The
+	// rendered bytes depend on the canvas owner's font library too, and
+	// font upload/delete doesn't bump canvas.updatedAt. A client validating
+	// purely with If-Modified-Since after a font change would get a false
+	// 304. ETag (which includes the font fingerprint) is the strong
+	// validator — clients that send both headers are well-served by the
+	// If-None-Match branch above. Last-Modified is still emitted so HTTP
+	// archivers and explorer tools can show a timestamp.
 
 	const cachedBuf = await renderCache.get(key, formatInfo.format);
 	if (cachedBuf) {

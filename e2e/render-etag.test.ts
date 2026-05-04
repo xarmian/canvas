@@ -3,10 +3,11 @@
  * Verifies:
  * - GET emits ETag, Last-Modified, and the standard short Cache-Control.
  * - GET with valid If-None-Match returns 304 (no body).
- * - GET with `?_v=<canvas updatedAt ms>` returns immutable Cache-Control.
+ * - GET with valid `?_v=<token>` returns immutable Cache-Control.
  * - GET with stale `?_v=` falls back to short Cache-Control.
  */
 import { test, expect } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import { signupAndLogin, createCanvas, publish } from './helpers';
 
 test.describe('Render: ETag + content-versioned URLs', () => {
@@ -38,27 +39,34 @@ test.describe('Render: ETag + content-versioned URLs', () => {
 		// as an empty buffer.
 		expect((await second.body()).length).toBe(0);
 
-		// Last-Modified-only conditional → also 304.
-		const third = await ctx.get(imageUrl, { headers: { 'If-Modified-Since': lastModified } });
-		expect(third.status()).toBe(304);
+		// We intentionally do NOT serve 304 from If-Modified-Since alone —
+		// font library changes affect render bytes without bumping
+		// canvas.updatedAt, so Last-Modified can't be a sole validator.
+		const ims = await ctx.get(imageUrl, { headers: { 'If-Modified-Since': lastModified } });
+		expect(ims.status()).toBe(200);
 
-		// Re-fetch the canvas via the authenticated API to get the exact
-		// updatedAt at ms precision — Last-Modified is HTTP-date and
-		// loses sub-second precision, which would make a probe-by-offset
-		// loop flaky.
+		// Re-fetch the canvas via the authenticated API to get updatedAt
+		// at ms precision so we can compute the version token the same way
+		// the server does.
 		const apiRes = await ctx.get(`/api/canvas/${canvas.id}`);
 		expect(apiRes.status()).toBe(200);
 		const { updatedAt } = (await apiRes.json()) as { updatedAt: string };
 		const updatedAtMs = new Date(updatedAt).getTime().toString();
+		// fontSetVersion is empty for a fresh user. Token = sha256(`${ms}|`)
+		// truncated to 12 hex chars.
+		const versionToken = createHash('sha256')
+			.update(`${updatedAtMs}|`)
+			.digest('hex')
+			.slice(0, 12);
 
-		// Stale `v` falls back to short cache-control.
+		// Stale `_v` falls back to short cache-control.
 		const stale = await ctx.get(imageUrl + (imageUrl.includes('?') ? '&' : '?') + '_v=999');
 		expect(stale.status()).toBe(200);
 		expect(stale.headers()['cache-control']).toBe('public, max-age=60, s-maxage=300');
 
-		// Matching `v` flips to immutable.
+		// Matching `_v` flips to immutable.
 		const immutable = await ctx.get(
-			imageUrl + (imageUrl.includes('?') ? '&' : '?') + `_v=${updatedAtMs}`
+			imageUrl + (imageUrl.includes('?') ? '&' : '?') + `_v=${versionToken}`
 		);
 		expect(immutable.status()).toBe(200);
 		expect(immutable.headers()['cache-control']).toContain('immutable');
