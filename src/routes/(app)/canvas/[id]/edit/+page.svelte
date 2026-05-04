@@ -12,6 +12,7 @@
 		Eye,
 		EyeOff,
 		Copy,
+		Keyboard,
 		AlertTriangle as AlertTriangleIcon
 	} from '@lucide/svelte';
 	import CanvasEditor from '$lib/components/editor/Canvas.svelte';
@@ -23,6 +24,7 @@
 		type CanvasSettingsPatch
 	} from '$lib/components/editor/CanvasSettingsModal.svelte';
 	import AddImageModal from '$lib/components/editor/AddImageModal.svelte';
+	import ShortcutsCheatsheetModal from '$lib/components/editor/ShortcutsCheatsheetModal.svelte';
 	import { editorState, markClean } from '$lib/components/editor/state.svelte';
 	import {
 		historyState,
@@ -364,6 +366,148 @@
 		return () => {
 			clearTimeout(autoSaveTimer);
 		};
+	});
+
+	let showCheatsheet = $state(false);
+
+	/**
+	 * True when the keystroke originated from a focused form control or
+	 * Fabric IText editing — those own their own arrow / Backspace / etc.
+	 * handling and our shortcuts must NOT preempt them. Excludes the
+	 * canvas wrapper element (role="application") because it's a noop for
+	 * typing — actively tabbing to it should not dampen our shortcuts.
+	 */
+	function isTypingTarget(target: EventTarget | null): boolean {
+		if (!(target instanceof HTMLElement)) return false;
+		const tag = target.tagName;
+		if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+		if (target.isContentEditable) return true;
+		return false;
+	}
+
+	/** True when a Fabric IText on the canvas is in editing mode. The
+	 *  global keydown listener routes via `window`, so a `?` keystroke
+	 *  while the user is typing into a canvas text object would otherwise
+	 *  open the cheatsheet instead of inserting the character. The
+	 *  isTypingTarget() check above only catches DOM text inputs;
+	 *  Fabric's IText has its own internal text buffer, not a DOM input. */
+	function isCanvasTextEditing(): boolean {
+		const active = editorState.fabricCanvas?.getActiveObject();
+		if (!active) return false;
+		// Fabric's IText sets isEditing while the cursor is active.
+		return active.type === 'i-text' && (active as { isEditing?: boolean }).isEditing === true;
+	}
+
+	// Editor-wide keyboard shortcuts. Lives on `window` because the canvas
+	// wrapper only gets keydowns when focused, and the property panel can
+	// steal focus mid-edit. Filtering via `isTypingTarget` keeps the
+	// shortcuts silent while the user is typing in the panel.
+	$effect(() => {
+		function onKey(e: KeyboardEvent) {
+			// If a closer handler (e.g. Canvas.svelte's wrapper-level
+			// keydown for delete/undo/redo) already handled this keystroke
+			// and called preventDefault, don't re-fire. Without this, with
+			// canvas-wrapper focus a single Cmd+Z would undo twice.
+			if (e.defaultPrevented) return;
+			// Cmd/Ctrl+S handled BEFORE the typing-target / cheatsheet
+			// guards so it always preempts the browser's "Save page"
+			// dialog — even while the user is typing in a panel input or
+			// the cheatsheet is open. Save is a global action that
+			// shouldn't be silently dropped just because focus drifted.
+			if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && !e.shiftKey) {
+				e.preventDefault();
+				// Blur the active element so any property-panel input that
+				// commits on `change` (X/Y/W/H/color, fontSize, etc.) flushes
+				// its pending value into Fabric before save() serializes the
+				// canvas. Without this, Cmd+S immediately after typing a new
+				// X value would persist the *previous* X.
+				if (document.activeElement instanceof HTMLElement) {
+					document.activeElement.blur();
+				}
+				void (async () => {
+					if (await save()) toast.success('Saved');
+				})();
+				return;
+			}
+			if (isTypingTarget(e.target)) return;
+			if (isCanvasTextEditing()) return;
+			// Block all shortcuts while the cheatsheet (or any future
+			// editor-owned modal) is open. A <dialog> keydown target isn't
+			// a typing target, so without this an arrow/Cmd+D/Cmd+bracket
+			// pressed over the modal would still mutate the canvas behind
+			// it. The Modal handles its own Escape close, so this guard
+			// doesn't trap the user.
+			if (showCheatsheet) return;
+			// `?` opens the cheatsheet. Modal Esc closes itself, so we don't
+			// also need a global toggle.
+			if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+				e.preventDefault();
+				showCheatsheet = true;
+				return;
+			}
+			// Escape clears the active selection on the canvas.
+			if (e.key === 'Escape' && !showCheatsheet) {
+				editorRef?.deselectAll();
+				return;
+			}
+			// Arrow nudge — 1px (10px with Shift). Skip when no object is
+			// selected; nudgeSelected itself short-circuits, but skipping
+			// here lets the browser handle arrow scrolling on a no-selection
+			// canvas, which feels right.
+			if (
+				e.key === 'ArrowUp' ||
+				e.key === 'ArrowDown' ||
+				e.key === 'ArrowLeft' ||
+				e.key === 'ArrowRight'
+			) {
+				if (!editorState.fabricCanvas?.getActiveObject()) return;
+				const step = e.shiftKey ? 10 : 1;
+				const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+				const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+				e.preventDefault();
+				editorRef?.nudgeSelected(dx, dy);
+				return;
+			}
+			const mod = e.metaKey || e.ctrlKey;
+			if (!mod) return;
+			const key = e.key.toLowerCase();
+			// (Cmd/Ctrl+S handled above the typing-target guard.)
+			// Undo / redo. Mirrors the canvas-wrapper-level handler so the
+			// shortcuts still work when focus has drifted to the toolbar
+			// or any other non-typing element. Cheatsheet documents these,
+			// so they must be reachable globally.
+			if (key === 'z' && e.shiftKey) {
+				e.preventDefault();
+				editorRef?.redoAction();
+				return;
+			}
+			if (key === 'z' && !e.shiftKey) {
+				e.preventDefault();
+				editorRef?.undoAction();
+				return;
+			}
+			// Duplicate (Cmd/Ctrl+D).
+			if (key === 'd' && !e.shiftKey) {
+				e.preventDefault();
+				void editorRef?.duplicateSelected();
+				return;
+			}
+			// Layer order — Cmd/Ctrl+] forward, +[ backward; +Shift = front/back.
+			if (e.key === ']') {
+				e.preventDefault();
+				if (e.shiftKey) editorRef?.bringSelectedToFront();
+				else editorRef?.bringSelectedForward();
+				return;
+			}
+			if (e.key === '[') {
+				e.preventDefault();
+				if (e.shiftKey) editorRef?.sendSelectedToBack();
+				else editorRef?.sendSelectedBackward();
+				return;
+			}
+		}
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
 	});
 
 	// beforeunload warning: protects users from losing work when they close the
@@ -1008,6 +1152,16 @@
 
 		<div class="spacer"></div>
 
+		<button
+			class="tool-btn icon-only"
+			data-testid="toolbar-shortcuts"
+			onclick={() => (showCheatsheet = true)}
+			aria-label="Keyboard shortcuts (?)"
+			title="Keyboard shortcuts (?)"
+		>
+			<Keyboard size={14} />
+		</button>
+
 		<span class="save-indicator save-{saveStatus}" title={saveStatusLabel(saveStatus)}>
 			<span class="save-dot" aria-hidden="true"></span>
 			<span class="save-label">{saveStatusLabel(saveStatus)}</span>
@@ -1156,6 +1310,8 @@
 			return await save();
 		}}
 	/>
+
+	<ShortcutsCheatsheetModal open={showCheatsheet} onClose={() => (showCheatsheet = false)} />
 
 	{#if showPreview && previewUrl}
 		<div class="preview-panel">
