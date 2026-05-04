@@ -29,11 +29,11 @@ export default defineConfig({
 		// Vite dev server bound to the test port + isolated database.
 		command: `vite dev --port ${PORT} --strictPort`,
 		port: PORT,
-		// Reuse a server the developer already started on the test port (e.g. via
-		// `pnpm test:e2e:server`). In CI, no such server exists so Playwright will
-		// spawn one. Either way, the `webServer.env` below ensures the spawned
-		// instance points at the isolated test database.
-		reuseExistingServer: !process.env.CI,
+		// Always spawn a fresh server so `webServer.env.DATABASE_URL` is
+		// guaranteed to apply. Reusing a process that happens to be listening
+		// on the test port could let stale env (e.g. the dev DB) silently bind
+		// to the test run, which defeats the purpose of the isolated database.
+		reuseExistingServer: false,
 		timeout: 120_000,
 		env: {
 			DATABASE_URL: TEST_DATABASE_URL,

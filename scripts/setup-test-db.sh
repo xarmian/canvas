@@ -2,11 +2,19 @@
 # =============================================================================
 # Canvas — E2E test database bootstrap
 # =============================================================================
-# Drops and recreates an isolated `canvas_test` Postgres database, then pushes
-# the current Drizzle schema into it. Idempotent — safe to run repeatedly.
+# Drops and recreates the database referenced by TEST_DATABASE_URL, then
+# pushes the current Drizzle schema into it. Idempotent.
 #
-# Reads connection info from the running docker-compose `db` service. Requires
-# `docker compose` and the `db` service to be up (see docker-compose.yml).
+# Single source of truth for the test DB connection string is the
+# TEST_DATABASE_URL env var (defaults to the same value baked into
+# playwright.config.ts). Override one place, both the bootstrap and the
+# Playwright webServer pick it up.
+#
+#   default: postgresql://canvas:canvas@localhost:5432/canvas_test
+#
+# Reads the DB via `docker compose exec` against the dev `db` service, so
+# psql is not required on the host. The compose service name can be
+# overridden with TEST_DB_COMPOSE_SERVICE (default: db).
 #
 # Usage:   bash scripts/setup-test-db.sh
 # Or:      pnpm test:e2e:setup
@@ -14,16 +22,35 @@
 
 set -euo pipefail
 
-DB_NAME="${TEST_DB_NAME:-canvas_test}"
-DB_USER="${TEST_DB_USER:-canvas}"
-DB_HOST="${TEST_DB_HOST:-localhost}"
-DB_PORT="${TEST_DB_PORT:-5432}"
-DB_PASSWORD="${TEST_DB_PASSWORD:-canvas}"
+TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgresql://canvas:canvas@localhost:5432/canvas_test}"
 COMPOSE_SERVICE="${TEST_DB_COMPOSE_SERVICE:-db}"
 
-TEST_DATABASE_URL="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
-
 cd "$(dirname "$0")/.."
+
+# Parse the URL with Node so we don't bring in a sed/regex dependency. URL
+# parsing in pure bash is error-prone (escaping, IPv6, etc.); Node is
+# already a project dependency.
+read -r DB_USER DB_PASSWORD DB_HOST DB_PORT DB_NAME < <(
+	node -e '
+const u = new URL(process.argv[1]);
+const name = u.pathname.replace(/^\//, "");
+// Trailing newline matters: under `set -e`, `read` returns 1 on EOF
+// without a newline, and the whole script exits silently.
+process.stdout.write([
+  decodeURIComponent(u.username),
+  decodeURIComponent(u.password),
+  u.hostname,
+  u.port || "5432",
+  name
+].join(" ") + "\n");
+' "$TEST_DATABASE_URL"
+)
+
+if [ -z "$DB_NAME" ] || [ "$DB_NAME" = "postgres" ]; then
+	echo "[setup-test-db] Refusing to operate on database name '${DB_NAME}'." >&2
+	echo "[setup-test-db] TEST_DATABASE_URL must point at a dedicated test DB." >&2
+	exit 1
+fi
 
 # Sanity: the dev `db` container must be up. We exec psql inside it so this
 # script doesn't require psql installed on the host.
