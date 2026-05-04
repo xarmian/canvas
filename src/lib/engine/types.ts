@@ -78,6 +78,11 @@ export interface FabricObject {
 	// Image properties
 	src?: string;
 	crossOrigin?: string;
+	/** Skip rendering when explicitly false. Bindable via paramBindings.visible
+	 * (TASK-51) — boolean values like 'true'/'1' show the layer, 'false'/'0'
+	 * hide it. Distinct from opacity:0, which still renders and consumes
+	 * pixels. */
+	visible?: boolean;
 	// Our custom properties for parameter binding
 	paramBindings?: ParamBindings;
 	/** Conditional style overrides (TASK-50). Rules apply after param
