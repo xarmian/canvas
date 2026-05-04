@@ -38,6 +38,16 @@
 					Dashboard
 				</a>
 				<a
+					href="/templates"
+					data-testid="nav-templates"
+					aria-current={pathname.startsWith('/templates') ? 'page' : undefined}
+					style="text-decoration: none; color: {pathname.startsWith('/templates')
+						? '#111'
+						: '#64748b'}; font-weight: {pathname.startsWith('/templates') ? 600 : 400};"
+				>
+					Templates
+				</a>
+				<a
 					href="/assets"
 					data-testid="nav-assets"
 					aria-current={pathname.startsWith('/assets') ? 'page' : undefined}

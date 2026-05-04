@@ -82,7 +82,10 @@
 <div class="dashboard">
 	<header class="header">
 		<h1>Your Canvases</h1>
-		<a href="/new" class="btn btn-primary">New Canvas</a>
+		<div class="header-actions">
+			<a href="/templates" class="btn btn-secondary">Browse templates</a>
+			<a href="/new" class="btn btn-primary">New Canvas</a>
+		</div>
 	</header>
 
 	{#if canvases.length === 0}
@@ -98,7 +101,8 @@
 				<li>Publish, copy the URL, and share</li>
 			</ol>
 			<div class="empty-actions">
-				<a href="/new" class="btn btn-primary">Create your first canvas</a>
+				<a href="/templates" class="btn btn-primary">Browse templates</a>
+				<a href="/new" class="btn btn-secondary">Start from scratch</a>
 				<button
 					type="button"
 					class="btn btn-secondary"
@@ -109,8 +113,8 @@
 				</button>
 			</div>
 			<p class="empty-hint">
-				The example is a ready-to-edit OG card with bound parameters for title, subtitle, and accent
-				color — open it, then click Preview to see parameter testing live.
+				Templates are ready-to-edit starters for OG cards, podcast covers, blog heroes, and more —
+				each one is fully parameterized so you can see the dynamic-image story immediately.
 			</p>
 		</div>
 	{:else}
@@ -190,6 +194,12 @@
 	.btn-primary {
 		background: #111;
 		color: #fff;
+	}
+
+	.header-actions {
+		display: flex;
+		gap: 0.5rem;
+		align-items: center;
 	}
 
 	.btn-edit {
