@@ -7,7 +7,7 @@ import { render } from '$lib/engine';
 import type { CanvasTemplate, FabricCanvasJson, OutputFormat } from '$lib/engine';
 import { validateParams } from '$lib/server/canvas-params';
 import { getDefaultRenderCache } from '$lib/server/render-cache';
-import { ensureUserFontsRegistered, getLiveUserFontFamilies } from '$lib/server/user-fonts';
+import { ensureUserFontsRegistered, getLiveUserFontDescriptors } from '$lib/server/user-fonts';
 
 const renderCache = getDefaultRenderCache();
 
@@ -111,13 +111,18 @@ export const GET: RequestHandler = async ({ params, url }) => {
 	Object.assign(queryParams, validation.resolved);
 
 	// Compute the live font set BEFORE cache lookup. The cache key
-	// includes a fingerprint of the user's current font library so a
-	// deletion of any font busts every cached render for that user —
-	// without this, an already-cached image rendered with an uploaded
-	// font would keep serving even after the asset was deleted (the
-	// deleted-font sanitizer below only runs on cache MISS).
-	const liveFamilies = await getLiveUserFontFamilies(canvas.userId);
-	const fontSetVersion = [...liveFamilies].sort().join('|');
+	// includes a fingerprint of the user's current font library so any
+	// add/delete of any font busts every cached render for that user.
+	// Critically, the fingerprint is built from asset IDs (not just
+	// family names) so delete-then-reupload of the same filename also
+	// busts the cache — re-uploading produces a new asset row with a
+	// new UUID even though the derived family is identical.
+	const liveDescriptors = await getLiveUserFontDescriptors(canvas.userId);
+	const liveFamilies = new Set(liveDescriptors.map((d) => d.family));
+	const fontSetVersion = liveDescriptors
+		.map((d) => d.id)
+		.sort()
+		.join('|');
 
 	// Cache key uses the resolved params (post-default), so two requests
 	// that differ only by relying-on-default vs explicit value hit the

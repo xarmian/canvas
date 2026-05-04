@@ -100,6 +100,24 @@ export async function getLiveUserFontFamilies(userId: string): Promise<Set<strin
 }
 
 /**
+ * Return the live user font set with asset identity, used to build
+ * a render-cache fingerprint that survives delete-then-reupload of
+ * the same filename. Family names alone are not sufficient — re-
+ * uploading `Brand.ttf` produces the same family but a different
+ * asset id, and the cached bytes from the previous registration
+ * must NOT be returned by the cache.
+ */
+export async function getLiveUserFontDescriptors(
+	userId: string
+): Promise<{ id: string; family: string }[]> {
+	const rows = await loadFontRows(userId);
+	return rows.map((r) => ({
+		id: r.id,
+		family: scopedFontFamily(userId, deriveFontFamily(r.filename))
+	}));
+}
+
+/**
  * Download and register every font asset belonging to `userId` that
  * hasn't already been registered in this process. Best-effort: a
  * failure on one font is logged and skipped so it can't block a
