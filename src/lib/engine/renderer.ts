@@ -94,10 +94,15 @@ function mergeParams(
 
 /**
  * Collects all image URLs from template objects that need to be fetched.
+ * Skips layers whose `visible` was bound to a falsy URL param — drawObject
+ * already short-circuits those, but without this filter the renderer
+ * would still pay the network cost of fetching the image (and could
+ * issue requests to URLs the user explicitly suppressed).
  */
 function collectImageUrls(objects: FabricObject[]): string[] {
 	const seen = new Set<string>();
 	for (const obj of objects) {
+		if (obj.visible === false) continue;
 		if ((obj.type === 'image' || obj.type === 'Image') && obj.src) {
 			seen.add(obj.src);
 		}
