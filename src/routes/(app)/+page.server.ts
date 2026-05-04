@@ -12,6 +12,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 			width: canvases.width,
 			height: canvases.height,
 			published: canvases.published,
+			folder: canvases.folder,
+			tags: canvases.tags,
 			updatedAt: canvases.updatedAt
 		})
 		.from(canvases)

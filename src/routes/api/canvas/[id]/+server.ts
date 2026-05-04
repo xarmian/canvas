@@ -50,6 +50,26 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 	if (body.ogDescription !== undefined) updates.ogDescription = body.ogDescription;
 	if (body.width !== undefined) updates.width = body.width;
 	if (body.height !== undefined) updates.height = body.height;
+	// Folder/tags are dashboard-organization metadata. Folder is a single
+	// trimmed string (empty/whitespace → null so "Uncategorized" stays a
+	// distinct virtual bucket on the dashboard). Tags are sanitized to a
+	// trimmed unique array — duplicates and empties are silently dropped
+	// so a careless paste doesn't pollute the per-user tag namespace.
+	if (body.folder !== undefined) {
+		const f = typeof body.folder === 'string' ? body.folder.trim() : '';
+		updates.folder = f.length > 0 ? f : null;
+	}
+	if (body.tags !== undefined) {
+		if (!Array.isArray(body.tags)) error(400, 'tags must be an array of strings');
+		const cleaned = Array.from(
+			new Set(
+				(body.tags as unknown[])
+					.map((t) => (typeof t === 'string' ? t.trim() : ''))
+					.filter((t) => t.length > 0)
+			)
+		);
+		updates.tags = cleaned;
+	}
 
 	// Optional schema-flag updates from the publish modal: array of
 	// { name, required?, type? }. Skipped names that don't yet exist
