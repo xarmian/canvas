@@ -76,6 +76,28 @@ function buildEtag(cacheKey: string): string {
 }
 
 /**
+ * Per RFC 9110 §13.1.2, If-None-Match accepts:
+ *   - `*` matching any current representation
+ *   - a comma-separated list of entity-tags (each `"..."` or `W/"..."`)
+ * Comparison is weak — strip an optional `W/` prefix from each tag
+ * before comparing to our (strong) tag.
+ *
+ * Returns true when the request's If-None-Match indicates the cached
+ * representation is still valid for our `etag`.
+ */
+function ifNoneMatchHits(headerValue: string, etag: string): boolean {
+	const trimmed = headerValue.trim();
+	if (trimmed === '*') return true;
+	for (const raw of trimmed.split(',')) {
+		const t = raw.trim();
+		if (!t) continue;
+		const stripped = t.startsWith('W/') ? t.slice(2) : t;
+		if (stripped === etag) return true;
+	}
+	return false;
+}
+
+/**
  * Pick the right Cache-Control based on whether the request supplied
  * an `?_v=...` matching the canvas's current updatedAt.
  *
@@ -193,7 +215,7 @@ export const GET: RequestHandler = async ({ params, url, request }) => {
 	// stale render.
 	const ifNoneMatch = request.headers.get('if-none-match');
 	if (ifNoneMatch !== null) {
-		if (ifNoneMatch === etag) {
+		if (ifNoneMatchHits(ifNoneMatch, etag)) {
 			return new Response(null, {
 				status: 304,
 				headers: {
