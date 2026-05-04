@@ -404,6 +404,18 @@
 	// shortcuts silent while the user is typing in the panel.
 	$effect(() => {
 		function onKey(e: KeyboardEvent) {
+			// Cmd/Ctrl+S handled BEFORE the typing-target / cheatsheet
+			// guards so it always preempts the browser's "Save page"
+			// dialog — even while the user is typing in a panel input or
+			// the cheatsheet is open. Save is a global action that
+			// shouldn't be silently dropped just because focus drifted.
+			if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && !e.shiftKey) {
+				e.preventDefault();
+				void (async () => {
+					if (await save()) toast.success('Saved');
+				})();
+				return;
+			}
 			if (isTypingTarget(e.target)) return;
 			if (isCanvasTextEditing()) return;
 			// Block all shortcuts while the cheatsheet (or any future
@@ -446,15 +458,7 @@
 			const mod = e.metaKey || e.ctrlKey;
 			if (!mod) return;
 			const key = e.key.toLowerCase();
-			// Save (Cmd/Ctrl+S). Always preventDefault so the browser's "Save
-			// page" dialog doesn't open, even if the autosave hasn't run yet.
-			if (key === 's' && !e.shiftKey) {
-				e.preventDefault();
-				void (async () => {
-					if (await save()) toast.success('Saved');
-				})();
-				return;
-			}
+			// (Cmd/Ctrl+S handled above the typing-target guard.)
 			// Duplicate (Cmd/Ctrl+D).
 			if (key === 'd' && !e.shiftKey) {
 				e.preventDefault();
