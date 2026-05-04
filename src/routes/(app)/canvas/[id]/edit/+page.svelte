@@ -650,6 +650,8 @@
 				return 'Image Source';
 			case 'fill':
 				return 'Fill Color';
+			case 'visible':
+				return 'Visibility';
 			default:
 				return property;
 		}

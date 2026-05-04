@@ -27,14 +27,32 @@ const NUMERIC_PROPS = new Set([
 	'lineHeight'
 ]);
 
+/** Properties that coerce to booleans. TASK-51 introduces `visible` as the
+ * first member; future flags (e.g. drop-shadow on/off) should be added
+ * here so the same lenient string→bool parsing applies. */
+const BOOLEAN_PROPS = new Set(['visible']);
+
+/** Lenient boolean coercion: 'true'/'1'/'yes'/'on' → true, 'false'/'0'/
+ * 'no'/'off'/'' → false, anything else → undefined (so binding default
+ * is preserved). */
+function coerceBoolean(value: string): boolean | undefined {
+	const v = value.trim().toLowerCase();
+	if (v === 'true' || v === '1' || v === 'yes' || v === 'on') return true;
+	if (v === 'false' || v === '0' || v === 'no' || v === 'off' || v === '') return false;
+	return undefined;
+}
+
 /**
  * Coerces a string value to the appropriate type for a given property.
  */
-function coerceParamValue(prop: string, value: string): string | number | undefined {
+function coerceParamValue(prop: string, value: string): string | number | boolean | undefined {
 	if (NUMERIC_PROPS.has(prop)) {
 		const num = parseFloat(value);
 		// Return undefined for invalid numbers so the template default is preserved
 		return isNaN(num) ? undefined : num;
+	}
+	if (BOOLEAN_PROPS.has(prop)) {
+		return coerceBoolean(value);
 	}
 	return value;
 }
@@ -56,11 +74,13 @@ function mergeParams(
 		for (const [prop, binding] of Object.entries(obj.paramBindings)) {
 			const rawValue = params[binding.param] ?? binding.default;
 			if (rawValue === undefined) continue;
-			// Numeric properties bypass the formatter — they go straight through
-			// coerceParamValue so the binding stays a Number on the Fabric object.
-			// For text-typed properties (text content, src, fill) we apply the
-			// pipe formatter first so the renderer sees the user-facing string.
-			const value = NUMERIC_PROPS.has(prop) ? rawValue : applyFormat(rawValue, binding.format);
+			// Numeric and boolean properties bypass the formatter — they go
+			// straight through coerceParamValue so the binding stays correctly
+			// typed on the Fabric object. For text-typed properties (text
+			// content, src, fill) we apply the pipe formatter first so the
+			// renderer sees the user-facing string.
+			const skipFormatter = NUMERIC_PROPS.has(prop) || BOOLEAN_PROPS.has(prop);
+			const value = skipFormatter ? rawValue : applyFormat(rawValue, binding.format);
 			const coerced = coerceParamValue(prop, value);
 			if (coerced !== undefined) {
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -93,6 +113,10 @@ function drawObject(
 	obj: FabricObject,
 	imageMap: Map<string, Image | null>
 ): void {
+	// `visible: false` skips drawing entirely. Distinct from opacity:0
+	// (which still issues fillRect/drawImage and consumes pixels). Default
+	// is shown — Fabric only emits `visible` when the user toggled it.
+	if (obj.visible === false) return;
 	const left = obj.left ?? 0;
 	const top = obj.top ?? 0;
 	const scaleX = obj.scaleX ?? 1;

@@ -166,6 +166,10 @@
 			props.push({ key: 'src', label: 'Image Source', sample: 'https://example.com/pic.png' });
 		}
 		props.push({ key: 'fill', label: 'Fill Color', sample: '#ff0000' });
+		// Visibility (TASK-51) — boolean prop. Sample is 'true' so the URL
+		// preview shows a working value; the renderer accepts the lenient
+		// boolean coercion (true/1/yes/on vs false/0/no/off/'').
+		props.push({ key: 'visible', label: 'Visibility', sample: 'true' });
 		return props;
 	});
 
