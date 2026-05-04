@@ -1,6 +1,6 @@
 /**
  * AVIF output + retina DPR (TASK-71). Verifies the public render route
- * accepts `image.avif` and `?dpr=2`/`?dpr=3` (capped at 3), and that
+ * accepts `image.avif` and `?_dpr=2`/`?_dpr=3` (capped at 3), and that
  * Sharp's encoding produces a recognizable AVIF buffer at the scaled
  * pixel dimensions.
  */
@@ -29,7 +29,7 @@ test.describe('Render: AVIF + retina DPR', () => {
 
 		// dpr=2 on the PNG URL: pixel dims should be 2× the OG Image preset
 		// (1200×630 → 2400×1260). Read PNG dimensions from bytes 16-23 (IHDR).
-		const dpr2Res = await ctx.get(`${imageUrl}?dpr=2`);
+		const dpr2Res = await ctx.get(`${imageUrl}?_dpr=2`);
 		expect(dpr2Res.status()).toBe(200);
 		const dpr2Body = await dpr2Res.body();
 		const png2Width = dpr2Body.readUInt32BE(16);
@@ -38,14 +38,14 @@ test.describe('Render: AVIF + retina DPR', () => {
 		expect(png2Height).toBe(1260);
 
 		// dpr=10 clamps to 3 → 3600×1890.
-		const dpr10Res = await ctx.get(`${imageUrl}?dpr=10`);
+		const dpr10Res = await ctx.get(`${imageUrl}?_dpr=10`);
 		expect(dpr10Res.status()).toBe(200);
 		const dpr10Body = await dpr10Res.body();
 		expect(dpr10Body.readUInt32BE(16)).toBe(3600);
 		expect(dpr10Body.readUInt32BE(20)).toBe(1890);
 
 		// Cache hit on second dpr=2 request: same URL, same key, X-Cache=HIT.
-		const dpr2Cached = await ctx.get(`${imageUrl}?dpr=2`);
+		const dpr2Cached = await ctx.get(`${imageUrl}?_dpr=2`);
 		expect(dpr2Cached.status()).toBe(200);
 		expect(dpr2Cached.headers()['x-cache']).toBe('HIT');
 

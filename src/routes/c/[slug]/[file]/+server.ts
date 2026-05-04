@@ -22,10 +22,15 @@ function parseFormat(file: string): { format: OutputFormat; contentType: string 
 	return null;
 }
 
-/** Parse `?dpr=` into a clamped integer in [1,3]. Defaults to 1 (the
+/** Parse `?_dpr=` into a clamped integer in [1,3]. Defaults to 1 (the
  *  legacy single-resolution render). Anything outside [1,3] or non-
  *  numeric falls back to 1 so a malformed URL doesn't 400 — the cap
- *  also guards against accidental ?dpr=10 DoS via memory pressure. */
+ *  also guards against accidental ?_dpr=10 DoS via memory pressure.
+ *
+ *  Underscore-prefixed (like `_v`) so a user-defined canvas param
+ *  named `dpr` (e.g. some statistic shown in the design) can still be
+ *  bound and forwarded to the renderer without colliding with our
+ *  retina-output flag. */
 function parseDpr(raw: string | null): number {
 	if (!raw) return 1;
 	const n = Number(raw);
@@ -178,7 +183,7 @@ export const GET: RequestHandler = async ({ params, url, request }) => {
 			requestedVersion = value;
 			continue;
 		}
-		if (key === 'dpr') {
+		if (key === '_dpr') {
 			dprParam = value;
 			continue;
 		}
