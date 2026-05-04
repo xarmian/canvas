@@ -105,9 +105,16 @@ function createFontStore() {
 						face.load().catch((err) => {
 							// One bad font shouldn't kill the rest. Drop
 							// the family from our list so the dropdown
-							// doesn't offer a font that won't render.
+							// doesn't offer a font that won't render,
+							// and clear the loadedIds entry so the next
+							// loadUserFonts() call gets a chance to
+							// retry the FontFace.load (the reconciliation
+							// step would otherwise re-add the family to
+							// state.fonts without ever attempting a
+							// fresh load).
 							console.error('[fonts] FontFace.load failed', item.family, err);
 							state.fonts = state.fonts.filter((f) => f.family !== item.family);
+							delete loadedIds[item.id];
 							return null;
 						})
 					);
