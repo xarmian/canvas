@@ -1,4 +1,5 @@
 import { error } from '@sveltejs/kit';
+import { createHash } from 'node:crypto';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { canvases, canvasParams } from '$lib/server/db/schema';
@@ -63,7 +64,40 @@ function cacheKey(
 	return `${slug}:${version}:${format}:fonts=${fontSetVersion}:${serializedParams}`;
 }
 
-export const GET: RequestHandler = async ({ params, url }) => {
+/**
+ * Build a strong ETag from the cache key (which already encapsulates
+ * canvas updatedAt + params + format + font fingerprint). SHA-256
+ * truncated to 16 hex chars is plenty for the ETag — collisions across
+ * a single canvas's renders are vanishingly unlikely, and shorter
+ * tags reduce header bloat at high QPS.
+ */
+function buildEtag(cacheKey: string): string {
+	return `"${createHash('sha256').update(cacheKey).digest('hex').slice(0, 16)}"`;
+}
+
+/**
+ * Pick the right Cache-Control based on whether the request supplied a
+ * `?v=...` matching the canvas's current updatedAt.
+ *
+ * - Match: the URL is content-versioned, so any future canvas edit
+ *   produces a different `v` value (and a different URL). Safe to mark
+ *   `immutable, max-age=1y`. Embed-code snippets (TASK-69) emit URLs
+ *   in this shape so consumers get true CDN-layer immutable caching.
+ * - No `v` or stale `v`: keep the existing short window so a canvas
+ *   edit is reflected within ~5 minutes for naive consumers that paste
+ *   the bare /c/<slug>/image.png URL.
+ *
+ * The version match is checked against canvas.updatedAt's epoch (ms)
+ * so URL builders don't have to ISO-encode timestamps.
+ */
+function pickCacheControl(requestedVersion: string | null, canvasUpdatedAtMs: string): string {
+	if (requestedVersion && requestedVersion === canvasUpdatedAtMs) {
+		return 'public, max-age=31536000, immutable';
+	}
+	return 'public, max-age=60, s-maxage=300';
+}
+
+export const GET: RequestHandler = async ({ params, url, request }) => {
 	// Parse format from filename
 	const formatInfo = parseFormat(params.file);
 	if (!formatInfo) {
@@ -77,9 +111,16 @@ export const GET: RequestHandler = async ({ params, url }) => {
 		error(404, 'Canvas not found or not published');
 	}
 
-	// Parse URL query parameters
+	// Parse URL query parameters. `v` is reserved for the content-version
+	// hint and is not forwarded to the renderer — otherwise a binding to
+	// `?v=...` would silently start receiving the cache-buster value.
 	const queryParams: Record<string, string> = {};
+	let requestedVersion: string | null = null;
 	for (const [key, value] of url.searchParams) {
+		if (key === 'v') {
+			requestedVersion = value;
+			continue;
+		}
 		queryParams[key] = value;
 	}
 
@@ -136,12 +177,54 @@ export const GET: RequestHandler = async ({ params, url }) => {
 	// $onUpdate.
 	const version = canvas.updatedAt.toISOString();
 	const key = cacheKey(params.slug, version, queryParams, formatInfo.format, fontSetVersion);
+	const etag = buildEtag(key);
+	const updatedAtMs = canvas.updatedAt.getTime().toString();
+	const lastModified = canvas.updatedAt.toUTCString();
+	const cacheControl = pickCacheControl(requestedVersion, updatedAtMs);
+
+	// Conditional GET: 304 short-circuits before we touch storage / cache.
+	const ifNoneMatch = request.headers.get('if-none-match');
+	if (ifNoneMatch && ifNoneMatch === etag) {
+		return new Response(null, {
+			status: 304,
+			headers: {
+				ETag: etag,
+				'Cache-Control': cacheControl,
+				'Last-Modified': lastModified,
+				Vary: 'Accept'
+			}
+		});
+	}
+	// If-Modified-Since uses HTTP-date precision (1s). Compare ms-floor
+	// of canvas.updatedAt to the request's parsed date. Match → 304.
+	const ifModifiedSince = request.headers.get('if-modified-since');
+	if (ifModifiedSince) {
+		const since = Date.parse(ifModifiedSince);
+		if (
+			!Number.isNaN(since) &&
+			Math.floor(canvas.updatedAt.getTime() / 1000) <= Math.floor(since / 1000)
+		) {
+			return new Response(null, {
+				status: 304,
+				headers: {
+					ETag: etag,
+					'Cache-Control': cacheControl,
+					'Last-Modified': lastModified,
+					Vary: 'Accept'
+				}
+			});
+		}
+	}
+
 	const cachedBuf = await renderCache.get(key, formatInfo.format);
 	if (cachedBuf) {
 		return new Response(new Uint8Array(cachedBuf), {
 			headers: {
 				'Content-Type': formatInfo.contentType,
-				'Cache-Control': 'public, max-age=60, s-maxage=300',
+				'Cache-Control': cacheControl,
+				ETag: etag,
+				'Last-Modified': lastModified,
+				Vary: 'Accept',
 				'X-Cache': 'HIT'
 			}
 		});
@@ -186,7 +269,10 @@ export const GET: RequestHandler = async ({ params, url }) => {
 	return new Response(new Uint8Array(buffer), {
 		headers: {
 			'Content-Type': formatInfo.contentType,
-			'Cache-Control': 'public, max-age=60, s-maxage=300',
+			'Cache-Control': cacheControl,
+			ETag: etag,
+			'Last-Modified': lastModified,
+			Vary: 'Accept',
 			'X-Cache': 'MISS'
 		}
 	});
