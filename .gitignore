@@ -13,6 +13,9 @@ build/
 # Local storage (dev fallback for S3)
 .local-storage/
 
+# Render cache (filesystem-backed, persists across restart)
+.cache/
+
 # OS files
 .DS_Store
 Thumbs.db

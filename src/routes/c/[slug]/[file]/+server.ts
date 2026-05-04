@@ -6,11 +6,9 @@ import { eq } from 'drizzle-orm';
 import { render } from '$lib/engine';
 import type { CanvasTemplate, FabricCanvasJson, OutputFormat } from '$lib/engine';
 import { validateParams } from '$lib/server/canvas-params';
+import { getDefaultRenderCache } from '$lib/server/render-cache';
 
-/** In-memory render cache: URL → { buffer, contentType, timestamp } */
-const renderCache = new Map<string, { buffer: Buffer; contentType: string; timestamp: number }>();
-const CACHE_TTL_MS = 60 * 1000; // 1 minute
-const MAX_CACHE_SIZE = 100;
+const renderCache = getDefaultRenderCache();
 
 /** Parse output format from filename */
 function parseFormat(file: string): { format: OutputFormat; contentType: string } | null {
@@ -83,11 +81,11 @@ export const GET: RequestHandler = async ({ params, url }) => {
 	// cached as missing won't serve from cache (the validation above
 	// already returned 400).
 	const key = cacheKey(params.slug, queryParams, formatInfo.format);
-	const cached = renderCache.get(key);
-	if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-		return new Response(new Uint8Array(cached.buffer), {
+	const cachedBuf = await renderCache.get(key, formatInfo.format);
+	if (cachedBuf) {
+		return new Response(new Uint8Array(cachedBuf), {
 			headers: {
-				'Content-Type': cached.contentType,
+				'Content-Type': formatInfo.contentType,
 				'Cache-Control': 'public, max-age=60, s-maxage=300',
 				'X-Cache': 'HIT'
 			}
@@ -109,16 +107,9 @@ export const GET: RequestHandler = async ({ params, url }) => {
 		quality: 85
 	});
 
-	// Cache the result
-	if (renderCache.size >= MAX_CACHE_SIZE) {
-		const firstKey = renderCache.keys().next().value;
-		if (firstKey) renderCache.delete(firstKey);
-	}
-	renderCache.set(key, {
-		buffer,
-		contentType: formatInfo.contentType,
-		timestamp: Date.now()
-	});
+	// Persist to filesystem cache. The FsRenderCache handles LRU
+	// eviction internally based on CACHE_MAX_MB.
+	await renderCache.set(key, formatInfo.format, buffer);
 
 	return new Response(new Uint8Array(buffer), {
 		headers: {
