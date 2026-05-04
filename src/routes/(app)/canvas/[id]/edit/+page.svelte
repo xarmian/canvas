@@ -406,6 +406,13 @@
 		function onKey(e: KeyboardEvent) {
 			if (isTypingTarget(e.target)) return;
 			if (isCanvasTextEditing()) return;
+			// Block all shortcuts while the cheatsheet (or any future
+			// editor-owned modal) is open. A <dialog> keydown target isn't
+			// a typing target, so without this an arrow/Cmd+D/Cmd+bracket
+			// pressed over the modal would still mutate the canvas behind
+			// it. The Modal handles its own Escape close, so this guard
+			// doesn't trap the user.
+			if (showCheatsheet) return;
 			// `?` opens the cheatsheet. Modal Esc closes itself, so we don't
 			// also need a global toggle.
 			if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey) {

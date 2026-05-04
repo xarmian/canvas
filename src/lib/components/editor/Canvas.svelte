@@ -214,10 +214,15 @@
 		editorState.fabricCanvas.requestRenderAll();
 	}
 
-	/** Move every selected object forward one z-step. */
+	/** Move every selected object forward one z-step. No-op (and no
+	 *  markDirty) when nothing is selected — the route always
+	 *  preventDefault()s the bracket shortcut, so without this guard a
+	 *  spurious press would flag the canvas dirty + trigger autosave. */
 	export function bringSelectedForward() {
 		if (!editorState.fabricCanvas) return;
-		for (const obj of editorState.fabricCanvas.getActiveObjects()) {
+		const objects = editorState.fabricCanvas.getActiveObjects();
+		if (objects.length === 0) return;
+		for (const obj of objects) {
 			editorState.fabricCanvas.bringObjectForward(obj);
 		}
 		// syncObjects() refreshes editorState.objects so the LayerPanel
@@ -231,7 +236,9 @@
 	/** Move every selected object backward one z-step. */
 	export function sendSelectedBackward() {
 		if (!editorState.fabricCanvas) return;
-		for (const obj of editorState.fabricCanvas.getActiveObjects()) {
+		const objects = editorState.fabricCanvas.getActiveObjects();
+		if (objects.length === 0) return;
+		for (const obj of objects) {
 			editorState.fabricCanvas.sendObjectBackwards(obj);
 		}
 		syncObjects();
@@ -242,7 +249,9 @@
 	/** Move every selected object to the very top of the z-stack. */
 	export function bringSelectedToFront() {
 		if (!editorState.fabricCanvas) return;
-		for (const obj of editorState.fabricCanvas.getActiveObjects()) {
+		const objects = editorState.fabricCanvas.getActiveObjects();
+		if (objects.length === 0) return;
+		for (const obj of objects) {
 			editorState.fabricCanvas.bringObjectToFront(obj);
 		}
 		syncObjects();
@@ -253,7 +262,9 @@
 	/** Move every selected object to the very bottom of the z-stack. */
 	export function sendSelectedToBack() {
 		if (!editorState.fabricCanvas) return;
-		for (const obj of editorState.fabricCanvas.getActiveObjects()) {
+		const objects = editorState.fabricCanvas.getActiveObjects();
+		if (objects.length === 0) return;
+		for (const obj of objects) {
 			editorState.fabricCanvas.sendObjectToBack(obj);
 		}
 		syncObjects();
