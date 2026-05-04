@@ -26,23 +26,41 @@ const registered = new Set<string>();
 
 /**
  * Strip a recognized font extension from a filename and return the
- * remainder as the family name. Falls back to the full filename if
- * no extension is recognized. Trims whitespace and collapses common
- * separators so "MyFont-Regular.ttf" → "MyFont-Regular". Multi-weight
- * support (recognizing "-Bold" and registering under the same family)
- * is deferred — users who want it can rename their files to match.
+ * remainder, normalized to a CSS-safe family name. Characters outside
+ * `[A-Za-z0-9_-]` get replaced with `_` so:
+ *
+ * - Filenames like `Brand.v2.ttf` or `Brand (Display).ttf` don't
+ *   produce family strings with `.` or parens that the server-side
+ *   `ctx.font = '... ${family}'` shorthand would parse as separate
+ *   tokens (any unquoted dot/paren in a CSS family causes the
+ *   shorthand parser to bail out and fall back to the default font).
+ * - The derived family stays stable across uploads regardless of
+ *   filesystem-quirky characters.
+ *
+ * Multi-weight support (recognizing `-Bold` and registering under
+ * the same family) is deferred — users who want it can rename their
+ * files to match.
  */
 export function deriveFontFamily(filename: string): string {
 	const trimmed = filename.trim();
 	// Recognized font extensions, longest-first so .woff2 isn't truncated to .woff.
 	const exts = ['.woff2', '.woff', '.otf', '.ttf'];
 	const lower = trimmed.toLowerCase();
+	let stem = trimmed;
 	for (const ext of exts) {
 		if (lower.endsWith(ext)) {
-			return trimmed.slice(0, -ext.length) || trimmed;
+			stem = trimmed.slice(0, -ext.length) || trimmed;
+			break;
 		}
 	}
-	return trimmed;
+	// CSS-safe sanitization: replace any non-word/-/digit char with '_'.
+	// Collapse consecutive underscores so "Brand (Display).ttf" doesn't
+	// produce "Brand__Display_". Trim trailing underscores.
+	const sanitized = stem
+		.replace(/[^A-Za-z0-9_-]/g, '_')
+		.replace(/_+/g, '_')
+		.replace(/^_+|_+$/g, '');
+	return sanitized || stem;
 }
 
 /**
