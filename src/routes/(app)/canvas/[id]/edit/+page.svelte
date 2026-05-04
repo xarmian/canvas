@@ -21,6 +21,7 @@
 	import CanvasSettingsModal, {
 		type CanvasSettingsPatch
 	} from '$lib/components/editor/CanvasSettingsModal.svelte';
+	import AddImageModal from '$lib/components/editor/AddImageModal.svelte';
 	import { editorState, markClean } from '$lib/components/editor/state.svelte';
 	import {
 		historyState,
@@ -459,8 +460,12 @@
 		}
 	}
 
-	let fileInput = $state<HTMLInputElement | null>(null);
 	let isUploading = $state(false);
+	/** Toggles the Upload/Library tabbed picker that replaced the bare
+	 * file-input button on the toolbar. Drag-drop onto the canvas still
+	 * uses the unmodaled queueUpload() path below — we don't want a drop
+	 * to pop a modal in front of where the user just dropped. */
+	let showAddImageModal = $state(false);
 	let isDraggingFile = $state(false);
 	/** Counts nested dragenter/dragleave events so the overlay only clears when
 	 * the drag leaves the outer container, not when it moves between children. */
@@ -482,8 +487,35 @@
 		return uploadChain;
 	}
 
-	function openFilePicker() {
-		fileInput?.click();
+	/** Insert a previously-uploaded asset (from the From-library tab) into
+	 *  the canvas. Mirrors the post-upload tail of `uploadAndInsertImage`
+	 *  but skips the upload itself — the URL is already in storage. */
+	async function insertExistingAsset(url: string, originCanvasId: string) {
+		if (data.canvas.id !== originCanvasId) {
+			toast.info('Image was not added — you switched canvases.');
+			return;
+		}
+		if (!editorRef) {
+			toast.error('Editor was unavailable — refresh and try again.');
+			return;
+		}
+		const inserted = await editorRef.addImageFromUrl(url);
+		if (inserted) {
+			toast.success('Image added');
+		} else {
+			toast.error('Could not add image — try again.');
+		}
+	}
+
+	/** Bridge for AddImageModal's onSelect — runs whether the URL came from
+	 *  a fresh upload (modal handled upload itself) or a library pick. We
+	 *  don't reuse queueUpload() here because (a) there's nothing to upload,
+	 *  and (b) serializing inserts behind the upload chain would needlessly
+	 *  block the library-tab insertion on any in-flight drag-drop upload. */
+	function onAddImageModalSelect(url: string) {
+		const originCanvasId = data.canvas.id;
+		showAddImageModal = false;
+		void insertExistingAsset(url, originCanvasId);
 	}
 
 	async function uploadAndInsertImage(file: File, originCanvasId: string) {
@@ -540,14 +572,6 @@
 			toast.dismiss(uploadingId);
 			isUploading = false;
 		}
-	}
-
-	function onFileInputChange(e: Event) {
-		const target = e.target as HTMLInputElement;
-		const file = target.files?.[0];
-		if (file) queueUpload(file);
-		// Reset so selecting the same file twice in a row still fires change
-		target.value = '';
 	}
 
 	function hasFileDrag(e: DragEvent): boolean {
@@ -846,19 +870,12 @@
 			<button
 				class="tool-btn"
 				data-testid="toolbar-add-image"
-				onclick={openFilePicker}
+				onclick={() => (showAddImageModal = true)}
 				disabled={isUploading}
 			>
 				<ImageIcon size={14} />
 				<span>{isUploading ? 'Uploading…' : 'Image'}</span>
 			</button>
-			<input
-				bind:this={fileInput}
-				type="file"
-				accept={ACCEPTED_IMAGE_TYPES.join(',')}
-				onchange={onFileInputChange}
-				style="display: none;"
-			/>
 			<button class="tool-btn delete-btn" onclick={() => editorRef?.deleteSelected()}>
 				<Trash2 size={14} />
 				<span>Delete</span>
@@ -998,6 +1015,14 @@
 				editorState.fabricCanvas.renderAll();
 			}
 		}}
+	/>
+
+	<AddImageModal
+		open={showAddImageModal}
+		acceptedTypes={ACCEPTED_IMAGE_TYPES}
+		maxBytes={MAX_IMAGE_BYTES}
+		onClose={() => (showAddImageModal = false)}
+		onSelect={onAddImageModalSelect}
 	/>
 
 	<PublishModal
