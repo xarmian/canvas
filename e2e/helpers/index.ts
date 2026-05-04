@@ -152,14 +152,21 @@ export async function addImageLayer(
 	file: { name: string; mimeType: string; buffer: Buffer }
 ): Promise<void> {
 	const fileInput = page.locator('input[type="file"]');
+	// Snapshot the layer count before upload so we can wait for it to
+	// increment. Polling on the toolbar text is unreliable: 'Image' is
+	// already the toolbar label before upload starts, so a too-fast
+	// transition through 'Uploading…' would be missed and the helper
+	// could return before Fabric has inserted the new layer.
+	const layerList = page.getByRole('listbox', { name: 'Canvas layers' });
+	const before = await layerList.locator('[role="option"]').count();
 	await fileInput.setInputFiles(file);
-	// Image upload + Fabric insert is async; the toolbar surface flips
-	// to "Uploading…" while in flight, then back to "Image". Wait for
-	// the back-edge and a brief settle so layer panel reflects the addition.
-	await expect(page.getByTestId('toolbar-add-image')).toBeVisible();
-	await expect(page.getByTestId('toolbar-add-image')).toContainText('Image', {
-		timeout: 15_000
-	});
+	// Wait for the layer count to actually increase. This is the only
+	// signal that observably correlates with the post-insert state of
+	// the Fabric canvas, regardless of upload speed.
+	await expect(async () => {
+		const after = await layerList.locator('[role="option"]').count();
+		expect(after).toBe(before + 1);
+	}).toPass({ timeout: 15_000 });
 }
 
 /**
