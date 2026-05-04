@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { BASE_URL } from '../playwright.config';
 
 /**
  * Canvas MVP E2E tests — API-based for CI compatibility.
@@ -119,7 +120,7 @@ test.describe('Canvas MVP E2E', () => {
 		});
 
 		test('unpublished canvas returns 404', async ({ playwright }) => {
-			const ctx = await playwright.request.newContext({ baseURL: 'http://localhost:5173' });
+			const ctx = await playwright.request.newContext({ baseURL: BASE_URL });
 
 			await ctx.post('/api/auth/sign-up/email', {
 				data: {
@@ -267,8 +268,8 @@ test.describe('Canvas MVP E2E', () => {
 	test.describe('Access control', () => {
 		test("cannot access another user's canvas", async ({ playwright }) => {
 			// Use isolated request contexts so cookies don't leak
-			const ctxA = await playwright.request.newContext({ baseURL: 'http://localhost:5173' });
-			const ctxB = await playwright.request.newContext({ baseURL: 'http://localhost:5173' });
+			const ctxA = await playwright.request.newContext({ baseURL: BASE_URL });
+			const ctxB = await playwright.request.newContext({ baseURL: BASE_URL });
 
 			await ctxA.post('/api/auth/sign-up/email', {
 				data: {
@@ -299,8 +300,8 @@ test.describe('Canvas MVP E2E', () => {
 		});
 
 		test("cannot update another user's canvas", async ({ playwright }) => {
-			const ctxA = await playwright.request.newContext({ baseURL: 'http://localhost:5173' });
-			const ctxB = await playwright.request.newContext({ baseURL: 'http://localhost:5173' });
+			const ctxA = await playwright.request.newContext({ baseURL: BASE_URL });
+			const ctxB = await playwright.request.newContext({ baseURL: BASE_URL });
 
 			await ctxA.post('/api/auth/sign-up/email', {
 				data: {
