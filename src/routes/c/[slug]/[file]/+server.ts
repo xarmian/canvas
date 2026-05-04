@@ -1,4 +1,5 @@
 import { error } from '@sveltejs/kit';
+import { createHash } from 'node:crypto';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { canvases, canvasParams } from '$lib/server/db/schema';
@@ -63,7 +64,78 @@ function cacheKey(
 	return `${slug}:${version}:${format}:fonts=${fontSetVersion}:${serializedParams}`;
 }
 
-export const GET: RequestHandler = async ({ params, url }) => {
+/**
+ * Build a strong ETag from the cache key (which already encapsulates
+ * canvas updatedAt + params + format + font fingerprint). SHA-256
+ * truncated to 16 hex chars is plenty for the ETag — collisions across
+ * a single canvas's renders are vanishingly unlikely, and shorter
+ * tags reduce header bloat at high QPS.
+ */
+function buildEtag(cacheKey: string): string {
+	return `"${createHash('sha256').update(cacheKey).digest('hex').slice(0, 16)}"`;
+}
+
+/**
+ * Per RFC 9110 §13.1.2, If-None-Match accepts:
+ *   - `*` matching any current representation
+ *   - a comma-separated list of entity-tags (each `"..."` or `W/"..."`)
+ * Comparison is weak — strip an optional `W/` prefix from each tag
+ * before comparing to our (strong) tag.
+ *
+ * Returns true when the request's If-None-Match indicates the cached
+ * representation is still valid for our `etag`.
+ */
+function ifNoneMatchHits(headerValue: string, etag: string): boolean {
+	const trimmed = headerValue.trim();
+	if (trimmed === '*') return true;
+	for (const raw of trimmed.split(',')) {
+		const t = raw.trim();
+		if (!t) continue;
+		const stripped = t.startsWith('W/') ? t.slice(2) : t;
+		if (stripped === etag) return true;
+	}
+	return false;
+}
+
+/**
+ * The `_v` value the embed-code modal generates and that the route
+ * accepts as immutable-cache opt-in. Includes the font-set fingerprint
+ * because font library changes alter the rendered bytes without
+ * touching canvas.updatedAt — without it, a delete/reupload would let
+ * a stale `_v` serve a 1-year cached render of the old font.
+ *
+ * The hash is short (12 hex chars) so URLs stay tidy. Anyone is free
+ * to pass their own `_v=foo` — it won't match this hash and will fall
+ * back to short cache-control (the safe default).
+ */
+function buildVersionToken(canvasUpdatedAtMs: string, fontSetVersion: string): string {
+	return createHash('sha256')
+		.update(`${canvasUpdatedAtMs}|${fontSetVersion}`)
+		.digest('hex')
+		.slice(0, 12);
+}
+
+/**
+ * Pick the right Cache-Control based on whether the request supplied
+ * an `?_v=...` matching the current version token (canvas updatedAt
+ * + font set fingerprint).
+ *
+ * - Match: the URL is fully content-versioned — a canvas edit OR a
+ *   font upload/delete produces a new token. Safe to mark
+ *   `immutable, max-age=1y`. Embed-code snippets (TASK-69) emit URLs
+ *   in this shape so consumers get true CDN-layer immutable caching.
+ * - No `_v` or stale `_v`: keep the existing short window so a canvas
+ *   edit is reflected within ~5 minutes for naive consumers that paste
+ *   the bare /c/<slug>/image.png URL.
+ */
+function pickCacheControl(requestedVersion: string | null, currentVersionToken: string): string {
+	if (requestedVersion && requestedVersion === currentVersionToken) {
+		return 'public, max-age=31536000, immutable';
+	}
+	return 'public, max-age=60, s-maxage=300';
+}
+
+export const GET: RequestHandler = async ({ params, url, request }) => {
 	// Parse format from filename
 	const formatInfo = parseFormat(params.file);
 	if (!formatInfo) {
@@ -77,9 +149,18 @@ export const GET: RequestHandler = async ({ params, url }) => {
 		error(404, 'Canvas not found or not published');
 	}
 
-	// Parse URL query parameters
+	// Parse URL query parameters. `_v` is reserved for the content-
+	// version hint and is not forwarded to the renderer. `_v` is chosen
+	// over `v` because users frequently bind short single-letter param
+	// names; the underscore prefix is namespace-style and unlikely to
+	// collide with a real render param.
 	const queryParams: Record<string, string> = {};
+	let requestedVersion: string | null = null;
 	for (const [key, value] of url.searchParams) {
+		if (key === '_v') {
+			requestedVersion = value;
+			continue;
+		}
 		queryParams[key] = value;
 	}
 
@@ -136,12 +217,53 @@ export const GET: RequestHandler = async ({ params, url }) => {
 	// $onUpdate.
 	const version = canvas.updatedAt.toISOString();
 	const key = cacheKey(params.slug, version, queryParams, formatInfo.format, fontSetVersion);
+	const etag = buildEtag(key);
+	const updatedAtMs = canvas.updatedAt.getTime().toString();
+	const lastModified = canvas.updatedAt.toUTCString();
+	const versionToken = buildVersionToken(updatedAtMs, fontSetVersion);
+	const cacheControl = pickCacheControl(requestedVersion, versionToken);
+
+	// Conditional GET: 304 short-circuits before we touch storage / cache.
+	// Per RFC 9110: when If-None-Match is present the recipient MUST
+	// ignore If-Modified-Since. Without that ordering, a canvas edited
+	// within the same wall-second as a previous fetch would: send a new
+	// ETag (cache miss) but the second-rounded Last-Modified would
+	// still match If-Modified-Since → false 304 → consumer keeps the
+	// stale render.
+	const ifNoneMatch = request.headers.get('if-none-match');
+	if (ifNoneMatch !== null) {
+		if (ifNoneMatchHits(ifNoneMatch, etag)) {
+			return new Response(null, {
+				status: 304,
+				headers: {
+					ETag: etag,
+					'Cache-Control': cacheControl,
+					'Last-Modified': lastModified,
+					Vary: 'Accept'
+				}
+			});
+		}
+		// ETag didn't match — fall through to a full render. Skip the
+		// If-Modified-Since branch entirely per RFC 9110.
+	}
+	// Note: we deliberately do NOT honor If-Modified-Since 304s. The
+	// rendered bytes depend on the canvas owner's font library too, and
+	// font upload/delete doesn't bump canvas.updatedAt. A client validating
+	// purely with If-Modified-Since after a font change would get a false
+	// 304. ETag (which includes the font fingerprint) is the strong
+	// validator — clients that send both headers are well-served by the
+	// If-None-Match branch above. Last-Modified is still emitted so HTTP
+	// archivers and explorer tools can show a timestamp.
+
 	const cachedBuf = await renderCache.get(key, formatInfo.format);
 	if (cachedBuf) {
 		return new Response(new Uint8Array(cachedBuf), {
 			headers: {
 				'Content-Type': formatInfo.contentType,
-				'Cache-Control': 'public, max-age=60, s-maxage=300',
+				'Cache-Control': cacheControl,
+				ETag: etag,
+				'Last-Modified': lastModified,
+				Vary: 'Accept',
 				'X-Cache': 'HIT'
 			}
 		});
@@ -186,7 +308,10 @@ export const GET: RequestHandler = async ({ params, url }) => {
 	return new Response(new Uint8Array(buffer), {
 		headers: {
 			'Content-Type': formatInfo.contentType,
-			'Cache-Control': 'public, max-age=60, s-maxage=300',
+			'Cache-Control': cacheControl,
+			ETag: etag,
+			'Last-Modified': lastModified,
+			Vary: 'Accept',
 			'X-Cache': 'MISS'
 		}
 	});
