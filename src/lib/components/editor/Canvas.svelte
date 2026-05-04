@@ -203,6 +203,13 @@
 	.canvas-wrapper {
 		position: relative;
 		display: inline-block;
+		/* Reserve space for the actual canvas dimensions BEFORE Fabric
+		   mounts. Without this, the wrapper is sized to the bare
+		   <canvas> default (300x150), the skeleton is clipped, and
+		   layout jumps when Fabric sets real dimensions on mount. */
+		width: var(--canvas-w);
+		height: var(--canvas-h);
+		max-width: 100%;
 		border: 1px solid #e2e8f0;
 		border-radius: 4px;
 		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
@@ -213,9 +220,6 @@
 	.canvas-skeleton {
 		position: absolute;
 		inset: 0;
-		width: var(--canvas-w);
-		height: var(--canvas-h);
-		max-width: 100%;
 		background: linear-gradient(90deg, #f1f5f9 0%, #e2e8f0 40%, #f1f5f9 80%, #f1f5f9 100%);
 		background-size: 200% 100%;
 		animation: canvas-shimmer 1.4s ease-in-out infinite;
