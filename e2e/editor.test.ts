@@ -51,6 +51,7 @@ test.describe('Editor UX', () => {
 		expect(sectionIds).toEqual([
 			'property-section-text',
 			'property-section-dynamic',
+			'property-section-conditionals',
 			'property-section-position'
 		]);
 
