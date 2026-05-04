@@ -44,24 +44,33 @@ export function compare(left: string, op: ConditionalOp, right: string): boolean
 	}
 }
 
+/** Build a canvas-wide map of paramName → first-seen default. Param
+ * defaults are conceptually canvas-scoped (the editor's Test Parameters
+ * panel dedupes the same way), so a rule on Layer B using a param that
+ * Layer A bound with a default should fall back to that default. */
+function buildDefaultsIndex(objects: FabricObject[]): Map<string, string> {
+	const defaults = new Map<string, string>();
+	for (const obj of objects) {
+		if (!obj.paramBindings) continue;
+		for (const binding of Object.values(obj.paramBindings)) {
+			if (binding.default === undefined) continue;
+			if (!binding.param) continue;
+			if (!defaults.has(binding.param)) defaults.set(binding.param, binding.default);
+		}
+	}
+	return defaults;
+}
+
 /** Resolve the value to compare against for a rule's `when.param`.
- * Priority: URL params > binding default for the same param name (so a
- * rule can reference a param that already has a binding default and the
- * default still applies when the URL omits it) > undefined. */
+ * Priority: URL params > canvas-wide binding default for the same param
+ * name > undefined. */
 function resolveParam(
 	paramName: string,
 	params: Record<string, string>,
-	obj: FabricObject
+	defaults: Map<string, string>
 ): string | undefined {
 	if (Object.hasOwn(params, paramName)) return params[paramName];
-	if (obj.paramBindings) {
-		for (const binding of Object.values(obj.paramBindings)) {
-			if (binding.param === paramName && binding.default !== undefined) {
-				return binding.default;
-			}
-		}
-	}
-	return undefined;
+	return defaults.get(paramName);
 }
 
 /**
@@ -77,13 +86,14 @@ export function applyConditionalStyles(
 	objects: FabricObject[],
 	params: Record<string, string>
 ): void {
+	const defaults = buildDefaultsIndex(objects);
 	for (const obj of objects) {
 		const rules = obj.conditionalStyles;
 		if (!rules || rules.length === 0) continue;
 		for (const rule of rules) {
 			const paramName = rule.when.param;
 			if (!paramName) continue;
-			const left = resolveParam(paramName, params, obj);
+			const left = resolveParam(paramName, params, defaults);
 			if (left === undefined) continue;
 			if (!compare(left, rule.when.op, rule.when.value)) continue;
 			applyOverride(obj, rule);
