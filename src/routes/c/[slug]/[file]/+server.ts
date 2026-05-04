@@ -24,18 +24,20 @@ function parseFormat(file: string): { format: OutputFormat; contentType: string 
  * it, edits to templateJson, dimensions, or background would keep
  * serving the stale render from cache until eviction. The persistent
  * cache makes that staleness window unbounded; the in-memory v0.1
- * cache had a 60s TTL papering over the same shape of bug. */
+ * cache had a 60s TTL papering over the same shape of bug.
+ *
+ * Param serialization uses JSON so a key/value containing literal `&`
+ * or `=` (e.g. `?q=1%26x=2`) can't collide with a different request
+ * whose decoded params happen to look identical when joined with `&`. */
 function cacheKey(
 	slug: string,
 	version: string,
 	params: Record<string, string>,
 	format: string
 ): string {
-	const sortedParams = Object.entries(params)
-		.sort(([a], [b]) => a.localeCompare(b))
-		.map(([k, v]) => `${k}=${v}`)
-		.join('&');
-	return `${slug}:${version}:${format}:${sortedParams}`;
+	const sortedEntries = Object.entries(params).sort(([a], [b]) => a.localeCompare(b));
+	const serializedParams = JSON.stringify(sortedEntries);
+	return `${slug}:${version}:${format}:${serializedParams}`;
 }
 
 export const GET: RequestHandler = async ({ params, url }) => {
