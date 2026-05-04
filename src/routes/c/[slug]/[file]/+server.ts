@@ -6,11 +6,9 @@ import { eq } from 'drizzle-orm';
 import { render } from '$lib/engine';
 import type { CanvasTemplate, FabricCanvasJson, OutputFormat } from '$lib/engine';
 import { validateParams } from '$lib/server/canvas-params';
+import { getDefaultRenderCache } from '$lib/server/render-cache';
 
-/** In-memory render cache: URL → { buffer, contentType, timestamp } */
-const renderCache = new Map<string, { buffer: Buffer; contentType: string; timestamp: number }>();
-const CACHE_TTL_MS = 60 * 1000; // 1 minute
-const MAX_CACHE_SIZE = 100;
+const renderCache = getDefaultRenderCache();
 
 /** Parse output format from filename */
 function parseFormat(file: string): { format: OutputFormat; contentType: string } | null {
@@ -21,13 +19,25 @@ function parseFormat(file: string): { format: OutputFormat; contentType: string 
 	return null;
 }
 
-/** Build a cache key from slug + params + format */
-function cacheKey(slug: string, params: Record<string, string>, format: string): string {
-	const sortedParams = Object.entries(params)
-		.sort(([a], [b]) => a.localeCompare(b))
-		.map(([k, v]) => `${k}=${v}`)
-		.join('&');
-	return `${slug}:${format}:${sortedParams}`;
+/** Build a cache key from slug + content version + params + format.
+ * Including a content version (canvas.updatedAt) is critical — without
+ * it, edits to templateJson, dimensions, or background would keep
+ * serving the stale render from cache until eviction. The persistent
+ * cache makes that staleness window unbounded; the in-memory v0.1
+ * cache had a 60s TTL papering over the same shape of bug.
+ *
+ * Param serialization uses JSON so a key/value containing literal `&`
+ * or `=` (e.g. `?q=1%26x=2`) can't collide with a different request
+ * whose decoded params happen to look identical when joined with `&`. */
+function cacheKey(
+	slug: string,
+	version: string,
+	params: Record<string, string>,
+	format: string
+): string {
+	const sortedEntries = Object.entries(params).sort(([a], [b]) => a.localeCompare(b));
+	const serializedParams = JSON.stringify(sortedEntries);
+	return `${slug}:${version}:${format}:${serializedParams}`;
 }
 
 export const GET: RequestHandler = async ({ params, url }) => {
@@ -82,12 +92,18 @@ export const GET: RequestHandler = async ({ params, url }) => {
 	// same cache entry — and a now-required param that was previously
 	// cached as missing won't serve from cache (the validation above
 	// already returned 400).
-	const key = cacheKey(params.slug, queryParams, formatInfo.format);
-	const cached = renderCache.get(key);
-	if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-		return new Response(new Uint8Array(cached.buffer), {
+	// Include canvas.updatedAt so any edit (templateJson, dimensions,
+	// background, even canvasParams flag changes that wouldn't change
+	// the rendered bytes but might change validation behavior) busts
+	// the cache. updatedAt is auto-refreshed on every PATCH via Drizzle
+	// $onUpdate.
+	const version = canvas.updatedAt.toISOString();
+	const key = cacheKey(params.slug, version, queryParams, formatInfo.format);
+	const cachedBuf = await renderCache.get(key, formatInfo.format);
+	if (cachedBuf) {
+		return new Response(new Uint8Array(cachedBuf), {
 			headers: {
-				'Content-Type': cached.contentType,
+				'Content-Type': formatInfo.contentType,
 				'Cache-Control': 'public, max-age=60, s-maxage=300',
 				'X-Cache': 'HIT'
 			}
@@ -109,16 +125,9 @@ export const GET: RequestHandler = async ({ params, url }) => {
 		quality: 85
 	});
 
-	// Cache the result
-	if (renderCache.size >= MAX_CACHE_SIZE) {
-		const firstKey = renderCache.keys().next().value;
-		if (firstKey) renderCache.delete(firstKey);
-	}
-	renderCache.set(key, {
-		buffer,
-		contentType: formatInfo.contentType,
-		timestamp: Date.now()
-	});
+	// Persist to filesystem cache. The FsRenderCache handles LRU
+	// eviction internally based on CACHE_MAX_MB.
+	await renderCache.set(key, formatInfo.format, buffer);
 
 	return new Response(new Uint8Array(buffer), {
 		headers: {

@@ -2,8 +2,11 @@ node_modules
 build
 .svelte-kit
 .local-storage
+.cache
 .env
 .env.local
 .git
 .claude
+playwright-report
+test-results
 *.log
