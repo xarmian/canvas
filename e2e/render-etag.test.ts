@@ -3,8 +3,8 @@
  * Verifies:
  * - GET emits ETag, Last-Modified, and the standard short Cache-Control.
  * - GET with valid If-None-Match returns 304 (no body).
- * - GET with `?v=<canvas updatedAt ms>` returns immutable Cache-Control.
- * - GET with stale `?v=` falls back to short Cache-Control.
+ * - GET with `?_v=<canvas updatedAt ms>` returns immutable Cache-Control.
+ * - GET with stale `?_v=` falls back to short Cache-Control.
  */
 import { test, expect } from '@playwright/test';
 import { signupAndLogin, createCanvas, publish } from './helpers';
@@ -52,13 +52,13 @@ test.describe('Render: ETag + content-versioned URLs', () => {
 		const updatedAtMs = new Date(updatedAt).getTime().toString();
 
 		// Stale `v` falls back to short cache-control.
-		const stale = await ctx.get(imageUrl + (imageUrl.includes('?') ? '&' : '?') + 'v=999');
+		const stale = await ctx.get(imageUrl + (imageUrl.includes('?') ? '&' : '?') + '_v=999');
 		expect(stale.status()).toBe(200);
 		expect(stale.headers()['cache-control']).toBe('public, max-age=60, s-maxage=300');
 
 		// Matching `v` flips to immutable.
 		const immutable = await ctx.get(
-			imageUrl + (imageUrl.includes('?') ? '&' : '?') + `v=${updatedAtMs}`
+			imageUrl + (imageUrl.includes('?') ? '&' : '?') + `_v=${updatedAtMs}`
 		);
 		expect(immutable.status()).toBe(200);
 		expect(immutable.headers()['cache-control']).toContain('immutable');

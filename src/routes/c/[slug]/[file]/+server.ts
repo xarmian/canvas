@@ -76,14 +76,14 @@ function buildEtag(cacheKey: string): string {
 }
 
 /**
- * Pick the right Cache-Control based on whether the request supplied a
- * `?v=...` matching the canvas's current updatedAt.
+ * Pick the right Cache-Control based on whether the request supplied
+ * an `?_v=...` matching the canvas's current updatedAt.
  *
  * - Match: the URL is content-versioned, so any future canvas edit
- *   produces a different `v` value (and a different URL). Safe to mark
+ *   produces a different `_v` value (and a different URL). Safe to mark
  *   `immutable, max-age=1y`. Embed-code snippets (TASK-69) emit URLs
  *   in this shape so consumers get true CDN-layer immutable caching.
- * - No `v` or stale `v`: keep the existing short window so a canvas
+ * - No `_v` or stale `_v`: keep the existing short window so a canvas
  *   edit is reflected within ~5 minutes for naive consumers that paste
  *   the bare /c/<slug>/image.png URL.
  *
@@ -111,13 +111,15 @@ export const GET: RequestHandler = async ({ params, url, request }) => {
 		error(404, 'Canvas not found or not published');
 	}
 
-	// Parse URL query parameters. `v` is reserved for the content-version
-	// hint and is not forwarded to the renderer — otherwise a binding to
-	// `?v=...` would silently start receiving the cache-buster value.
+	// Parse URL query parameters. `_v` is reserved for the content-
+	// version hint and is not forwarded to the renderer. `_v` is chosen
+	// over `v` because users frequently bind short single-letter param
+	// names; the underscore prefix is namespace-style and unlikely to
+	// collide with a real render param.
 	const queryParams: Record<string, string> = {};
 	let requestedVersion: string | null = null;
 	for (const [key, value] of url.searchParams) {
-		if (key === 'v') {
+		if (key === '_v') {
 			requestedVersion = value;
 			continue;
 		}
@@ -183,27 +185,15 @@ export const GET: RequestHandler = async ({ params, url, request }) => {
 	const cacheControl = pickCacheControl(requestedVersion, updatedAtMs);
 
 	// Conditional GET: 304 short-circuits before we touch storage / cache.
+	// Per RFC 9110: when If-None-Match is present the recipient MUST
+	// ignore If-Modified-Since. Without that ordering, a canvas edited
+	// within the same wall-second as a previous fetch would: send a new
+	// ETag (cache miss) but the second-rounded Last-Modified would
+	// still match If-Modified-Since → false 304 → consumer keeps the
+	// stale render.
 	const ifNoneMatch = request.headers.get('if-none-match');
-	if (ifNoneMatch && ifNoneMatch === etag) {
-		return new Response(null, {
-			status: 304,
-			headers: {
-				ETag: etag,
-				'Cache-Control': cacheControl,
-				'Last-Modified': lastModified,
-				Vary: 'Accept'
-			}
-		});
-	}
-	// If-Modified-Since uses HTTP-date precision (1s). Compare ms-floor
-	// of canvas.updatedAt to the request's parsed date. Match → 304.
-	const ifModifiedSince = request.headers.get('if-modified-since');
-	if (ifModifiedSince) {
-		const since = Date.parse(ifModifiedSince);
-		if (
-			!Number.isNaN(since) &&
-			Math.floor(canvas.updatedAt.getTime() / 1000) <= Math.floor(since / 1000)
-		) {
+	if (ifNoneMatch !== null) {
+		if (ifNoneMatch === etag) {
 			return new Response(null, {
 				status: 304,
 				headers: {
@@ -213,6 +203,27 @@ export const GET: RequestHandler = async ({ params, url, request }) => {
 					Vary: 'Accept'
 				}
 			});
+		}
+		// ETag didn't match — fall through to a full render. Skip the
+		// If-Modified-Since branch entirely per RFC 9110.
+	} else {
+		const ifModifiedSince = request.headers.get('if-modified-since');
+		if (ifModifiedSince) {
+			const since = Date.parse(ifModifiedSince);
+			if (
+				!Number.isNaN(since) &&
+				Math.floor(canvas.updatedAt.getTime() / 1000) <= Math.floor(since / 1000)
+			) {
+				return new Response(null, {
+					status: 304,
+					headers: {
+						ETag: etag,
+						'Cache-Control': cacheControl,
+						'Last-Modified': lastModified,
+						Vary: 'Accept'
+					}
+				});
+			}
 		}
 	}
 
