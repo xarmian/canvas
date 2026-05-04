@@ -46,11 +46,24 @@ process.stdout.write([
 ' "$TEST_DATABASE_URL"
 )
 
-if [ -z "$DB_NAME" ] || [ "$DB_NAME" = "postgres" ]; then
-	echo "[setup-test-db] Refusing to operate on database name '${DB_NAME}'." >&2
-	echo "[setup-test-db] TEST_DATABASE_URL must point at a dedicated test DB." >&2
+if [ -z "$DB_NAME" ]; then
+	echo "[setup-test-db] TEST_DATABASE_URL has no database name." >&2
 	exit 1
 fi
+
+# This script issues DROP DATABASE — guard against pointing it at a non-test
+# database (e.g. the dev `canvas` DB). The name must contain "test"; this
+# rules out 'canvas', 'postgres', and other shared DBs without preventing
+# legitimate names like canvas_test, canvas_test_ci, ci_test, etc.
+case "$DB_NAME" in
+	*test*) ;;
+	*)
+		echo "[setup-test-db] Refusing to drop database '${DB_NAME}'." >&2
+		echo "[setup-test-db] TEST_DATABASE_URL must point at a database whose" >&2
+		echo "[setup-test-db] name contains 'test' (e.g. canvas_test)." >&2
+		exit 1
+		;;
+esac
 
 # Sanity: the dev `db` container must be up. We exec psql inside it so this
 # script doesn't require psql installed on the host.
