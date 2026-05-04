@@ -162,7 +162,7 @@
 		<div class="sections">
 			<!-- Text Section -->
 			{#if isText}
-				<section class="section">
+				<section class="section" data-testid="property-section-text">
 					<h4 class="section-title">Text</h4>
 
 					<div class="field-row field-col">
@@ -265,7 +265,7 @@
 
 			<!-- Image Section -->
 			{#if isImage}
-				<section class="section">
+				<section class="section" data-testid="property-section-image">
 					<h4 class="section-title">Image</h4>
 
 					<div class="field-row field-col">
@@ -275,97 +275,11 @@
 				</section>
 			{/if}
 
-			<!-- Position Section (collapsible, collapsed by default) -->
-			<section class="section">
-				<button
-					class="section-title collapsible"
-					onclick={() => (positionExpanded = !positionExpanded)}
-					aria-expanded={positionExpanded}
-				>
-					<span>Position &amp; size</span>
-					<span class="chevron" class:open={positionExpanded} aria-hidden="true"
-						><ChevronRight size={12} strokeWidth={2.5} /></span
-					>
-				</button>
-
-				{#if positionExpanded}
-					<div class="field-row">
-						<label class="field-label" for="prop-x">X</label>
-						<input
-							id="prop-x"
-							type="number"
-							class="field-input"
-							value={Math.round(posX)}
-							onchange={(e) => setProp('left', Number(e.currentTarget.value))}
-						/>
-					</div>
-
-					<div class="field-row">
-						<label class="field-label" for="prop-y">Y</label>
-						<input
-							id="prop-y"
-							type="number"
-							class="field-input"
-							value={Math.round(posY)}
-							onchange={(e) => setProp('top', Number(e.currentTarget.value))}
-						/>
-					</div>
-
-					<div class="field-row">
-						<label class="field-label" for="prop-w">Width</label>
-						<input
-							id="prop-w"
-							type="number"
-							class="field-input"
-							value={Math.round(objWidth)}
-							onchange={(e) => setDimension('width', Number(e.currentTarget.value))}
-						/>
-					</div>
-
-					<div class="field-row">
-						<label class="field-label" for="prop-h">Height</label>
-						<input
-							id="prop-h"
-							type="number"
-							class="field-input"
-							value={Math.round(objHeight)}
-							onchange={(e) => setDimension('height', Number(e.currentTarget.value))}
-						/>
-					</div>
-
-					<div class="field-row">
-						<label class="field-label" for="prop-angle">Rotation</label>
-						<div class="input-with-suffix">
-							<input
-								id="prop-angle"
-								type="number"
-								class="field-input"
-								value={Math.round(angle)}
-								onchange={(e) => setProp('angle', Number(e.currentTarget.value))}
-							/>
-							<span class="suffix">&deg;</span>
-						</div>
-					</div>
-
-					<div class="field-row">
-						<label class="field-label" for="prop-opacity">Opacity</label>
-						<input
-							id="prop-opacity"
-							type="range"
-							class="field-range"
-							min="0"
-							max="1"
-							step="0.01"
-							value={opacity}
-							oninput={(e) => setProp('opacity', Number(e.currentTarget.value))}
-						/>
-						<span class="range-value">{Math.round(opacity * 100)}%</span>
-					</div>
-				{/if}
-			</section>
-
 			<!-- Parameter Binding Section -->
-			<section class="section">
+			<!-- Ordered ahead of Position so the most product-distinctive control
+				(URL parameter binding) is reachable without expanding two sections.
+				Position is rarely-edited pixel work; keep it collapsed at the bottom. -->
+			<section class="section" data-testid="property-section-dynamic">
 				<button
 					class="section-title collapsible"
 					onclick={() => (bindingsExpanded = !bindingsExpanded)}
@@ -456,6 +370,95 @@
 								{/if}
 							</div>
 						{/each}
+					</div>
+				{/if}
+			</section>
+
+			<!-- Position Section (collapsible, collapsed by default) -->
+			<section class="section" data-testid="property-section-position">
+				<button
+					class="section-title collapsible"
+					onclick={() => (positionExpanded = !positionExpanded)}
+					aria-expanded={positionExpanded}
+				>
+					<span>Position &amp; size</span>
+					<span class="chevron" class:open={positionExpanded} aria-hidden="true"
+						><ChevronRight size={12} strokeWidth={2.5} /></span
+					>
+				</button>
+
+				{#if positionExpanded}
+					<div class="field-row">
+						<label class="field-label" for="prop-x">X</label>
+						<input
+							id="prop-x"
+							type="number"
+							class="field-input"
+							value={Math.round(posX)}
+							onchange={(e) => setProp('left', Number(e.currentTarget.value))}
+						/>
+					</div>
+
+					<div class="field-row">
+						<label class="field-label" for="prop-y">Y</label>
+						<input
+							id="prop-y"
+							type="number"
+							class="field-input"
+							value={Math.round(posY)}
+							onchange={(e) => setProp('top', Number(e.currentTarget.value))}
+						/>
+					</div>
+
+					<div class="field-row">
+						<label class="field-label" for="prop-w">Width</label>
+						<input
+							id="prop-w"
+							type="number"
+							class="field-input"
+							value={Math.round(objWidth)}
+							onchange={(e) => setDimension('width', Number(e.currentTarget.value))}
+						/>
+					</div>
+
+					<div class="field-row">
+						<label class="field-label" for="prop-h">Height</label>
+						<input
+							id="prop-h"
+							type="number"
+							class="field-input"
+							value={Math.round(objHeight)}
+							onchange={(e) => setDimension('height', Number(e.currentTarget.value))}
+						/>
+					</div>
+
+					<div class="field-row">
+						<label class="field-label" for="prop-angle">Rotation</label>
+						<div class="input-with-suffix">
+							<input
+								id="prop-angle"
+								type="number"
+								class="field-input"
+								value={Math.round(angle)}
+								onchange={(e) => setProp('angle', Number(e.currentTarget.value))}
+							/>
+							<span class="suffix">&deg;</span>
+						</div>
+					</div>
+
+					<div class="field-row">
+						<label class="field-label" for="prop-opacity">Opacity</label>
+						<input
+							id="prop-opacity"
+							type="range"
+							class="field-range"
+							min="0"
+							max="1"
+							step="0.01"
+							value={opacity}
+							oninput={(e) => setProp('opacity', Number(e.currentTarget.value))}
+						/>
+						<span class="range-value">{Math.round(opacity * 100)}%</span>
 					</div>
 				{/if}
 			</section>

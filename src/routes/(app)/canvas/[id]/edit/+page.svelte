@@ -789,6 +789,7 @@
 		<div class="toolbar-actions">
 			<button
 				class="tool-btn icon-only"
+				data-testid="toolbar-undo"
 				onclick={() => editorRef?.undoAction()}
 				disabled={!historyState.canUndo}
 				aria-label={historyState.canUndo ? 'Undo (Ctrl+Z)' : 'Nothing to undo'}
@@ -798,6 +799,7 @@
 			</button>
 			<button
 				class="tool-btn icon-only"
+				data-testid="toolbar-redo"
 				onclick={() => editorRef?.redoAction()}
 				disabled={!historyState.canRedo}
 				aria-label={historyState.canRedo ? 'Redo (Ctrl+Shift+Z)' : 'Nothing to redo'}
@@ -816,6 +818,7 @@
 			</button>
 			<button
 				class="tool-btn"
+				data-testid="toolbar-canvas-size"
 				onclick={() => (showSettingsModal = true)}
 				title="Canvas size and background"
 			>
