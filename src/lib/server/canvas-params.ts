@@ -200,8 +200,12 @@ export function validateParams(
 		// a misconfigured default poison the published canvas.
 		const value = resolved[def.name];
 		if (def.type === 'number') {
-			const n = Number(value);
-			if (!Number.isFinite(n)) {
+			// Number('') and Number('   ') are 0, which is a footgun on
+			// validation surfaces — reject blank strings explicitly so
+			// `?price=` doesn't silently render as zero.
+			const trimmed = value.trim();
+			const n = Number(trimmed);
+			if (trimmed === '' || !Number.isFinite(n)) {
 				return { ok: false, field: def.name, reason: `expected a number, got "${value}"` };
 			}
 		}
