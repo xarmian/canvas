@@ -11,7 +11,8 @@ import {
 	gotoEditor,
 	addTextLayer,
 	bindParam,
-	publish
+	publish,
+	uniqueXffHeaders
 } from './helpers';
 
 test.describe('Param validation', () => {
@@ -40,13 +41,14 @@ test.describe('Param validation', () => {
 			expect(rows.find((p) => p.name === 'title')?.required).toBe(true);
 		}).toPass({ timeout: 5_000 });
 
+		const xff = uniqueXffHeaders();
 		// 1. With param → 200 PNG.
-		const ok = await request.get(`${imageUrl}?title=Hello`);
+		const ok = await request.get(`${imageUrl}?title=Hello`, { headers: xff });
 		expect(ok.status()).toBe(200);
 		expect(ok.headers()['content-type']).toBe('image/png');
 
 		// 2. Missing required → 400 JSON with field+message.
-		const bad = await request.get(imageUrl);
+		const bad = await request.get(imageUrl, { headers: xff });
 		expect(bad.status()).toBe(400);
 		expect(bad.headers()['content-type']).toContain('application/json');
 		const body = (await bad.json()) as { error: string; field: string; message: string };
@@ -73,12 +75,13 @@ test.describe('Param validation', () => {
 			expect(rows.find((p) => p.name === 'price')?.type).toBe('number');
 		}).toPass({ timeout: 5_000 });
 
+		const xff = uniqueXffHeaders();
 		// Numeric value → 200.
-		const ok = await request.get(`${imageUrl}?price=1234.56`);
+		const ok = await request.get(`${imageUrl}?price=1234.56`, { headers: xff });
 		expect(ok.status()).toBe(200);
 
 		// Non-numeric → 400 JSON.
-		const bad = await request.get(`${imageUrl}?price=hello`);
+		const bad = await request.get(`${imageUrl}?price=hello`, { headers: xff });
 		expect(bad.status()).toBe(400);
 		const body = (await bad.json()) as { field: string; message: string };
 		expect(body.field).toBe('price');

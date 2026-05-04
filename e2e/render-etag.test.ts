@@ -8,7 +8,7 @@
  */
 import { test, expect } from '@playwright/test';
 import { createHash } from 'node:crypto';
-import { signupAndLogin, createCanvas, publish } from './helpers';
+import { signupAndLogin, createCanvas, publish, uniqueXffHeaders } from './helpers';
 
 test.describe('Render: ETag + content-versioned URLs', () => {
 	test('ETag + 304 + immutable cache-control on matching ?v', async ({ page }) => {
@@ -20,9 +20,12 @@ test.describe('Render: ETag + content-versioned URLs', () => {
 		// fetches share session cookies. Public /c/[slug] fetches don't
 		// need auth but using the same context keeps things simple.
 		const ctx = page.request;
+		// Unique XFF so this test's per-IP rate limit bucket (TASK-72)
+		// isn't drained by other render tests running in parallel.
+		const xff = uniqueXffHeaders();
 
 		// First GET — 200 with ETag + Last-Modified + short cache-control.
-		const first = await ctx.get(imageUrl);
+		const first = await ctx.get(imageUrl, { headers: xff });
 		expect(first.status()).toBe(200);
 		const etag = first.headers()['etag'];
 		const lastModified = first.headers()['last-modified'];
@@ -32,7 +35,7 @@ test.describe('Render: ETag + content-versioned URLs', () => {
 		expect(first.headers()['vary']).toContain('Accept');
 
 		// Conditional GET with If-None-Match → 304, no body.
-		const second = await ctx.get(imageUrl, { headers: { 'If-None-Match': etag } });
+		const second = await ctx.get(imageUrl, { headers: { ...xff, 'If-None-Match': etag } });
 		expect(second.status()).toBe(304);
 		expect(second.headers()['etag']).toBe(etag);
 		// 304 responses must not include a body — Playwright surfaces this
@@ -42,7 +45,9 @@ test.describe('Render: ETag + content-versioned URLs', () => {
 		// We intentionally do NOT serve 304 from If-Modified-Since alone —
 		// font library changes affect render bytes without bumping
 		// canvas.updatedAt, so Last-Modified can't be a sole validator.
-		const ims = await ctx.get(imageUrl, { headers: { 'If-Modified-Since': lastModified } });
+		const ims = await ctx.get(imageUrl, {
+			headers: { ...xff, 'If-Modified-Since': lastModified }
+		});
 		expect(ims.status()).toBe(200);
 
 		// Re-fetch the canvas via the authenticated API to get updatedAt
@@ -57,13 +62,16 @@ test.describe('Render: ETag + content-versioned URLs', () => {
 		const versionToken = createHash('sha256').update(`${updatedAtMs}|`).digest('hex').slice(0, 12);
 
 		// Stale `_v` falls back to short cache-control.
-		const stale = await ctx.get(imageUrl + (imageUrl.includes('?') ? '&' : '?') + '_v=999');
+		const stale = await ctx.get(imageUrl + (imageUrl.includes('?') ? '&' : '?') + '_v=999', {
+			headers: xff
+		});
 		expect(stale.status()).toBe(200);
 		expect(stale.headers()['cache-control']).toBe('public, max-age=60, s-maxage=300');
 
 		// Matching `_v` flips to immutable.
 		const immutable = await ctx.get(
-			imageUrl + (imageUrl.includes('?') ? '&' : '?') + `_v=${versionToken}`
+			imageUrl + (imageUrl.includes('?') ? '&' : '?') + `_v=${versionToken}`,
+			{ headers: xff }
 		);
 		expect(immutable.status()).toBe(200);
 		expect(immutable.headers()['cache-control']).toContain('immutable');

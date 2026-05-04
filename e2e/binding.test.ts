@@ -10,7 +10,8 @@ import {
 	gotoEditor,
 	addTextLayer,
 	bindParam,
-	publish
+	publish,
+	uniqueXffHeaders
 } from './helpers';
 
 test('parameter binding round-trips editor → render', async ({ page, request }) => {
@@ -26,15 +27,19 @@ test('parameter binding round-trips editor → render', async ({ page, request }
 	const { imageUrl } = await publish(page);
 	expect(imageUrl).toMatch(/\/c\/[A-Za-z0-9-]+\/image\.png$/);
 
+	// Unique XFF so this test's per-IP rate limit bucket (TASK-72) is
+	// isolated from sibling tests'.
+	const headers = uniqueXffHeaders();
+
 	// --- 1. Custom param value should be served back as PNG.
-	const customRes = await request.get(`${imageUrl}?title=Custom`);
+	const customRes = await request.get(`${imageUrl}?title=Custom`, { headers });
 	expect(customRes.status()).toBe(200);
 	expect(customRes.headers()['content-type']).toBe('image/png');
 	const customBody = await customRes.body();
 	expect(customBody.length).toBeGreaterThan(100);
 
 	// --- 2. Omitting the param should still render (binding default kicks in).
-	const defaultRes = await request.get(imageUrl);
+	const defaultRes = await request.get(imageUrl, { headers });
 	expect(defaultRes.status()).toBe(200);
 	expect(defaultRes.headers()['content-type']).toBe('image/png');
 	const defaultBody = await defaultRes.body();

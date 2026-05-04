@@ -17,6 +17,22 @@ export function uniqueEmail(prefix = 'e2e'): string {
 	return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.com`;
 }
 
+/**
+ * Generate a unique `X-Forwarded-For` header value for a single test so
+ * the public render route's per-IP rate limit treats it as a fresh
+ * client. Without this every render-touching test would share one bucket
+ * (127.0.0.1) and exhaust each other's quotas across the suite.
+ *
+ * Returns a header object suitable for `request.get(url, { headers })`.
+ */
+export function uniqueXffHeaders(): Record<string, string> {
+	const a = 10;
+	const b = Math.floor(Math.random() * 256);
+	const c = Math.floor(Math.random() * 256);
+	const d = Math.floor(Math.random() * 256);
+	return { 'X-Forwarded-For': `${a}.${b}.${c}.${d}` };
+}
+
 export interface SignupOptions {
 	name?: string;
 	email?: string;
