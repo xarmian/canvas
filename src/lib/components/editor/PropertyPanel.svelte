@@ -58,6 +58,51 @@
 	// fill color, image src) happen far more often than pixel-exact X/Y/W/H
 	// tweaks — users who want that control expand the section on demand.
 	let positionExpanded = $state(false);
+	let conditionalsExpanded = $state(false);
+
+	// --- Conditional style rules (TASK-50) ---
+	type ConditionalOp = '==' | '!=' | '<' | '<=' | '>' | '>=' | 'contains';
+	type ConditionalProperty = 'fill' | 'opacity';
+	interface ConditionalRule {
+		when: { param: string; op: ConditionalOp; value: string };
+		then: { property: ConditionalProperty; value: string };
+	}
+	let conditionalStyles: ConditionalRule[] = $derived(
+		getObjProp<ConditionalRule[]>('conditionalStyles', [])
+	);
+
+	function setRules(next: ConditionalRule[]) {
+		setProp('conditionalStyles', next);
+	}
+
+	function addRule() {
+		const next = [...conditionalStyles];
+		next.push({
+			when: { param: '', op: '<', value: '0' },
+			then: { property: 'fill', value: '#dc2626' }
+		});
+		setRules(next);
+	}
+
+	function removeRule(index: number) {
+		setRules(conditionalStyles.filter((_, i) => i !== index));
+	}
+
+	function updateRule<K extends 'when' | 'then'>(
+		index: number,
+		section: K,
+		field: K extends 'when' ? keyof ConditionalRule['when'] : keyof ConditionalRule['then'],
+		value: string
+	) {
+		const next = conditionalStyles.map((r, i) => {
+			if (i !== index) return r;
+			return {
+				...r,
+				[section]: { ...r[section], [field]: value }
+			} as ConditionalRule;
+		});
+		setRules(next);
+	}
 
 	// --- Helpers ---
 
@@ -413,6 +458,124 @@
 							</div>
 						{/each}
 					</div>
+				{/if}
+			</section>
+
+			<!-- Conditional Styles (TASK-50) -->
+			<!-- Lives between Dynamic Parameters and Position so authors can
+				see the param wiring directly above the rules that consume it. -->
+			<section class="section" data-testid="property-section-conditionals">
+				<button
+					class="section-title collapsible"
+					onclick={() => (conditionalsExpanded = !conditionalsExpanded)}
+					aria-expanded={conditionalsExpanded}
+				>
+					<span>
+						Conditional Styles
+						{#if conditionalStyles.length > 0}
+							<span class="bound-count" aria-label="{conditionalStyles.length} rules">
+								{conditionalStyles.length}
+							</span>
+						{/if}
+					</span>
+					<span class="chevron" class:open={conditionalsExpanded} aria-hidden="true">
+						<ChevronRight size={12} strokeWidth={2.5} />
+					</span>
+				</button>
+
+				{#if conditionalsExpanded}
+					<p class="bindings-intro">
+						Override <code>fill</code> or <code>opacity</code> when a URL parameter matches a condition.
+						Use this for red-on-loss / green-on-gain cards.
+					</p>
+
+					{#if conditionalStyles.length === 0}
+						<p class="conditionals-empty">No rules yet.</p>
+					{:else}
+						<div class="conditionals-list">
+							{#each conditionalStyles as rule, i (i)}
+								<div class="conditional-rule">
+									<div class="conditional-row">
+										<span class="conditional-when-label">When</span>
+										<input
+											type="text"
+											class="field-input conditional-param"
+											value={rule.when.param}
+											oninput={(e) => updateRule(i, 'when', 'param', e.currentTarget.value)}
+											placeholder="param"
+											aria-label="Rule {i + 1} parameter name"
+										/>
+										<select
+											class="field-select conditional-op"
+											value={rule.when.op}
+											onchange={(e) => updateRule(i, 'when', 'op', e.currentTarget.value)}
+											aria-label="Rule {i + 1} operator"
+										>
+											<option value="==">=</option>
+											<option value="!=">≠</option>
+											<option value="<">&lt;</option>
+											<option value="<=">≤</option>
+											<option value=">">&gt;</option>
+											<option value=">=">≥</option>
+											<option value="contains">contains</option>
+										</select>
+										<input
+											type="text"
+											class="field-input conditional-value"
+											value={rule.when.value}
+											oninput={(e) => updateRule(i, 'when', 'value', e.currentTarget.value)}
+											placeholder="value"
+											aria-label="Rule {i + 1} comparison value"
+										/>
+									</div>
+									<div class="conditional-row">
+										<span class="conditional-when-label">Then set</span>
+										<select
+											class="field-select conditional-property"
+											value={rule.then.property}
+											onchange={(e) => updateRule(i, 'then', 'property', e.currentTarget.value)}
+											aria-label="Rule {i + 1} property to override"
+										>
+											<option value="fill">fill</option>
+											<option value="opacity">opacity</option>
+										</select>
+										<span class="conditional-arrow">to</span>
+										{#if rule.then.property === 'fill'}
+											<input
+												type="color"
+												class="field-color"
+												value={rule.then.value || '#000000'}
+												oninput={(e) => updateRule(i, 'then', 'value', e.currentTarget.value)}
+												aria-label="Rule {i + 1} fill color"
+											/>
+										{:else}
+											<input
+												type="number"
+												class="field-input conditional-then-num"
+												min="0"
+												max="1"
+												step="0.05"
+												value={rule.then.value}
+												oninput={(e) => updateRule(i, 'then', 'value', e.currentTarget.value)}
+												aria-label="Rule {i + 1} opacity 0..1"
+											/>
+										{/if}
+										<button
+											type="button"
+											class="conditional-remove"
+											onclick={() => removeRule(i)}
+											aria-label="Remove rule {i + 1}"
+											title="Remove rule"
+										>
+											×
+										</button>
+									</div>
+								</div>
+							{/each}
+						</div>
+					{/if}
+
+					<button type="button" class="conditional-add" onclick={addRule}>+ Add rule</button>
 				{/if}
 			</section>
 
@@ -865,6 +1028,111 @@
 
 	.binding-toggle.active:hover {
 		background: #fcd34d;
+	}
+
+	.conditionals-empty {
+		margin: 8px 0;
+		font-size: 11.5px;
+		color: #94a3b8;
+		font-style: italic;
+	}
+
+	.conditionals-list {
+		margin: 8px 0;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.conditional-rule {
+		padding: 8px;
+		background: #f5f5f5;
+		border: 1px solid #e5e7eb;
+		border-radius: 4px;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.conditional-row {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 11px;
+	}
+
+	.conditional-when-label {
+		min-width: 50px;
+		color: #6b7280;
+		font-weight: 500;
+	}
+
+	.conditional-param {
+		flex: 1;
+		min-width: 0;
+		font-size: 11px;
+		padding: 3px 5px;
+	}
+
+	.conditional-op {
+		width: 64px;
+		font-size: 11px;
+		padding: 3px 4px;
+	}
+
+	.conditional-value {
+		flex: 1;
+		min-width: 0;
+		font-size: 11px;
+		padding: 3px 5px;
+	}
+
+	.conditional-property {
+		width: 80px;
+		font-size: 11px;
+		padding: 3px 4px;
+	}
+
+	.conditional-arrow {
+		color: #9ca3af;
+	}
+
+	.conditional-then-num {
+		width: 60px;
+		font-size: 11px;
+		padding: 3px 5px;
+	}
+
+	.conditional-remove {
+		margin-left: auto;
+		background: none;
+		border: none;
+		color: #9ca3af;
+		font-size: 16px;
+		line-height: 1;
+		cursor: pointer;
+		padding: 0 4px;
+	}
+
+	.conditional-remove:hover {
+		color: #dc2626;
+	}
+
+	.conditional-add {
+		margin-top: 4px;
+		padding: 4px 10px;
+		font-size: 11.5px;
+		background: #fff;
+		border: 1px dashed #cbd5e1;
+		border-radius: 4px;
+		cursor: pointer;
+		color: #475569;
+		width: 100%;
+	}
+
+	.conditional-add:hover {
+		background: #f9fafb;
+		border-color: #94a3b8;
 	}
 
 	.binding-format-hint {

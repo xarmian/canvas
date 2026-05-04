@@ -428,7 +428,7 @@
 		const originCanvasId = data.canvas.id;
 		const isStale = () => !isMounted || data.canvas.id !== originCanvasId;
 		try {
-			const json = editorState.fabricCanvas.toObject(['paramBindings']);
+			const json = editorState.fabricCanvas.toObject(['paramBindings', 'conditionalStyles']);
 			const res = await fetch(`/api/canvas/${originCanvasId}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
@@ -662,7 +662,7 @@
 	 * present and silently dropped. */
 	function collectBoundParams(): BoundParamInfo[] {
 		if (!editorState.fabricCanvas) return [];
-		const json = editorState.fabricCanvas.toObject(['paramBindings']) as {
+		const json = editorState.fabricCanvas.toObject(['paramBindings', 'conditionalStyles']) as {
 			objects?: FabricLikeObject[];
 		};
 		const seen: Record<string, BoundParamInfo> = Object.create(null);

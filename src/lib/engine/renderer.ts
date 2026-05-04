@@ -11,6 +11,7 @@ import { drawWrappedText } from './text.js';
 import { loadRemoteImage, loadImagesParallel } from './images.js';
 import { initDefaultFonts } from './fonts.js';
 import { applyFormat } from './formatters.js';
+import { applyConditionalStyles } from './conditionals.js';
 
 /** Properties that should remain numeric when bound to URL params */
 const NUMERIC_PROPS = new Set([
@@ -227,8 +228,11 @@ export async function render(
 	// Ensure fonts are registered
 	initDefaultFonts();
 
-	// Merge parameters into template
+	// Merge parameters into template, then apply conditional style rules
+	// against the same params (so rules see the URL value, not the
+	// post-formatter display string).
 	const mergedJson = mergeParams(template.templateJson, params);
+	applyConditionalStyles(mergedJson.objects, params);
 
 	// Collect and fetch remote images in parallel
 	const imageUrls = collectImageUrls(mergedJson.objects);
