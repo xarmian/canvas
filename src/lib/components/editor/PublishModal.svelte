@@ -66,12 +66,38 @@
 		if (open && published && !paramRowsLoaded) {
 			void loadParamSchema();
 		}
+		if (open && published && versionToken === null) {
+			void loadVersionToken();
+		}
 		if (!open) {
 			// Reset so reopening for a different canvas refetches.
 			paramRowsLoaded = false;
 			paramRows = [];
+			versionToken = null;
 		}
 	});
+
+	/** `_v` token from /api/canvas/[id]/version — when present, embed
+	 *  snippets emit immutable-cache URLs. Loads asynchronously; before it
+	 *  arrives the snippets fall back to bare URLs (still correct, just
+	 *  short-cache). */
+	let versionToken = $state<string | null>(null);
+	async function loadVersionToken(): Promise<void> {
+		try {
+			const res = await fetch(`/api/canvas/${canvasId}/version`);
+			if (!res.ok) return;
+			const data = (await res.json()) as { token: string };
+			versionToken = data.token;
+		} catch {
+			// Best-effort — falling back to short-cache URLs is fine.
+		}
+	}
+
+	/** Tab state for the embed-snippet section. */
+	type EmbedTab = 'html' | 'markdown' | 'og' | 'url' | 'curl';
+	let activeTab = $state<EmbedTab>('html');
+	/** Whether to include example query parameter values in the snippets. */
+	let includeParams = $state(false);
 
 	async function loadParamSchema(): Promise<void> {
 		try {
@@ -135,6 +161,58 @@
 
 	let exampleImageUrl = $derived(`${imageUrl}${buildQueryString()}`);
 	let exampleShareUrl = $derived(`${shareUrl}${buildQueryString()}`);
+
+	/**
+	 * Compose the image URL for embed snippets. Includes the `_v` token
+	 * when loaded (immutable cache) and the example query string when the
+	 * "With params" toggle is on.
+	 */
+	let snippetImageUrl = $derived.by(() => {
+		const query = includeParams ? buildQueryString() : '';
+		const versionPart = versionToken ? `${query ? '&' : '?'}_v=${versionToken}` : '';
+		return `${imageUrl}${query}${versionPart}`;
+	});
+
+	/** HTML <img> snippet — width/height attrs help avoid layout shift on
+	 *  the consuming page. */
+	let htmlSnippet = $derived(
+		`<img src="${snippetImageUrl}" alt="Canvas: ${slug}" width="1200" height="630" />`
+	);
+
+	/** Markdown image snippet. Markdown doesn't support width/height, so
+	 *  we don't try. */
+	let markdownSnippet = $derived(`![Canvas: ${slug}](${snippetImageUrl})`);
+
+	/** OG meta tags. og:image:width and og:image:height help OG previews
+	 *  size correctly without each crawler having to pre-fetch and inspect
+	 *  the binary. */
+	let ogSnippet = $derived(
+		[
+			`<meta property="og:image" content="${snippetImageUrl}" />`,
+			`<meta property="og:image:width" content="1200" />`,
+			`<meta property="og:image:height" content="630" />`
+		].join('\n')
+	);
+
+	/** Plain URL — the snippet is the URL itself. Useful for pasting into
+	 *  Notion / Slack / email where the rich-link unfurler renders the
+	 *  image inline. */
+	let urlSnippet = $derived(snippetImageUrl);
+
+	/** cURL snippet — ready to drop into a terminal, downloads the PNG. */
+	let curlSnippet = $derived(curlFor(snippetImageUrl));
+
+	let activeSnippet = $derived(
+		activeTab === 'html'
+			? htmlSnippet
+			: activeTab === 'markdown'
+				? markdownSnippet
+				: activeTab === 'og'
+					? ogSnippet
+					: activeTab === 'curl'
+						? curlSnippet
+						: urlSnippet
+	);
 
 	// Shell-safe cURL: single-quote the URL (and escape any single quotes
 	// inside it). Public GET, no auth needed, so this is the whole story.
@@ -238,6 +316,69 @@
 				<code>?title=Hello</code>.
 			</p>
 		</div>
+
+		<section class="embed-section" data-testid="embed-section">
+			<header class="embed-header">
+				<h3 class="embed-title">Embed</h3>
+				{#if bindings.length > 0}
+					<label class="embed-toggle">
+						<input type="checkbox" bind:checked={includeParams} />
+						<span>Include example params</span>
+					</label>
+				{/if}
+			</header>
+
+			<div class="embed-tabs" role="tablist" aria-label="Embed format">
+				{#each [{ id: 'html', label: 'HTML' }, { id: 'markdown', label: 'Markdown' }, { id: 'og', label: 'OG meta' }, { id: 'url', label: 'URL' }, { id: 'curl', label: 'cURL' }] as tab (tab.id)}
+					<button
+						type="button"
+						role="tab"
+						class="embed-tab"
+						class:active={activeTab === tab.id}
+						aria-selected={activeTab === tab.id}
+						data-testid="embed-tab-{tab.id}"
+						onclick={() => (activeTab = tab.id as EmbedTab)}
+					>
+						{tab.label}
+					</button>
+				{/each}
+			</div>
+
+			<div class="embed-snippet">
+				<textarea
+					readonly
+					value={activeSnippet}
+					rows={activeTab === 'og' ? 3 : 2}
+					data-testid="embed-snippet"
+					aria-label="Embed snippet"
+				></textarea>
+				<div class="embed-actions">
+					<button
+						type="button"
+						class="btn btn-copy"
+						data-testid="embed-copy"
+						onclick={() => copy(activeSnippet, 'Snippet')}
+					>
+						Copy
+					</button>
+					<a href={snippetImageUrl} target="_blank" rel="noopener noreferrer" class="btn btn-link">
+						Open in new tab
+					</a>
+				</div>
+			</div>
+
+			{#if !versionToken}
+				<p class="embed-help">
+					Snippets use the short-window cache. Once the
+					<code>_v</code> token loads, future snippets opt into 1-year immutable caching.
+				</p>
+			{:else}
+				<p class="embed-help">
+					Snippets use the <code>_v</code> content-versioned URL — CDNs cache it for 1 year and any canvas
+					edit produces a fresh token.
+				</p>
+			{/if}
+		</section>
 
 		<section class="docs-section">
 			<h3 class="docs-title">Using this template</h3>
@@ -475,6 +616,107 @@
 
 	.btn-copy:hover {
 		background: #333;
+	}
+
+	.btn-link {
+		background: none;
+		color: #2563eb;
+		text-decoration: none;
+		padding: 0.5rem 0.75rem;
+		font-size: 0.85rem;
+	}
+
+	.btn-link:hover {
+		text-decoration: underline;
+	}
+
+	.embed-section {
+		margin-top: 1.25rem;
+		padding-top: 1rem;
+		border-top: 1px solid #eee;
+	}
+
+	.embed-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 0.5rem;
+	}
+
+	.embed-title {
+		margin: 0;
+		font-size: 0.95rem;
+		font-weight: 600;
+		color: #111;
+	}
+
+	.embed-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.8rem;
+		color: #475569;
+	}
+
+	.embed-tabs {
+		display: flex;
+		gap: 0.25rem;
+		flex-wrap: wrap;
+		margin-bottom: 0.5rem;
+		border-bottom: 1px solid #e5e7eb;
+	}
+
+	.embed-tab {
+		padding: 0.4rem 0.75rem;
+		background: none;
+		border: none;
+		border-bottom: 2px solid transparent;
+		color: #64748b;
+		font: inherit;
+		font-size: 0.85rem;
+		cursor: pointer;
+	}
+
+	.embed-tab:hover {
+		color: #0f172a;
+	}
+
+	.embed-tab.active {
+		color: #0f172a;
+		border-bottom-color: #0f172a;
+		font-weight: 600;
+	}
+
+	.embed-snippet textarea {
+		width: 100%;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.8rem;
+		padding: 0.5rem;
+		border: 1px solid #d1d5db;
+		border-radius: 4px;
+		background: #f8fafc;
+		color: #0f172a;
+		resize: vertical;
+	}
+
+	.embed-actions {
+		display: flex;
+		gap: 0.4rem;
+		margin-top: 0.4rem;
+		align-items: center;
+	}
+
+	.embed-help {
+		margin: 0.6rem 0 0;
+		font-size: 0.75rem;
+		color: #94a3b8;
+	}
+
+	.embed-help code {
+		background: #f1f5f9;
+		padding: 0.05rem 0.3rem;
+		border-radius: 3px;
+		font-size: 0.75rem;
 	}
 
 	.docs-section {
