@@ -253,6 +253,10 @@ export async function render(
 	options: RenderOptions = {}
 ): Promise<Buffer> {
 	const { format = 'png', quality = 85 } = options;
+	// Clamp dpr into [1, 3]. The route layer also clamps before reaching
+	// here, but enforcing in the engine keeps any future caller (CLI,
+	// background job) safe by default.
+	const dpr = Math.max(1, Math.min(3, Math.floor(options.dpr ?? 1)));
 
 	// Ensure fonts are registered
 	initDefaultFonts();
@@ -267,9 +271,12 @@ export async function render(
 	const imageUrls = collectImageUrls(mergedJson.objects);
 	const imageMap = await loadImagesParallel(imageUrls);
 
-	// Create canvas
-	const canvas = createCanvas(template.width, template.height);
+	// Create canvas at the scaled physical size, then `ctx.scale(dpr, dpr)`
+	// so all draw calls use the original logical coordinates. This keeps
+	// drawObject + applyConditionalStyles oblivious to dpr.
+	const canvas = createCanvas(template.width * dpr, template.height * dpr);
 	const ctx = canvas.getContext('2d');
+	if (dpr !== 1) ctx.scale(dpr, dpr);
 
 	// Draw background
 	if (template.backgroundType === 'color') {
@@ -307,6 +314,12 @@ async function encodeImage(
 			return pipeline.jpeg({ quality }).toBuffer();
 		case 'webp':
 			return pipeline.webp({ quality }).toBuffer();
+		case 'avif':
+			// AVIF: smaller files than WebP at equivalent visual quality.
+			// effort:4 is Sharp's default — encode is ~2-4x slower than
+			// WebP at the same quality, but worth it for the smaller
+			// payload. The render cache amortizes the encode cost.
+			return pipeline.avif({ quality }).toBuffer();
 		case 'png':
 		default:
 			return pipeline.png().toBuffer();

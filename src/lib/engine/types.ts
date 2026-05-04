@@ -1,12 +1,24 @@
 /** Supported output image formats */
-export type OutputFormat = 'png' | 'jpeg' | 'webp';
+export type OutputFormat = 'png' | 'jpeg' | 'webp' | 'avif';
 
 /** Options for rendering a canvas template */
 export interface RenderOptions {
 	/** Output format (default: 'png') */
 	format?: OutputFormat;
-	/** JPEG/WebP quality 1-100 (default: 85) */
+	/** JPEG/WebP/AVIF quality 1-100 (default: 85) */
 	quality?: number;
+	/**
+	 * Device pixel ratio multiplier for retina output. The render canvas
+	 * is sized at `template.width * dpr × template.height * dpr` and
+	 * everything (fonts, image draws, coordinates) scales linearly via
+	 * `ctx.scale(dpr, dpr)`. The consumer typically sizes the rendered
+	 * <img> via CSS at the original logical width, so a 2x render shows
+	 * crisp on a hi-DPI screen.
+	 *
+	 * Cap at 3 — past that the file size grows quadratically and the
+	 * visible quality benefit plateaus. Values <= 0 fall back to 1.
+	 */
+	dpr?: number;
 }
 
 /** A parameter binding on a layer property */

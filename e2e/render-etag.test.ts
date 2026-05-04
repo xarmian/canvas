@@ -54,10 +54,7 @@ test.describe('Render: ETag + content-versioned URLs', () => {
 		const updatedAtMs = new Date(updatedAt).getTime().toString();
 		// fontSetVersion is empty for a fresh user. Token = sha256(`${ms}|`)
 		// truncated to 12 hex chars.
-		const versionToken = createHash('sha256')
-			.update(`${updatedAtMs}|`)
-			.digest('hex')
-			.slice(0, 12);
+		const versionToken = createHash('sha256').update(`${updatedAtMs}|`).digest('hex').slice(0, 12);
 
 		// Stale `_v` falls back to short cache-control.
 		const stale = await ctx.get(imageUrl + (imageUrl.includes('?') ? '&' : '?') + '_v=999');
