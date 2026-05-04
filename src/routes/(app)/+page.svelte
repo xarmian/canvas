@@ -11,6 +11,28 @@
 
 	let confirmingDelete = $state<{ id: string; name: string } | null>(null);
 	let creatingExample = $state(false);
+	/** Track per-canvas duplicate state — keyed by source id so a slow
+	 *  network on one card doesn't visibly disable every Duplicate button. */
+	let duplicatingId = $state<string | null>(null);
+
+	async function duplicateCanvas(id: string, name: string) {
+		if (duplicatingId !== null) return;
+		duplicatingId = id;
+		try {
+			const res = await fetch(`/api/canvas/${id}/duplicate`, { method: 'POST' });
+			if (!res.ok) {
+				toast.error(`Could not duplicate "${name}". Try again.`);
+				return;
+			}
+			const created = (await res.json()) as { id: string };
+			// Land in the new canvas's editor — matches the "create new" flow.
+			await goto(`/canvas/${created.id}/edit`);
+		} catch {
+			toast.error(`Could not duplicate "${name}". Check your connection and try again.`);
+		} finally {
+			duplicatingId = null;
+		}
+	}
 
 	async function tryExample() {
 		if (creatingExample) return;
@@ -131,6 +153,14 @@
 					</div>
 					<div class="card-actions">
 						<a href="/canvas/{canvas.id}/edit" class="btn btn-edit">Edit</a>
+						<button
+							class="btn btn-duplicate"
+							data-testid="card-duplicate"
+							disabled={duplicatingId !== null}
+							onclick={() => duplicateCanvas(canvas.id, canvas.name)}
+						>
+							{duplicatingId === canvas.id ? 'Duplicating…' : 'Duplicate'}
+						</button>
 						<button class="btn btn-delete" onclick={() => requestDelete(canvas.id, canvas.name)}>
 							Delete
 						</button>
@@ -205,6 +235,22 @@
 	.btn-edit {
 		background: #f0f0f0;
 		color: #111;
+	}
+
+	.btn-duplicate {
+		background: none;
+		color: #334155;
+		border: 1px solid #d1d5db;
+		padding: 0.5rem 0.75rem;
+	}
+
+	.btn-duplicate:hover {
+		background: #f1f5f9;
+	}
+
+	.btn-duplicate:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
 	}
 
 	.btn-delete {
