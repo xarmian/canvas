@@ -206,10 +206,15 @@
 		/* Reserve space for the actual canvas dimensions BEFORE Fabric
 		   mounts. Without this, the wrapper is sized to the bare
 		   <canvas> default (300x150), the skeleton is clipped, and
-		   layout jumps when Fabric sets real dimensions on mount. */
+		   layout jumps when Fabric sets real dimensions on mount.
+		   No max-width — the parent .canvas-container in the editor
+		   route is overflow:auto and is supposed to scroll for large
+		   canvases (1080x1080, custom up to 4096). Capping width here
+		   would shrink the wrapper, leave Fabric's inner canvas full
+		   size, and (with overflow:hidden below) clip rather than
+		   scroll. */
 		width: var(--canvas-w);
 		height: var(--canvas-h);
-		max-width: 100%;
 		border: 1px solid #e2e8f0;
 		border-radius: 4px;
 		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
