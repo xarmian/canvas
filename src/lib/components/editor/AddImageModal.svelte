@@ -24,9 +24,20 @@
 		 *  from the library). The modal hands the URL back so the editor can
 		 *  insert it via `addImageFromUrl`. */
 		onSelect: (url: string) => void;
+		/** Notifies the parent when an upload starts/finishes inside the
+		 *  modal. The editor mirrors this onto its own `isUploading` so the
+		 *  beforeunload + beforeNavigate guards still fire while a modal
+		 *  upload is in flight — without this hook the guard would let the
+		 *  user navigate away mid-upload. */
+		onUploadingChange?: (uploading: boolean) => void;
 	}
 
-	let { open, acceptedTypes, maxBytes, onClose, onSelect }: Props = $props();
+	let { open, acceptedTypes, maxBytes, onClose, onSelect, onUploadingChange }: Props = $props();
+
+	function setUploading(value: boolean) {
+		isUploading = value;
+		onUploadingChange?.(value);
+	}
 
 	type Tab = 'upload' | 'library';
 	let activeTab = $state<Tab>('upload');
@@ -57,11 +68,12 @@
 				// swallowed; the tab will retry on click.
 				void loadLibrary(0).catch(() => {});
 			}
-		} else {
-			// Modal closed — clear transient upload state but keep the
-			// loaded library cached so the next open is snappy.
-			isUploading = false;
 		}
+		// Note: we don't clear isUploading on close — an in-flight upload
+		// is still in flight, and the parent's hasPendingWork() must keep
+		// returning true until the fetch settles. The setUploading(false)
+		// call in uploadAndSelect's finally block is the only authoritative
+		// signal that the upload is done.
 	});
 
 	async function loadLibrary(offset: number) {
@@ -115,7 +127,7 @@
 			return;
 		}
 
-		isUploading = true;
+		setUploading(true);
 		const uploadingId = toast.info(`Uploading "${file.name}"…`, { duration: 0 });
 		try {
 			const formData = new FormData();
@@ -161,7 +173,7 @@
 			toast.error('Upload failed. Check your connection.');
 		} finally {
 			toast.dismiss(uploadingId);
-			isUploading = false;
+			setUploading(false);
 		}
 	}
 

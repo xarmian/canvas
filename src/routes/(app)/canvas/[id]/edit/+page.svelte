@@ -1023,6 +1023,7 @@
 		maxBytes={MAX_IMAGE_BYTES}
 		onClose={() => (showAddImageModal = false)}
 		onSelect={onAddImageModalSelect}
+		onUploadingChange={(v) => (isUploading = v)}
 	/>
 
 	<PublishModal
