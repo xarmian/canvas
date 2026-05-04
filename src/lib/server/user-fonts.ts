@@ -60,7 +60,12 @@ export function deriveFontFamily(filename: string): string {
 		.replace(/[^A-Za-z0-9_-]/g, '_')
 		.replace(/_+/g, '_')
 		.replace(/^_+|_+$/g, '');
-	return sanitized || stem;
+	// CSS-safe fallback when sanitization strips everything (e.g. a
+	// file literally named `!!!.ttf` or `( ).ttf`). Returning the raw
+	// stem here would reintroduce the unquoted parens/dots that
+	// ctx.font's shorthand parser bails on. The asset-id prefix in
+	// scopedFontFamily disambiguates this generic name across uploads.
+	return sanitized || 'UserFont';
 }
 
 /**
