@@ -151,20 +151,35 @@ export function checkRateLimit(ip: string): {
 }
 
 /**
- * Pull the first-hop IP from request headers. SvelteKit + node adapter
- * surface `x-forwarded-for` when behind a proxy; fall back to the raw
- * remote address. Trust-proxy is implicit here — for v0.4 we assume the
- * VPS reverse proxy (nginx/Caddy) is the only thing in front of us. A
- * future config knob can switch this off.
+ * Pull the client IP from the request.
+ *
+ * X-Forwarded-For / X-Real-IP are HONORED ONLY when TRUST_PROXY is
+ * explicitly truthy in the environment. Default is the strict posture:
+ * trust only `getClientAddress()` (the raw socket peer). Without this,
+ * a curl loop could rotate spoofed XFF values to bypass per-IP rate
+ * limits — every spoofed value gets its own bucket.
+ *
+ * Operators running behind a real reverse proxy (nginx, Caddy,
+ * Cloudflare) set TRUST_PROXY=1 so the limit applies to the actual
+ * client and not the proxy's loopback IP.
  */
+const TRUST_PROXY = (() => {
+	const v = process.env.TRUST_PROXY;
+	if (!v) return false;
+	const lower = v.trim().toLowerCase();
+	return lower === '1' || lower === 'true' || lower === 'yes' || lower === 'on';
+})();
+
 export function getClientIp(headers: Headers, fallback: string | null): string {
-	const xff = headers.get('x-forwarded-for');
-	if (xff) {
-		const first = xff.split(',')[0]?.trim();
-		if (first) return first;
+	if (TRUST_PROXY) {
+		const xff = headers.get('x-forwarded-for');
+		if (xff) {
+			const first = xff.split(',')[0]?.trim();
+			if (first) return first;
+		}
+		const real = headers.get('x-real-ip');
+		if (real) return real.trim();
 	}
-	const real = headers.get('x-real-ip');
-	if (real) return real.trim();
 	return fallback ?? 'unknown';
 }
 

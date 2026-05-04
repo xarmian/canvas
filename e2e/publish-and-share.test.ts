@@ -17,7 +17,8 @@ import {
 	addTextLayer,
 	addImageLayer,
 	bindParam,
-	publish
+	publish,
+	uniqueXffHeaders
 } from './helpers';
 
 const TINY_PNG = Buffer.from(
@@ -83,7 +84,7 @@ test('full happy path — signup to share URL, bot meta, image render', async ({
 	expect(html).toContain('twitter:card');
 
 	// 8. Image URL renders a PNG with the bound param applied.
-	const imgRes = await request.get(`${imageUrl}?title=Custom`);
+	const imgRes = await request.get(`${imageUrl}?title=Custom`, { headers: uniqueXffHeaders() });
 	expect(imgRes.status()).toBe(200);
 	expect(imgRes.headers()['content-type']).toBe('image/png');
 	expect((await imgRes.body()).length).toBeGreaterThan(100);

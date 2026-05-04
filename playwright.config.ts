@@ -55,7 +55,12 @@ export default defineConfig({
 			// the throttle test itself uses 127.0.0.1 directly.
 			RENDER_RATE_PER_MIN: '5',
 			RENDER_CONCURRENCY: '2',
-			RENDER_QUEUE_TIMEOUT_MS: '500'
+			RENDER_QUEUE_TIMEOUT_MS: '500',
+			// E2E runs against a fake reverse-proxy posture so the
+			// per-test XFF headers actually drive separate rate-limit
+			// buckets. Production-mode default (TRUST_PROXY unset) ignores
+			// XFF to prevent spoofing.
+			TRUST_PROXY: '1'
 		}
 	},
 	use: {
