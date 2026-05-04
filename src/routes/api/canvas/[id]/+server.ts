@@ -81,10 +81,24 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 		error(400, 'No fields to update');
 	}
 
-	const [updated] =
+	// If only params (no canvas columns) are being patched, force an
+	// updatedAt bump anyway. Without this, a publish-modal schema edit
+	// (mark a param required, change its type) leaves canvases.updatedAt
+	// untouched — and the public render route's `_v` token derives from
+	// updatedAt. A user who copied a 1-year immutable embed URL would
+	// keep getting CDN-cached 200s even after validation got stricter.
+	// Bumping updatedAt forces a new token, so old immutable URLs become
+	// "stale `_v`" and downgrade to short-cache (the safe default).
+	const finalUpdates =
 		Object.keys(updates).length > 0
-			? await db.update(canvases).set(updates).where(eq(canvases.id, params.id)).returning()
-			: [canvas];
+			? updates
+			: paramUpdates.length > 0
+				? { updatedAt: new Date() }
+				: null;
+
+	const [updated] = finalUpdates
+		? await db.update(canvases).set(finalUpdates).where(eq(canvases.id, params.id)).returning()
+		: [canvas];
 
 	// Re-derive canvas_params from the new templateJson (if templateJson
 	// was part of this PATCH) so bindings/conditional rules are reflected
