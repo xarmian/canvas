@@ -467,6 +467,20 @@
 			if (!mod) return;
 			const key = e.key.toLowerCase();
 			// (Cmd/Ctrl+S handled above the typing-target guard.)
+			// Undo / redo. Mirrors the canvas-wrapper-level handler so the
+			// shortcuts still work when focus has drifted to the toolbar
+			// or any other non-typing element. Cheatsheet documents these,
+			// so they must be reachable globally.
+			if (key === 'z' && e.shiftKey) {
+				e.preventDefault();
+				editorRef?.redoAction();
+				return;
+			}
+			if (key === 'z' && !e.shiftKey) {
+				e.preventDefault();
+				editorRef?.undoAction();
+				return;
+			}
 			// Duplicate (Cmd/Ctrl+D).
 			if (key === 'd' && !e.shiftKey) {
 				e.preventDefault();
