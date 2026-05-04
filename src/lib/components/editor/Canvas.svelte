@@ -24,6 +24,12 @@
 
 	let canvasEl: HTMLCanvasElement;
 	let wrapperEl: HTMLDivElement;
+	/** Flips true once the Fabric canvas constructor returns and the
+	 * wrapper has been wired into the editor state. The skeleton
+	 * overlay below uses this — pre-mount the canvas region is blank
+	 * white for ~1-2s while Fabric loads, which feels like a broken
+	 * page. The skeleton at least signals "loading" during that gap. */
+	let fabricMounted = $state(false);
 
 	onMount(() => {
 		const canvas = new Canvas(canvasEl, {
@@ -35,6 +41,7 @@
 
 		setFabricCanvas(canvas);
 		resetHistory();
+		fabricMounted = true;
 
 		// Register snapshot callback so markDirty() from any component records history
 		setSnapshotCallback(() => {
@@ -77,6 +84,7 @@
 			canvas.dispose();
 			setFabricCanvas(null);
 			resetHistory();
+			fabricMounted = false;
 		};
 	});
 
@@ -176,12 +184,18 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div
 	class="canvas-wrapper"
+	style="--canvas-w:{width}px; --canvas-h:{height}px"
 	bind:this={wrapperEl}
 	tabindex="0"
 	role="application"
 	aria-label="Visual editor canvas"
 	onkeydown={handleKeydown}
 >
+	{#if !fabricMounted}
+		<!-- Skeleton overlay during the 1-2s Fabric init window. Sized to
+			the canvas so layout doesn't jump when fabric mounts. -->
+		<div class="canvas-skeleton" role="status" aria-live="polite" aria-label="Loading editor"></div>
+	{/if}
 	<canvas bind:this={canvasEl}></canvas>
 </div>
 
@@ -189,11 +203,49 @@
 	.canvas-wrapper {
 		position: relative;
 		display: inline-block;
+		/* Reserve space for the actual canvas dimensions BEFORE Fabric
+		   mounts. Without this, the wrapper is sized to the bare
+		   <canvas> default (300x150), the skeleton is clipped, and
+		   layout jumps when Fabric sets real dimensions on mount.
+		   No max-width — the parent .canvas-container in the editor
+		   route is overflow:auto and is supposed to scroll for large
+		   canvases (1080x1080, custom up to 4096). Capping width here
+		   would shrink the wrapper, leave Fabric's inner canvas full
+		   size, and (with overflow:hidden below) clip rather than
+		   scroll. */
+		width: var(--canvas-w);
+		height: var(--canvas-h);
 		border: 1px solid #e2e8f0;
 		border-radius: 4px;
 		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 		overflow: hidden;
 		outline: none;
+	}
+
+	.canvas-skeleton {
+		position: absolute;
+		inset: 0;
+		background: linear-gradient(90deg, #f1f5f9 0%, #e2e8f0 40%, #f1f5f9 80%, #f1f5f9 100%);
+		background-size: 200% 100%;
+		animation: canvas-shimmer 1.4s ease-in-out infinite;
+		pointer-events: none;
+		z-index: 1;
+	}
+
+	@keyframes canvas-shimmer {
+		0% {
+			background-position: 100% 0;
+		}
+		100% {
+			background-position: -100% 0;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.canvas-skeleton {
+			animation: none;
+			background: #e2e8f0;
+		}
 	}
 
 	.canvas-wrapper:focus-within {
