@@ -18,7 +18,20 @@ function parseFormat(file: string): { format: OutputFormat; contentType: string 
 	if (file === 'image.jpg' || file === 'image.jpeg')
 		return { format: 'jpeg', contentType: 'image/jpeg' };
 	if (file === 'image.webp') return { format: 'webp', contentType: 'image/webp' };
+	if (file === 'image.avif') return { format: 'avif', contentType: 'image/avif' };
 	return null;
+}
+
+/** Parse `?dpr=` into a clamped integer in [1,3]. Defaults to 1 (the
+ *  legacy single-resolution render). Anything outside [1,3] or non-
+ *  numeric falls back to 1 so a malformed URL doesn't 400 — the cap
+ *  also guards against accidental ?dpr=10 DoS via memory pressure. */
+function parseDpr(raw: string | null): number {
+	if (!raw) return 1;
+	const n = Number(raw);
+	if (!Number.isFinite(n)) return 1;
+	const clamped = Math.max(1, Math.min(3, Math.floor(n)));
+	return clamped;
 }
 
 /** Replace any user-namespaced fontFamily that's no longer in the live
@@ -57,11 +70,14 @@ function cacheKey(
 	version: string,
 	params: Record<string, string>,
 	format: string,
-	fontSetVersion: string
+	fontSetVersion: string,
+	dpr: number
 ): string {
 	const sortedEntries = Object.entries(params).sort(([a], [b]) => a.localeCompare(b));
 	const serializedParams = JSON.stringify(sortedEntries);
-	return `${slug}:${version}:${format}:fonts=${fontSetVersion}:${serializedParams}`;
+	// dpr is part of the key — `?dpr=2` and `?dpr=3` produce different
+	// pixel data and must NOT collide with the dpr=1 cache entry.
+	return `${slug}:${version}:${format}:fonts=${fontSetVersion}:dpr=${dpr}:${serializedParams}`;
 }
 
 /**
@@ -139,7 +155,7 @@ export const GET: RequestHandler = async ({ params, url, request }) => {
 	// Parse format from filename
 	const formatInfo = parseFormat(params.file);
 	if (!formatInfo) {
-		error(404, 'Not found. Use image.png, image.jpg, or image.webp');
+		error(404, 'Not found. Use image.png, image.jpg, image.webp, or image.avif');
 	}
 
 	// Load canvas by slug (must be published)
@@ -156,13 +172,19 @@ export const GET: RequestHandler = async ({ params, url, request }) => {
 	// collide with a real render param.
 	const queryParams: Record<string, string> = {};
 	let requestedVersion: string | null = null;
+	let dprParam: string | null = null;
 	for (const [key, value] of url.searchParams) {
 		if (key === '_v') {
 			requestedVersion = value;
 			continue;
 		}
+		if (key === 'dpr') {
+			dprParam = value;
+			continue;
+		}
 		queryParams[key] = value;
 	}
+	const dpr = parseDpr(dprParam);
 
 	// Validation runs BEFORE cache lookup so a previously-cached URL
 	// can't bypass newly-enforced required/type constraints. (The
@@ -216,7 +238,7 @@ export const GET: RequestHandler = async ({ params, url, request }) => {
 	// the cache. updatedAt is auto-refreshed on every PATCH via Drizzle
 	// $onUpdate.
 	const version = canvas.updatedAt.toISOString();
-	const key = cacheKey(params.slug, version, queryParams, formatInfo.format, fontSetVersion);
+	const key = cacheKey(params.slug, version, queryParams, formatInfo.format, fontSetVersion, dpr);
 	const etag = buildEtag(key);
 	const updatedAtMs = canvas.updatedAt.getTime().toString();
 	const lastModified = canvas.updatedAt.toUTCString();
@@ -298,7 +320,8 @@ export const GET: RequestHandler = async ({ params, url, request }) => {
 	// Render
 	const buffer = await render(template, queryParams, {
 		format: formatInfo.format,
-		quality: 85
+		quality: 85,
+		dpr
 	});
 
 	// Persist to filesystem cache. The FsRenderCache handles LRU
