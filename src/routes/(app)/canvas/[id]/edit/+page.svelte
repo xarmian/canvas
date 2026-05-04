@@ -638,6 +638,7 @@
 
 	type FabricLikeObject = {
 		paramBindings?: Record<string, { param?: string; default?: string }>;
+		conditionalStyles?: Array<{ when?: { param?: string } }>;
 		type?: string;
 	};
 
@@ -668,19 +669,34 @@
 		const seen: Record<string, BoundParamInfo> = Object.create(null);
 		for (const obj of json.objects ?? []) {
 			const bindings = obj.paramBindings;
-			if (!bindings) continue;
-			for (const [property, binding] of Object.entries(bindings)) {
-				// Use the raw stored name — the renderer does params[binding.param]
-				// verbatim, so trimming here would show the user a preview URL
-				// that doesn't match runtime lookup for names with whitespace.
-				// We still skip empty strings since the runtime ignores those.
-				const name = binding?.param;
+			if (bindings) {
+				for (const [property, binding] of Object.entries(bindings)) {
+					// Use the raw stored name — the renderer does params[binding.param]
+					// verbatim, so trimming here would show the user a preview URL
+					// that doesn't match runtime lookup for names with whitespace.
+					// We still skip empty strings since the runtime ignores those.
+					const name = binding?.param;
+					if (!name) continue;
+					if (Object.hasOwn(seen, name)) continue;
+					seen[name] = {
+						name,
+						default: binding?.default ?? '',
+						sampleLabel: propLabel(property)
+					};
+				}
+			}
+			// Conditional rules can introduce params that aren't bound to any
+			// property — without surfacing them here the preview's Test
+			// Parameters panel can't drive a rule from the UI. First-seen
+			// wins; bindings on the same name take precedence above.
+			for (const rule of obj.conditionalStyles ?? []) {
+				const name = rule.when?.param;
 				if (!name) continue;
 				if (Object.hasOwn(seen, name)) continue;
 				seen[name] = {
 					name,
-					default: binding?.default ?? '',
-					sampleLabel: propLabel(property)
+					default: '',
+					sampleLabel: 'Conditional rule'
 				};
 			}
 		}

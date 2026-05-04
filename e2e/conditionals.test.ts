@@ -8,7 +8,7 @@
  * prove the rule actually fired.
  */
 import { test, expect } from '@playwright/test';
-import { signupAndLogin, createCanvas, gotoEditor, addTextLayer, bindParam } from './helpers';
+import { signupAndLogin, createCanvas, gotoEditor, addTextLayer } from './helpers';
 
 test('conditional fill flips on numeric comparison', async ({ page }) => {
 	const request = page.request;
@@ -16,18 +16,18 @@ test('conditional fill flips on numeric comparison', async ({ page }) => {
 	const canvas = await createCanvas(page, { name: 'Cond fill', preset: 'OG Image' });
 	await gotoEditor(page, canvas.id);
 
-	await addTextLayer(page, '+0.0%');
-	// Bind text to ?change= so the layer's content tracks the param. The
-	// rule itself just keys off the same param name; the binding default
-	// keeps the editor preview readable while building rules.
-	await bindParam(page, 'Text Content', 'change', '0');
+	// Constant text — DO NOT bind it to ?change. If we did, different param
+	// values would change rendered text bytes regardless of the rule, and
+	// the test would pass even with conditional styling never running.
+	// Codex caught this in TASK-50 review.
+	await addTextLayer(page, 'Constant content');
 
-	// Open Conditional Styles → add rule "when change < 0 then fill = #dc2626".
+	// Add rule "when change < 0 then fill = #dc2626" against an unbound
+	// param. The collectBoundParams collector now surfaces this in the
+	// preview's Test Parameters panel even though it's not a property
+	// binding (TASK-50 follow-up).
 	await page.getByRole('button', { name: /Conditional Styles/ }).click();
 	await page.getByRole('button', { name: '+ Add rule' }).click();
-
-	// First-rule fields are uniquely accessible by their aria-labels
-	// (set to "Rule 1 …" by the property panel).
 	await page.getByLabel('Rule 1 parameter name').fill('change');
 	await page.getByLabel('Rule 1 operator').selectOption('<');
 	await page.getByLabel('Rule 1 comparison value').fill('0');
@@ -36,9 +36,17 @@ test('conditional fill flips on numeric comparison', async ({ page }) => {
 	await page.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 10_000 });
 
-	// Render twice: once with change<0 (rule fires), once with change>0
-	// (rule doesn't fire). Rendered byte buffers must differ — same
-	// template, different effective fill.
+	// Verify the rule actually persisted to the templateJson — protects
+	// the test from a no-op where save silently dropped conditionalStyles.
+	const apiRes = await request.get(`/api/canvas/${canvas.id}`);
+	const apiCanvas = (await apiRes.json()) as {
+		templateJson: { objects: { conditionalStyles?: unknown[] }[] };
+	};
+	const obj = apiCanvas.templateJson.objects.find((o) => o.conditionalStyles?.length);
+	expect(obj?.conditionalStyles).toHaveLength(1);
+
+	// Render twice: text is constant, so any byte-difference between
+	// these two responses MUST come from the conditional fill flipping.
 	const negative = await request.get(`/api/canvas/${canvas.id}/preview?change=-12.5`);
 	const positive = await request.get(`/api/canvas/${canvas.id}/preview?change=+12.5`);
 	expect(negative.status()).toBe(200);
