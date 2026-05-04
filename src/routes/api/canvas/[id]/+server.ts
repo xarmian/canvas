@@ -3,6 +3,12 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { canvases } from '$lib/server/db/schema';
 import { eq, and } from 'drizzle-orm';
+import {
+	syncCanvasParams,
+	applyParamUpdates,
+	type ParamSchemaUpdate
+} from '$lib/server/canvas-params';
+import type { FabricCanvasJson } from '$lib/engine';
 
 /** Helper: fetch canvas and verify ownership */
 async function getOwnedCanvas(canvasId: string, userId: string) {
@@ -45,15 +51,30 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 	if (body.width !== undefined) updates.width = body.width;
 	if (body.height !== undefined) updates.height = body.height;
 
-	if (Object.keys(updates).length === 0) {
+	// Optional schema-flag updates from the publish modal: array of
+	// { name, required?, type? }. Skipped names that don't yet exist
+	// in canvas_params; sync below will not pick them up either if
+	// they aren't referenced by templateJson.
+	const paramUpdates: ParamSchemaUpdate[] = Array.isArray(body.params) ? body.params : [];
+
+	if (Object.keys(updates).length === 0 && paramUpdates.length === 0) {
 		error(400, 'No fields to update');
 	}
 
-	const [updated] = await db
-		.update(canvases)
-		.set(updates)
-		.where(eq(canvases.id, params.id))
-		.returning();
+	const [updated] =
+		Object.keys(updates).length > 0
+			? await db.update(canvases).set(updates).where(eq(canvases.id, params.id)).returning()
+			: [canvas];
+
+	// Re-derive canvas_params from the new templateJson (if templateJson
+	// was part of this PATCH) so bindings/conditional rules are reflected
+	// in the validation table. Then apply user-driven flag updates.
+	if (body.templateJson !== undefined) {
+		await syncCanvasParams(db, params.id, body.templateJson as FabricCanvasJson);
+	}
+	if (paramUpdates.length > 0) {
+		await applyParamUpdates(db, params.id, paramUpdates);
+	}
 
 	return json(updated);
 };

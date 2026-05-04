@@ -50,6 +50,57 @@
 
 	let busy = $state(false);
 
+	// --- Per-param schema flags (TASK-52) ---
+	// Loaded lazily when the modal opens for a published canvas. Edits are
+	// persisted via PATCH /api/canvas/[id] with { params: [...] } so we
+	// don't need a separate roundtrip per row.
+	interface ParamRow {
+		name: string;
+		type: string;
+		required: boolean;
+	}
+	let paramRows = $state<ParamRow[]>([]);
+	let paramRowsLoaded = $state(false);
+
+	$effect(() => {
+		if (open && published && !paramRowsLoaded) {
+			void loadParamSchema();
+		}
+		if (!open) {
+			// Reset so reopening for a different canvas refetches.
+			paramRowsLoaded = false;
+			paramRows = [];
+		}
+	});
+
+	async function loadParamSchema(): Promise<void> {
+		try {
+			const res = await fetch(`/api/canvas/${canvasId}/params`);
+			if (!res.ok) return;
+			const rows = (await res.json()) as ParamRow[];
+			paramRows = rows;
+			paramRowsLoaded = true;
+		} catch {
+			// Silent — schema row is best-effort metadata, not critical to
+			// the publish flow itself. The user can retry by reopening.
+		}
+	}
+
+	async function persistParamFlags(name: string, patch: Partial<ParamRow>): Promise<void> {
+		// Optimistic in-memory update first so the UI feels responsive,
+		// then PATCH the canvas with a single-row params array.
+		paramRows = paramRows.map((r) => (r.name === name ? { ...r, ...patch } : r));
+		try {
+			await fetch(`/api/canvas/${canvasId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ params: [{ name, ...patch }] })
+			});
+		} catch {
+			toast.error(`Couldn't save schema flag for ${name}.`);
+		}
+	}
+
 	// Build URLs from the current origin so the copy values match the user's deployment.
 	let origin = $derived(typeof window !== 'undefined' ? window.location.origin : '');
 	let shareUrl = $derived(`${origin}/c/${slug}`);
@@ -215,14 +266,38 @@
 				<div class="docs-table">
 					<div class="docs-row docs-row-header">
 						<span>Parameter</span>
-						<span>Source</span>
 						<span>Default</span>
+						<span>Type</span>
+						<span>Required</span>
 					</div>
 					{#each bindings as b (b.name)}
+						{@const row = paramRows.find((r) => r.name === b.name)}
 						<div class="docs-row">
-							<code class="docs-param-name">{b.name}</code>
-							<span class="docs-param-source">{b.sourceLabel}</span>
+							<code class="docs-param-name" title={b.sourceLabel}>{b.name}</code>
 							<code class="docs-param-default">{b.default || '—'}</code>
+							<select
+								class="docs-type-select"
+								value={row?.type ?? 'text'}
+								disabled={!row}
+								aria-label="Type for {b.name}"
+								onchange={(e) => persistParamFlags(b.name, { type: e.currentTarget.value })}
+							>
+								<option value="text">text</option>
+								<option value="number">number</option>
+								<option value="url">url</option>
+								<option value="boolean">boolean</option>
+								<option value="date">date</option>
+							</select>
+							<label class="docs-required-cell">
+								<input
+									type="checkbox"
+									checked={row?.required ?? false}
+									disabled={!row}
+									aria-label="Required {b.name}"
+									onchange={(e) => persistParamFlags(b.name, { required: e.currentTarget.checked })}
+								/>
+								<span>required</span>
+							</label>
 						</div>
 					{/each}
 				</div>
@@ -451,11 +526,31 @@
 
 	.docs-row {
 		display: grid;
-		grid-template-columns: 1.1fr 1fr 1fr;
+		grid-template-columns: 1fr 1fr 0.9fr 0.8fr;
 		gap: 0.5rem;
 		padding: 0.45rem 0.6rem;
 		border-bottom: 1px solid #f1f5f9;
 		align-items: center;
+	}
+
+	.docs-type-select {
+		font-size: 0.75rem;
+		padding: 0.15rem 0.3rem;
+		border: 1px solid #d1d5db;
+		border-radius: 4px;
+		background: #fff;
+	}
+
+	.docs-required-cell {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		font-size: 0.7rem;
+		color: #4b5563;
+	}
+
+	.docs-required-cell input[type='checkbox'] {
+		margin: 0;
 	}
 
 	.docs-row:last-child {
@@ -480,9 +575,5 @@
 		border-radius: 3px;
 		overflow-x: auto;
 		white-space: nowrap;
-	}
-
-	.docs-param-source {
-		color: #4b5563;
 	}
 </style>

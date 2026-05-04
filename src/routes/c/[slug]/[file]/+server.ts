@@ -5,6 +5,7 @@ import { canvases, canvasParams } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { render } from '$lib/engine';
 import type { CanvasTemplate, FabricCanvasJson, OutputFormat } from '$lib/engine';
+import { validateParams } from '$lib/server/canvas-params';
 
 /** In-memory render cache: URL → { buffer, contentType, timestamp } */
 const renderCache = new Map<string, { buffer: Buffer; contentType: string; timestamp: number }>();
@@ -62,25 +63,31 @@ export const GET: RequestHandler = async ({ params, url }) => {
 		});
 	}
 
-	// Load canvas parameter definitions for validation
+	// Load canvas parameter definitions for validation. validateParams
+	// also applies defaults for missing optionals, so we no longer need
+	// the separate fall-back loop that was here.
 	const paramDefs = await db
 		.select()
 		.from(canvasParams)
 		.where(eq(canvasParams.canvasId, canvas.id));
 
-	// Validate required params
-	for (const def of paramDefs) {
-		if (def.required && !queryParams[def.name]) {
-			error(400, `Missing required parameter: ${def.name}`);
-		}
+	const validation = validateParams(queryParams, paramDefs);
+	if (!validation.ok) {
+		// Return a structured JSON 400 — this surface is consumed by API
+		// integrators, not browsers. error() would emit text/HTML.
+		return new Response(
+			JSON.stringify({
+				error: 'invalid_param',
+				field: validation.field,
+				message: validation.reason
+			}),
+			{
+				status: 400,
+				headers: { 'Content-Type': 'application/json' }
+			}
+		);
 	}
-
-	// Apply defaults for missing optional params
-	for (const def of paramDefs) {
-		if (!queryParams[def.name] && def.defaultValue) {
-			queryParams[def.name] = def.defaultValue;
-		}
-	}
+	Object.assign(queryParams, validation.resolved);
 
 	// Build template
 	const template: CanvasTemplate = {
