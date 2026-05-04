@@ -31,7 +31,9 @@
 					href="/"
 					data-testid="nav-dashboard"
 					aria-current={pathname === '/' ? 'page' : undefined}
-					style="text-decoration: none; color: {pathname === '/' ? '#111' : '#64748b'}; font-weight: {pathname === '/' ? 600 : 400};"
+					style="text-decoration: none; color: {pathname === '/'
+						? '#111'
+						: '#64748b'}; font-weight: {pathname === '/' ? 600 : 400};"
 				>
 					Dashboard
 				</a>
@@ -39,7 +41,9 @@
 					href="/assets"
 					data-testid="nav-assets"
 					aria-current={pathname.startsWith('/assets') ? 'page' : undefined}
-					style="text-decoration: none; color: {pathname.startsWith('/assets') ? '#111' : '#64748b'}; font-weight: {pathname.startsWith('/assets') ? 600 : 400};"
+					style="text-decoration: none; color: {pathname.startsWith('/assets')
+						? '#111'
+						: '#64748b'}; font-weight: {pathname.startsWith('/assets') ? 600 : 400};"
 				>
 					Assets
 				</a>

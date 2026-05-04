@@ -4,12 +4,7 @@
  * library to insert without re-uploading.
  */
 import { test, expect } from '@playwright/test';
-import {
-	signupAndLogin,
-	createCanvas,
-	gotoEditor,
-	addImageLayer
-} from './helpers';
+import { signupAndLogin, createCanvas, gotoEditor, addImageLayer } from './helpers';
 
 /** Smallest legal PNG — 1x1 transparent pixel. Inlined so the test
  *  doesn't need a fixture file on disk. */

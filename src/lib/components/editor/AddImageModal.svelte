@@ -448,8 +448,7 @@
 		width: 100%;
 		aspect-ratio: 1 / 1;
 		object-fit: contain;
-		background:
-			repeating-conic-gradient(#f3f4f6 0% 25%, #fff 0% 50%) 50% / 12px 12px;
+		background: repeating-conic-gradient(#f3f4f6 0% 25%, #fff 0% 50%) 50% / 12px 12px;
 		border-radius: 4px;
 	}
 

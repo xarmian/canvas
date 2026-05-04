@@ -137,7 +137,24 @@
 		await uploadOne(file);
 	}
 
+	const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'] as const;
+	const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
 	async function uploadOne(file: File) {
+		// Client-side type guard. The /assets page is image-only — fonts
+		// will get their own surface in TASK-63. Without this guard, a
+		// user could override the picker's accept filter (or paste a
+		// font file) and we'd prepend it to the image grid as a broken
+		// thumbnail until reload.
+		if (!ACCEPTED_IMAGE_TYPES.includes(file.type as (typeof ACCEPTED_IMAGE_TYPES)[number])) {
+			toast.error(`"${file.name}" is not a supported image. Use PNG, JPEG, WebP, or SVG.`);
+			return;
+		}
+		if (file.size > MAX_IMAGE_BYTES) {
+			toast.error(`"${file.name}" is larger than 5MB. Please use a smaller image.`);
+			return;
+		}
+
 		isUploading = true;
 		const uploadingId = toast.info(`Uploading "${file.name}"…`, { duration: 0 });
 		try {
@@ -195,16 +212,11 @@
 		<div>
 			<h1>Assets</h1>
 			<p class="subtitle">
-				{total === 0 ? 'No images yet' : `${total} image${total === 1 ? '' : 's'}`} · Reuse uploaded
-				images across canvases.
+				{total === 0 ? 'No images yet' : `${total} image${total === 1 ? '' : 's'}`} · Reuse uploaded images
+				across canvases.
 			</p>
 		</div>
-		<button
-			type="button"
-			class="btn btn-primary"
-			onclick={openUploadPicker}
-			disabled={isUploading}
-		>
+		<button type="button" class="btn btn-primary" onclick={openUploadPicker} disabled={isUploading}>
 			<Upload size={14} aria-hidden="true" />
 			<span>{isUploading ? 'Uploading…' : 'Upload image'}</span>
 		</button>
@@ -220,10 +232,13 @@
 	{#if items.length === 0}
 		<div class="empty">
 			<h2>No assets yet</h2>
-			<p>
-				Upload an image here, or add one from the editor toolbar — both go to the same library.
-			</p>
-			<button type="button" class="btn btn-primary" onclick={openUploadPicker} disabled={isUploading}>
+			<p>Upload an image here, or add one from the editor toolbar — both go to the same library.</p>
+			<button
+				type="button"
+				class="btn btn-primary"
+				onclick={openUploadPicker}
+				disabled={isUploading}
+			>
 				{isUploading ? 'Uploading…' : 'Upload your first image'}
 			</button>
 		</div>
@@ -320,7 +335,9 @@
 		text-decoration: none;
 		border: 1px solid transparent;
 		cursor: pointer;
-		transition: opacity 0.15s, background 0.15s;
+		transition:
+			opacity 0.15s,
+			background 0.15s;
 		font-family: inherit;
 	}
 
@@ -396,8 +413,7 @@
 
 	.thumb {
 		aspect-ratio: 1 / 1;
-		background:
-			repeating-conic-gradient(#f3f4f6 0% 25%, #fff 0% 50%) 50% / 16px 16px;
+		background: repeating-conic-gradient(#f3f4f6 0% 25%, #fff 0% 50%) 50% / 16px 16px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
