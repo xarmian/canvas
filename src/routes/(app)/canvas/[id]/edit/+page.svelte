@@ -404,6 +404,11 @@
 	// shortcuts silent while the user is typing in the panel.
 	$effect(() => {
 		function onKey(e: KeyboardEvent) {
+			// If a closer handler (e.g. Canvas.svelte's wrapper-level
+			// keydown for delete/undo/redo) already handled this keystroke
+			// and called preventDefault, don't re-fire. Without this, with
+			// canvas-wrapper focus a single Cmd+Z would undo twice.
+			if (e.defaultPrevented) return;
 			// Cmd/Ctrl+S handled BEFORE the typing-target / cheatsheet
 			// guards so it always preempts the browser's "Save page"
 			// dialog — even while the user is typing in a panel input or
