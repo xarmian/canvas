@@ -49,12 +49,12 @@
 		...rest
 	}: Props = $props();
 
-	// Honor the visual `invalid` prop, but fall back to the consumer's
-	// native `aria-invalid` if they passed one (e.g. `aria-invalid="grammar"`
-	// or a string-based ARIA value the visual prop can't express). Without
-	// the destructure, the explicit attribute below would clobber the
-	// spread (Codex round 3 P2).
-	const ariaInvalid = $derived(invalid ? 'true' : (consumerAriaInvalid ?? undefined));
+	// Consumer's explicit `aria-invalid` wins so a value like
+	// `"grammar"` or `"spelling"` isn't reduced to plain `"true"` when
+	// the visual `invalid` prop is also set. The visual prop only
+	// supplies `aria-invalid="true"` as a default for callers who use
+	// the simple boolean-style API (Codex round 3 P2 + round 4 P2).
+	const ariaInvalid = $derived(consumerAriaInvalid ?? (invalid ? 'true' : undefined));
 
 	// Stable SSR-safe id used as a fallback when the consumer didn't pass
 	// `id`. Without this, `<Input invalid errorMessage="Required" />` would

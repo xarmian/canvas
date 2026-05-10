@@ -33,11 +33,11 @@
 		...rest
 	}: Props = $props();
 
-	// Mirror Input.svelte: honor the visual `invalid` prop but fall back
-	// to the consumer's native `aria-invalid` so passing a string-valued
-	// ARIA state (e.g. `"grammar"`) isn't clobbered by the explicit
-	// attribute below the spread (Codex round 3 P2).
-	const ariaInvalid = $derived(invalid ? 'true' : (consumerAriaInvalid ?? undefined));
+	// Mirror Input.svelte: consumer's explicit `aria-invalid` wins
+	// (e.g. `"grammar"`/`"spelling"`); the visual `invalid` prop only
+	// supplies `"true"` as the default for callers using the boolean
+	// API (Codex round 3 P2 + round 4 P2).
+	const ariaInvalid = $derived(consumerAriaInvalid ?? (invalid ? 'true' : undefined));
 
 	// Stable SSR-safe id used as a fallback when the consumer didn't pass
 	// `id`. Mirrors Input.svelte (Codex round 1 P2).
