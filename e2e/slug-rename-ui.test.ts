@@ -315,6 +315,61 @@ test('slug rename: closing modal with invalid draft resets state on reopen (Code
 	await expect(page.getByTestId('slug-server-error')).toBeHidden();
 });
 
+test('slug rename: late success does not overwrite a freshly-typed draft (Codex round 13 P2)', async ({
+	page
+}) => {
+	// User submits "A", closes, reopens, types "B" (a new draft).
+	// Then "A" lands on the server — onSlugChange fires, parent
+	// canvasSlug becomes "A", slug prop changes. The $effect must
+	// NOT overwrite the user's "B" draft with "A" (Codex round 13
+	// P2). The user's in-progress edit is preserved.
+	await signupAndLogin(page);
+	const canvas = await createCanvas(page, { name: 'Draft preserve', preset: 'OG Image' });
+	await gotoEditor(page, canvas.id);
+	await addTextLayer(page, 'placeholder');
+	await publish(page);
+
+	const slugA = `draft-a-${Date.now()}`;
+	const slugB = `draft-b-${Date.now()}`;
+
+	// Throttle the FIRST PATCH (slug A) so we can switch sessions
+	// and start typing slug B before A returns.
+	let patches = 0;
+	await page.route(`**/api/canvas/${canvas.id}`, async (route) => {
+		if (route.request().method() === 'PATCH') {
+			patches++;
+			if (patches === 1) await new Promise((r) => setTimeout(r, 1500));
+		}
+		await route.continue();
+	});
+	const firstPatch = page.waitForResponse(
+		(r) => r.request().method() === 'PATCH' && r.url().includes(`/api/canvas/${canvas.id}`)
+	);
+
+	const slugInput = page.getByTestId('slug-input');
+	await slugInput.fill(slugA);
+	await slugInput.press('Enter');
+
+	// Close, reopen — fresh UI session.
+	await page.keyboard.press('Escape');
+	await expect(page.getByTestId('sharing-section')).toBeHidden();
+	await page.getByTestId('toolbar-publish').click();
+	await expect(page.getByTestId('sharing-section')).toBeVisible();
+
+	// Start typing slug B.
+	await page.getByTestId('slug-input').fill(slugB);
+
+	// First PATCH (slug A) returns 200. onSlugChange propagates
+	// to the parent's canvasSlug. The slug prop into the modal
+	// flips to A, which would normally reset slugDraft.
+	await firstPatch;
+
+	// User's in-progress draft must remain "slugB", not get
+	// silently rewritten to "slugA".
+	await expect(page.getByTestId('slug-input')).toHaveValue(slugB);
+	await page.unroute(`**/api/canvas/${canvas.id}`);
+});
+
 test('slug rename: late 409 with close-then-quick-reopen still does not surface (Codex round 12 P2)', async ({
 	page
 }) => {
@@ -341,6 +396,13 @@ test('slug rename: late 409 with close-then-quick-reopen still does not surface 
 		await route.continue();
 	});
 
+	// Capture the throttled PATCH response so we can wait on the
+	// actual completion rather than a fixed timeout (Codex round 13
+	// P3 — fixed waits flake on slow runs).
+	const collidingPatch = page.waitForResponse(
+		(r) => r.request().method() === 'PATCH' && r.url().includes(`/api/canvas/${canvas.id}`)
+	);
+
 	const slugInput = page.getByTestId('slug-input');
 	await slugInput.fill(taken);
 	await slugInput.press('Enter');
@@ -351,8 +413,9 @@ test('slug rename: late 409 with close-then-quick-reopen still does not surface 
 	await page.getByTestId('toolbar-publish').click();
 	await expect(page.getByTestId('sharing-section')).toBeVisible();
 
-	// Wait for the late 409 to land.
-	await page.waitForTimeout(1800);
+	// Wait for the actual late 409 to land.
+	const res = await collidingPatch;
+	expect(res.status()).toBe(409);
 
 	// The late 409 must not have repopulated the new session's UI.
 	await expect(page.getByTestId('slug-server-error')).toBeHidden();
@@ -381,6 +444,10 @@ test('slug rename: late 409 after close does not surface on reopen (Codex round 
 		await route.continue();
 	});
 
+	const collidingPatch = page.waitForResponse(
+		(r) => r.request().method() === 'PATCH' && r.url().includes(`/api/canvas/${canvas.id}`)
+	);
+
 	const slugInput = page.getByTestId('slug-input');
 	await slugInput.fill(taken);
 	await slugInput.press('Enter');
@@ -388,8 +455,9 @@ test('slug rename: late 409 after close does not surface on reopen (Codex round 
 	await page.keyboard.press('Escape');
 	await expect(page.getByTestId('sharing-section')).toBeHidden();
 
-	// Wait long enough for the late 409 to land.
-	await page.waitForTimeout(1800);
+	// Wait for the actual late 409 to land (Codex round 13 P3).
+	const res = await collidingPatch;
+	expect(res.status()).toBe(409);
 
 	// Reopen the modal. The stale 409 must NOT have repopulated
 	// slugServerError / slugSuggestion.

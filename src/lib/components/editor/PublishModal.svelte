@@ -373,10 +373,16 @@
 	$effect(() => {
 		// Reset the draft whenever the canonical slug changes (parent
 		// pushed a new value after rename, or modal reopened on a
-		// different canvas). Also clear `slugBusy` so a stale rename
-		// from the previous canvas doesn't leave the input disabled
-		// on the new one (Codex round 2 P2).
-		slugDraft = slug;
+		// different canvas). Preserve any in-progress edit the user
+		// has typed — a late `onSlugChange` from the previous session
+		// would otherwise silently overwrite their new draft (Codex
+		// round 13 P2). The dirty check (`!slugDirty`) is read via
+		// untrack so this effect only re-fires on `slug` changes, not
+		// every keystroke.
+		const userHasDraft = untrack(() => slugDraft.trim() !== '' && slugDraft !== slug);
+		if (!userHasDraft) {
+			slugDraft = slug;
+		}
 		slugSuggestion = null;
 		slugServerError = null;
 		slugBusy = false;
