@@ -86,6 +86,16 @@ test.describe('Crypto LP-card template — render permutations', () => {
 		// rebuild a fresh query string per permutation below.
 		const baseImageUrl = imageUrl.split('?')[0];
 
+		// Helper to drop a key from SAMPLE_PARAMS — used to build the
+		// "omitted" controls that pin down what a missing-logo render
+		// should look like (the layer's authored data-URL src, no
+		// fallback path involved).
+		const omit = (key: keyof typeof SAMPLE_PARAMS) => {
+			const { [key]: _drop, ...rest } = SAMPLE_PARAMS;
+			void _drop;
+			return rest;
+		};
+
 		const permutations: Record<string, Record<string, string>> = {
 			positive: SAMPLE_PARAMS,
 			negative: {
@@ -98,16 +108,20 @@ test.describe('Crypto LP-card template — render permutations', () => {
 			},
 			zeroGain: { ...SAMPLE_PARAMS, gainPercent: '0', pl: '0' },
 			edgeRange: { ...SAMPLE_PARAMS, range: 'edge', rangeLabel: 'Edge' },
+			// Broken URL — primary fetch fails, fallbackSrc fires.
 			missingTokenALogo: { ...SAMPLE_PARAMS, tokenALogoUrl: 'https://invalid.test/missing.png' },
 			missingTokenBLogo: { ...SAMPLE_PARAMS, tokenBLogoUrl: 'https://invalid.test/missing.png' },
-			missingGainParam: (() => {
-				// Drop gainPercent so the layer's authored default ("0.125")
-				// is used. This exercises the binding-default fall-through
-				// (TASK-43+) under the LP card's conditional-fill rule.
-				const { gainPercent: _omit, ...rest } = SAMPLE_PARAMS;
-				void _omit;
-				return rest;
-			})()
+			// Param omitted — binding skips with no default, so the
+			// layer's authored data-URL src is rendered directly. Used
+			// as the deterministic baseline that `missingTokenA/B` must
+			// match (proves the fallback path executed, not the gray
+			// failed-image placeholder).
+			omittedTokenALogo: omit('tokenALogoUrl'),
+			omittedTokenBLogo: omit('tokenBLogoUrl'),
+			// Drop gainPercent so the layer's binding default ("0.125")
+			// is used — exercises the binding-default fall-through and
+			// the canvas-wide defaults index used by conditional rules.
+			missingGainParam: omit('gainPercent')
 		};
 
 		const hashes = new Map<string, string>();
@@ -138,25 +152,36 @@ test.describe('Crypto LP-card template — render permutations', () => {
 			expect(hashes.get(label), `${label} differs from positive`).not.toBe(positive);
 		}
 
-		// Missing-logo permutations: the broken URL fails to fetch, the
-		// per-layer fallbackSrc kicks in, and the rendered image differs
-		// from `positive` (which used the explicit blue/purple data URLs).
-		// Asserting `not.toBe(positive)` proves the fallbackSrc path
-		// reached drawImageObject — without that path, the image would
-		// be identical (because the URL is the only changed param) or
-		// would render the gray placeholder (which produces yet another
-		// distinct hash). Either way: differing hash is the right gate.
-		for (const label of ['missingTokenALogo', 'missingTokenBLogo'] as const) {
-			expect(hashes.get(label), `${label} differs from positive`).not.toBe(positive);
-		}
-		// And the two missing-logo cases differ from each other because
-		// the fallback lands in different on-canvas positions (logo A vs
-		// logo B). Catches a regression where the renderer draws the
-		// fallback at a fixed coordinate regardless of which layer failed.
+		// Missing-logo permutations: a broken URL must fall through to
+		// `fallbackSrc` (TASK-86), NOT to the gray failed-image
+		// placeholder. Compare against the deterministic control where
+		// the param is omitted and the layer's authored data-URL src
+		// renders directly. If `missingTokenALogo` matches
+		// `omittedTokenALogo` byte-for-byte, the fallback path
+		// executed and produced the same final image as the authored
+		// src would have. If the renderer instead drew the gray
+		// placeholder, the hashes would differ — and this assertion
+		// would fail loudly.
 		expect(
 			hashes.get('missingTokenALogo'),
-			'missing-A and missing-B fallbacks render in different positions'
-		).not.toBe(hashes.get('missingTokenBLogo'));
+			'broken tokenA URL falls through to fallbackSrc, not the gray placeholder'
+		).toBe(hashes.get('omittedTokenALogo'));
+		expect(
+			hashes.get('missingTokenBLogo'),
+			'broken tokenB URL falls through to fallbackSrc, not the gray placeholder'
+		).toBe(hashes.get('omittedTokenBLogo'));
+		// Belt-and-braces: the controls themselves differ from `positive`,
+		// proving that overriding the logo URL changes the rendered output.
+		// Without this, the fallback assertion above could pass trivially
+		// if every render somehow produced the same bytes.
+		expect(
+			hashes.get('omittedTokenALogo'),
+			'omitting tokenALogoUrl changes the render vs the explicit blue circle'
+		).not.toBe(positive);
+		expect(
+			hashes.get('omittedTokenBLogo'),
+			'omitting tokenBLogoUrl changes the render vs the explicit purple circle'
+		).not.toBe(positive);
 
 		// Missing-param permutation: the layer's binding default ('0.125')
 		// is identical to the explicit positive-case value, so the
