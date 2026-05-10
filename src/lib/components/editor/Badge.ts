@@ -128,14 +128,30 @@ export class Badge extends FabricObject {
 	 *  required because badge visual props extend beyond Fabric's standard
 	 *  `cacheProperties` list (the static `cacheProperties` extension
 	 *  catches most cases, but mutations through `setOptions` / direct
-	 *  property assignment skip that path). */
+	 *  property assignment skip that path).
+	 *
+	 *  `_maybeLoadIcon` runs bounds/dirty/render through `_refreshLayout`
+	 *  on every state change (including the icon-load failure path), so
+	 *  we leave that to it instead of calling `_syncBounds` here — calling
+	 *  both would double-measure on every set() and could see a stale
+	 *  `_iconEl` (which `_maybeLoadIcon` is about to clear). */
 	set(key: string | Record<string, AnyOptions>, value?: AnyOptions): this {
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const result = super.set(key as any, value as any);
-		this._syncBounds();
 		this._maybeLoadIcon();
-		this.dirty = true;
+		this._refreshLayout();
 		return result;
+	}
+
+	/** One-stop refresh: re-measure bounds, mark Fabric's cache dirty so
+	 *  the object's cached bitmap repaints, and request a canvas render
+	 *  if we're attached to one. Used by every code path that mutates
+	 *  visual or layout state (set, icon load success, icon load failure,
+	 *  initial construction). */
+	_refreshLayout(): void {
+		this._syncBounds();
+		this.dirty = true;
+		this.canvas?.requestRenderAll();
 	}
 
 	/** Recompute width/height from the label + icon + padding. Width and
@@ -171,18 +187,14 @@ export class Badge extends FabricObject {
 		if (url === this._iconUrl) return;
 		this._iconUrl = url;
 		this._iconEl = null;
-		if (!url) {
-			this._syncBounds();
-			this.canvas?.requestRenderAll();
-			return;
-		}
-		// asset://{id} URLs need a server-side resolver (TASK-89 / TASK-116).
-		// In the editor we don't currently translate them, so they just fail
-		// to load — the badge renders without the icon and the server fills
-		// the icon in on render.
-		if (url.startsWith('asset://')) {
-			this._syncBounds();
-			this.canvas?.requestRenderAll();
+		// Empty / asset:// URLs short-circuit: no remote load to attempt.
+		// asset://{id} needs the server-side resolver (TASK-89 / TASK-116);
+		// the editor doesn't translate it yet, so the badge renders without
+		// the icon and the server fills it in on render.
+		if (!url || url.startsWith('asset://')) {
+			this._iconLoading = false;
+			// Caller (`set`) runs `_refreshLayout` after this returns, so the
+			// just-cleared `_iconEl` propagates to bounds + cache + render.
 			return;
 		}
 		this._iconLoading = true;
@@ -194,13 +206,17 @@ export class Badge extends FabricObject {
 				if (this._iconUrl !== url) return;
 				this._iconEl = img;
 				this._iconLoading = false;
-				this._syncBounds();
-				this.canvas?.requestRenderAll();
+				this._refreshLayout();
 			})
 			.catch(() => {
+				// Failure path must mirror success path: bounds collapse to
+				// "no icon", cache invalidates, and the canvas re-renders.
+				// Without this the editor keeps a too-wide pill with blank
+				// icon space while the server render recomputes without it.
 				if (this._iconUrl !== url) return;
 				this._iconEl = null;
 				this._iconLoading = false;
+				this._refreshLayout();
 			});
 	}
 
