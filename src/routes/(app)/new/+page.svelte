@@ -439,13 +439,22 @@
 	}
 
 	@media (max-width: 520px) {
+		/*
+		 * Drop the size column on narrow screens. The description
+		 * already conveys the platform target, and removing the
+		 * trailing size keeps the row's grid track count (3) in
+		 * sync with the rendered children (radio, thumb, text) so
+		 * auto-placement doesn't push items onto a second row.
+		 * Custom rows already had no size column, so they're
+		 * unaffected.
+		 */
 		.preset {
-			grid-template-columns: auto 1fr auto;
+			grid-template-columns: auto auto 1fr;
 			gap: 0.5rem;
 		}
 
-		.preset .thumb-wrap {
-			grid-row: span 1;
+		.preset-size {
+			display: none;
 		}
 	}
 </style>
