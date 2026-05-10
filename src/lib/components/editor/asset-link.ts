@@ -38,6 +38,20 @@ const ASSET_URL_PROTOCOL = 'asset://';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * 1×1 transparent PNG used as a fallback URL for unresolved `asset://`
+ * references at canvas-load time. Fabric's loadFromJSON aborts entire
+ * canvas hydration if any image src fails to load — leaving the user
+ * with a blank canvas after `canvas.clear()` and a "blank canvas"
+ * snapshot in undo history. By substituting an instantly-loadable
+ * data URL we keep hydration alive: the layer renders invisibly in
+ * the editor (its assetId stamp remains, so the save serializer
+ * still emits the original `asset://{id}`), and the user can use the
+ * Unlink + repick affordance to repair the reference. No data loss.
+ */
+const UNRESOLVED_ASSET_PLACEHOLDER =
+	'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=';
+
 /** Per-field mapping from the URL prop to the assetId stamp prop. The
  *  server-side resolver walks the same set; keep both in sync. */
 export const ASSET_LINK_FIELDS = [
@@ -98,9 +112,13 @@ export function collectAssetIdsFromTemplate(json: AssetCanvasJson): string[] {
  * Mutates the input — callers feed in their own deep clone.
  *
  * Unresolved ids (rejected by ownership filter, deleted, malformed)
- * stay as `asset://` strings. Fabric will then fail to load them and
- * the layer renders blank in the editor — same outcome as the server
- * resolver, intentionally consistent so the failure mode is predictable.
+ * fall back to a 1×1 transparent placeholder URL so Fabric's
+ * `loadFromJSON` doesn't abort the entire canvas hydration when one
+ * image fails. The id stamp is still applied, so the save serializer
+ * re-emits the original `asset://{id}` and no persisted data is lost.
+ * Result: the broken layer renders invisibly in the editor, the user
+ * can repair it via the Unlink-and-repick flow, and a save before any
+ * fix preserves the original asset reference.
  */
 export function rewriteAssetRefsForEditor(
 	json: AssetCanvasJson,
@@ -111,8 +129,7 @@ export function rewriteAssetRefsForEditor(
 			const id = parseAssetId(obj[urlProp]);
 			if (!id) continue;
 			const url = idToUrl.get(id);
-			if (!url) continue;
-			obj[urlProp] = url;
+			obj[urlProp] = url ?? UNRESOLVED_ASSET_PLACEHOLDER;
 			obj[idProp] = id;
 		}
 	}
