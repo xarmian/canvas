@@ -1088,7 +1088,16 @@
 					</div>
 					{@render bindEditor('top')}
 
-					<div class="field-row bind-row">
+					<!-- Width / height bindings are NOT exposed for badge layers
+						because the renderer's `applyBadgeLayouts` recomputes
+						`obj.width` / `obj.height` from the label + icon layout
+						AFTER `mergeParams` runs, silently overwriting any URL-
+						bound value. Showing the ⚡ here would let the user wire
+						a binding that looks valid in the editor but has zero
+						effect at render. The manual W/H input is still shown
+						(informational — the auto-sized bounds), just without
+						the bind affordance. -->
+					<div class="field-row" class:bind-row={!isBadge}>
 						<label class="field-label" for="prop-w">Width</label>
 						<input
 							id="prop-w"
@@ -1097,11 +1106,11 @@
 							value={Math.round(objWidth)}
 							onchange={(e) => setDimension('width', Number(e.currentTarget.value))}
 						/>
-						{@render bindBtn('width')}
+						{#if !isBadge}{@render bindBtn('width')}{/if}
 					</div>
-					{@render bindEditor('width')}
+					{#if !isBadge}{@render bindEditor('width')}{/if}
 
-					<div class="field-row bind-row">
+					<div class="field-row" class:bind-row={!isBadge}>
 						<label class="field-label" for="prop-h">Height</label>
 						<input
 							id="prop-h"
@@ -1110,9 +1119,9 @@
 							value={Math.round(objHeight)}
 							onchange={(e) => setDimension('height', Number(e.currentTarget.value))}
 						/>
-						{@render bindBtn('height')}
+						{#if !isBadge}{@render bindBtn('height')}{/if}
 					</div>
-					{@render bindEditor('height')}
+					{#if !isBadge}{@render bindEditor('height')}{/if}
 
 					<div class="field-row">
 						<label class="field-label" for="prop-angle">Rotation</label>
