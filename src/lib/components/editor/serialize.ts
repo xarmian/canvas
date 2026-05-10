@@ -18,6 +18,13 @@ export const EDITOR_TO_OBJECT_PROPS = [
 	'conditionalStyles',
 	// Per-image fallback URL (TASK-86).
 	'fallbackSrc',
+	// Asset-library link tracking (TASK-116). Each *AssetId stamps which
+	// library row a URL field came from so save-time translation can
+	// rewrite the URL back to `asset://{id}` without re-walking the DB.
+	// Survives autosave / undo / redo / duplicate.
+	'srcAssetId',
+	'fallbackSrcAssetId',
+	'iconImageAssetId',
 	// Badge primitive fields (TASK-87).
 	'label',
 	'bg',
