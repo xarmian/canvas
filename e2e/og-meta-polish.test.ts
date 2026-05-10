@@ -72,6 +72,35 @@ test('PublishModal OG embed snippet includes og:url + og:image:type', async ({ p
 	expect(value).toContain('og:url');
 });
 
+test('OG embed snippet og:url tracks the og:image params toggle (Codex round 1)', async ({
+	page
+}) => {
+	await signupAndLogin(page);
+	const canvas = await createCanvas(page, { name: 'OG og:url match', preset: 'OG Image' });
+	await gotoEditor(page, canvas.id);
+	const { addTextLayer, bindParam } = await import('./helpers');
+	await addTextLayer(page, 'placeholder');
+	await bindParam(page, 'Text Content', 'title', 'Hello');
+	await publish(page);
+
+	await page.getByTestId('embed-tab-og').click();
+	const snippet = page.getByTestId('embed-snippet');
+
+	// Without the params toggle, og:url is the bare share URL.
+	const noParams = await snippet.inputValue();
+	const bareOgUrl = (noParams.match(/og:url"\s+content="([^"]+)"/) || [])[1];
+	expect(bareOgUrl).toBeDefined();
+	expect(bareOgUrl).not.toContain('?title=');
+
+	// Flip the toggle. og:image picks up `?title=Hello`; og:url should
+	// match so a parameterized variant canonicalizes to itself.
+	await page.getByLabel('Include example params').check();
+	await expect.poll(async () => snippet.inputValue()).toContain('?title=Hello');
+	const withParams = await snippet.inputValue();
+	const paramedOgUrl = (withParams.match(/og:url"\s+content="([^"]+)"/) || [])[1];
+	expect(paramedOgUrl).toContain('?title=Hello');
+});
+
 test('Test-on-social buttons link to the right validators with the share URL', async ({ page }) => {
 	await signupAndLogin(page);
 	const canvas = await createCanvas(page, { name: 'Validators', preset: 'OG Image' });

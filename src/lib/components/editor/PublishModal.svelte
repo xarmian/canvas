@@ -377,6 +377,13 @@
 	 *  bare share URL (no `_v` so a copy/paste of the share URL stays
 	 *  user-friendly). */
 	let ogSnippet = $derived.by(() => {
+		// og:url tracks `og:image`'s parameterization: when the user
+		// toggles "Include example params" we emit the parameterized
+		// share URL too, so a parameterized og:image variant doesn't
+		// canonicalize back to the unparameterized page (Codex round 1
+		// P2). Mirrors the share route's behavior of preserving the
+		// non-reserved query params in og:url.
+		const ogUrl = includeParams ? `${shareUrl}${buildQueryString()}` : shareUrl;
 		const lines = [
 			`<meta property="og:image" content="${snippetImageUrl}" />`,
 			`<meta property="og:image:width" content="1200" />`,
@@ -386,7 +393,7 @@
 		if (snippetImageUrl.startsWith('https://')) {
 			lines.push(`<meta property="og:image:secure_url" content="${snippetImageUrl}" />`);
 		}
-		lines.push(`<meta property="og:url" content="${shareUrl}" />`);
+		lines.push(`<meta property="og:url" content="${ogUrl}" />`);
 		return lines.join('\n');
 	});
 
