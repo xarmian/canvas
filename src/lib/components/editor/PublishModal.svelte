@@ -511,11 +511,13 @@
 				slugServerError = body.message;
 				slugLastFailed = candidate;
 			} else if (res.status === 412) {
-				// Second 412 after a refetch+retry — surface so the user
-				// knows the state is contested and can decide.
+				// Second 412 after a refetch+retry — concurrent
+				// contention, not a problem with the slug value
+				// itself. Don't mark `slugLastFailed` so the user
+				// can press Enter again and retry the same value
+				// once contention subsides (Codex round 10 P2).
 				if (!isLive()) return;
 				slugServerError = 'Canvas is being updated by another tab or device. Please try again.';
-				slugLastFailed = candidate;
 			} else {
 				if (!isLive()) return;
 				slugServerError = `Couldn't rename slug (${res.status}).`;
