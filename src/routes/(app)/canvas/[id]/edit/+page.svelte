@@ -1461,8 +1461,8 @@
 					<div class="preview-params-header">Test Parameters</div>
 					{#if boundParams.length === 0}
 						<p class="preview-params-empty">
-							No dynamic parameters yet. Select a layer and open
-							<strong>Dynamic Parameters</strong> in the property panel to bind one.
+							No dynamic parameters yet. Select a layer in the property panel and click the
+							<strong>⚡</strong> next to any property to bind it to a URL parameter.
 						</p>
 					{:else}
 						<p class="preview-params-hint">
