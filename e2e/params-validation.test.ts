@@ -120,6 +120,37 @@ test.describe('Param validation', () => {
 		expect(body.message).toMatch(/expected a number/i);
 	});
 
+	test('required param missing with default still emits Canvas-Param-Warnings (Codex round 1)', async ({
+		page
+	}) => {
+		// Codex round 1 P2: a required param with a default fell through
+		// silently — the default was applied, no warning header emitted.
+		// The lenient contract says missing-required is observable
+		// regardless of whether a default exists. Anyone debugging
+		// "why does my card render the generic default?" needs the
+		// header to find out.
+		const request = page.request;
+		await signupAndLogin(page);
+		const canvas = await createCanvas(page, { name: 'Required defaulted', preset: 'OG Image' });
+		await gotoEditor(page, canvas.id);
+		await addTextLayer(page, 'placeholder');
+		await bindParam(page, 'Text Content', 'title', 'Hello fallback');
+		const { imageUrl } = await publish(page);
+
+		const requiredBox = page.getByRole('checkbox', { name: 'Required title' });
+		await expect(requiredBox).toBeVisible({ timeout: 10_000 });
+		await requiredBox.check();
+		await expect(async () => {
+			const r = await request.get(`/api/canvas/${canvas.id}/params`);
+			const rows = (await r.json()) as { name: string; required: boolean }[];
+			expect(rows.find((p) => p.name === 'title')?.required).toBe(true);
+		}).toPass({ timeout: 5_000 });
+
+		const lenient = await request.get(imageUrl, { headers: uniqueXffHeaders() });
+		expect(lenient.status()).toBe(200);
+		expect(lenient.headers()['canvas-param-warnings']).toBe('title');
+	});
+
 	test('lenient mode aggregates multiple warnings into a single header', async ({ page }) => {
 		// Two missing required params → one Canvas-Param-Warnings header
 		// listing both, comma-separated. Drive the editor via the

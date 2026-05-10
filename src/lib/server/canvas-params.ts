@@ -216,6 +216,14 @@ export function validateParams(
 		if (!present) {
 			if (hasDefault) {
 				resolved[def.name] = def.defaultValue as string;
+				// Required-but-defaulted still emits a lenient warning:
+				// the creator marked it required because they want user
+				// input, and a silent default fallback would hide that
+				// intent from anyone debugging "why does my card look
+				// generic?". The fallback render still proceeds.
+				if (def.required && lenient) {
+					warnings.push({ field: def.name, reason: 'missing required parameter' });
+				}
 				// Fall through to the type check below — a non-numeric
 				// default on a type=number param should fail just as
 				// loudly as a non-numeric URL value would.
