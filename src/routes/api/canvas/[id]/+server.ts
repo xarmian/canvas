@@ -256,7 +256,7 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 					{
 						error: 'precondition_failed',
 						message: 'Canvas was updated by another request. Refresh and try again.',
-						currentVersion: String(fresh.updatedAt.getTime())
+						currentVersion: String(fresh.lockVersion)
 					},
 					{ status: 412, headers: { ETag: canvasEtag(fresh) } }
 				);
