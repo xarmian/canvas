@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { FabricObject } from 'fabric';
-	import { ChevronRight, AlignLeft, AlignCenter, AlignRight } from '@lucide/svelte';
+	import { ChevronRight, AlignLeft, AlignCenter, AlignRight, Zap } from '@lucide/svelte';
 	import { editorState, markDirty } from './state.svelte.ts';
 	import { fontStore } from '$lib/stores/fonts.svelte';
 
@@ -35,6 +35,10 @@
 	let objHeight = $derived(getObjProp<number>('height', 0) * scaleY);
 	let angle = $derived(getObjProp<number>('angle', 0));
 	let opacity = $derived(getObjProp<number>('opacity', 1));
+	// Visibility (TASK-104) — surfaced as a checkbox in the Position section
+	// so the inline ⚡ Make-dynamic affordance has a concrete row to attach
+	// to. Default true matches Fabric's behavior when `visible` is unset.
+	let visible = $derived(getObjProp<boolean>('visible', true));
 
 	// Text
 	let text = $derived(getObjProp<string>('text', ''));
@@ -80,7 +84,15 @@
 		)
 	);
 
-	let bindingsExpanded = $state(false);
+	// TASK-104: which property's inline bind editor is currently open. Only
+	// one editor is expanded at a time so the panel stays compact. `null`
+	// means no inline editor is open. Reset on selection change so a stale
+	// editor for the previous object doesn't carry over.
+	let bindEditingProp = $state<string | null>(null);
+	$effect(() => {
+		void editorState.selectedObject;
+		bindEditingProp = null;
+	});
 	// Position is collapsed by default because most edits (text content,
 	// fill color, image src) happen far more often than pixel-exact X/Y/W/H
 	// tweaks — users who want that control expand the section on demand.
@@ -237,30 +249,127 @@
 		setProp('paramBindings', current);
 	}
 
-	/** Bindable properties depend on the object type */
-	let bindableProperties = $derived.by(() => {
-		const props: { key: string; label: string; sample: string }[] = [];
-		if (isText) {
-			props.push({ key: 'text', label: 'Text Content', sample: 'Hello' });
+	/** Per-bindable-property metadata, keyed by property name. Drives the
+	 *  inline ⚡ button labels, URL-preview samples, and which properties
+	 *  expose a string formatter dropdown (TASK-104).
+	 *
+	 *  `allowFormat` is true only for genuinely text-typed properties whose
+	 *  values pass through `applyFormat` in the renderer's `mergeParams`
+	 *  pipeline — numeric/boolean props skip the formatter, and URL/color
+	 *  string props (`src`, `fill`, `iconImage`, `fg`) technically run
+	 *  through it but no formatter in the supported set produces sensible
+	 *  output for them, so we hide the dropdown to avoid foot-guns.
+	 *
+	 *  Sample values are chosen so the binding's URL preview renders a
+	 *  realistic example: a number-shaped sample for numeric props so the
+	 *  user immediately sees how the URL would look, a hex string for
+	 *  colors, and a literal `true` for the boolean. */
+	type BindableMeta = { key: string; label: string; sample: string; allowFormat: boolean };
+	const ALL_BINDABLE_META: Record<string, BindableMeta> = {
+		text: { key: 'text', label: 'Text Content', sample: 'Hello', allowFormat: true },
+		fontSize: { key: 'fontSize', label: 'Font Size', sample: '32', allowFormat: false },
+		fill: { key: 'fill', label: 'Fill Color', sample: '#ff0000', allowFormat: false },
+		src: {
+			key: 'src',
+			label: 'Image Source',
+			sample: 'https://example.com/pic.png',
+			allowFormat: false
+		},
+		// Badge (TASK-87) bindable fields. Background uses the shared `fill`
+		// entry above; only the badge-specific properties live here.
+		label: { key: 'label', label: 'Badge Label', sample: 'Live', allowFormat: true },
+		iconImage: {
+			key: 'iconImage',
+			label: 'Badge Icon',
+			sample: 'https://example.com/icon.png',
+			allowFormat: false
+		},
+		fg: { key: 'fg', label: 'Badge Foreground', sample: '#ffffff', allowFormat: false },
+		// Layout / shared. Visibility (TASK-51) accepts lenient boolean
+		// coercion at render time (true/1/yes/on vs false/0/no/off/'').
+		opacity: { key: 'opacity', label: 'Opacity', sample: '0.5', allowFormat: false },
+		visible: { key: 'visible', label: 'Visibility', sample: 'true', allowFormat: false },
+		left: { key: 'left', label: 'Position X', sample: '100', allowFormat: false },
+		top: { key: 'top', label: 'Position Y', sample: '100', allowFormat: false },
+		width: { key: 'width', label: 'Width', sample: '200', allowFormat: false },
+		height: { key: 'height', label: 'Height', sample: '200', allowFormat: false }
+	};
+
+	function metaFor(propKey: string): BindableMeta {
+		return (
+			ALL_BINDABLE_META[propKey] ?? {
+				key: propKey,
+				label: propKey,
+				sample: '',
+				allowFormat: false
+			}
+		);
+	}
+
+	/** Properties that live inside the collapsed Position section. Used by
+	 *  `openBindEditor` so jumping to one of them via the Bound-Parameters
+	 *  summary auto-expands the section — without this, the inline editor
+	 *  opens but the user can't see it because the parent section is
+	 *  collapsed. */
+	function isPositionProp(prop: string): boolean {
+		return (
+			prop === 'left' ||
+			prop === 'top' ||
+			prop === 'width' ||
+			prop === 'height' ||
+			prop === 'opacity' ||
+			prop === 'visible'
+		);
+	}
+
+	/** Toggle the inline bind editor for `propKey`. If the property is not
+	 *  yet bound, creates a stub binding (`{ param: propKey, default: '' }`)
+	 *  via the existing `toggleBinding` helper so the renderer + preview
+	 *  pick it up immediately and the user can rename in-place.
+	 *
+	 *  For `width` / `height` bindings we additionally normalize the
+	 *  layer's `scaleX` / `scaleY` to 1 — Fabric stores both intrinsic
+	 *  dimensions AND scale, and the renderer's `mergeParams` only
+	 *  rewrites the intrinsic value. Without this normalization, a layer
+	 *  resized via the corner handles (scaleX≠1) would render at
+	 *  `paramValue × scaleX` instead of `paramValue`, surprising the
+	 *  user who set a default of "200" and saw a 400px-wide layer. The
+	 *  normalization preserves the current displayed size by stamping
+	 *  it onto the intrinsic field via `setDimension`, mirroring what
+	 *  the manual W/H input already does. */
+	function openBindEditor(propKey: string) {
+		if (bindEditingProp === propKey) {
+			bindEditingProp = null;
+			return;
 		}
-		if (isImage) {
-			props.push({ key: 'src', label: 'Image Source', sample: 'https://example.com/pic.png' });
+		if (!editorState.selectedObject) return;
+		if (!paramBindings[propKey]) {
+			if (propKey === 'width') {
+				setDimension('width', Math.round(objWidth));
+			} else if (propKey === 'height') {
+				setDimension('height', Math.round(objHeight));
+			}
+			toggleBinding(propKey);
 		}
-		// Badge (TASK-87) — the most useful bindings are the label text and
-		// the optional icon URL; the bg comes from `fill` (already in the
-		// list below) and the fg from a dedicated badge binding.
-		if (isBadge) {
-			props.push({ key: 'label', label: 'Badge Label', sample: 'Live' });
-			props.push({ key: 'iconImage', label: 'Badge Icon', sample: 'https://example.com/icon.png' });
-			props.push({ key: 'fg', label: 'Badge Foreground', sample: '#ffffff' });
+		bindEditingProp = propKey;
+		if (isPositionProp(propKey)) {
+			positionExpanded = true;
 		}
-		props.push({ key: 'fill', label: 'Fill Color', sample: '#ff0000' });
-		// Visibility (TASK-51) — boolean prop. Sample is 'true' so the URL
-		// preview shows a working value; the renderer accepts the lenient
-		// boolean coercion (true/1/yes/on vs false/0/no/off/'').
-		props.push({ key: 'visible', label: 'Visibility', sample: 'true' });
-		return props;
-	});
+	}
+
+	function closeBindEditor() {
+		bindEditingProp = null;
+	}
+
+	/** Remove a binding entirely. Closes the inline editor if it was open
+	 *  on the unbound property — leaving it open would render an empty
+	 *  state since the editor reads from `paramBindings[propKey]`. */
+	function unbind(propKey: string) {
+		if (!paramBindings[propKey]) return;
+		const wasEditing = bindEditingProp === propKey;
+		toggleBinding(propKey);
+		if (wasEditing) bindEditingProp = null;
+	}
 
 	let boundCount = $derived(Object.keys(paramBindings).length);
 
@@ -295,6 +404,143 @@
 	}
 </script>
 
+<!--
+	TASK-104: ⚡ Make-dynamic affordance.
+
+	`bindBtn` renders a small ⚡ icon at the end of every bindable property
+	row. It's hidden by default and only appears on row hover/focus when
+	the property is unbound — that keeps the panel visually quiet for the
+	common case (designers tweaking values, not wiring URL params). When
+	the property IS bound, the button is always-visible and tinted so the
+	user can see at a glance which fields drive the published render.
+
+	`bindEditor` renders the actual param-name / default / format editor
+	inline below the property row when `bindEditingProp === propKey`. Only
+	one editor is open at a time so the panel doesn't grow without bound;
+	clicking ⚡ on a different property closes the previous one.
+-->
+{#snippet bindBtn(propKey: string)}
+	{@const bound = paramBindings[propKey]}
+	{@const meta = metaFor(propKey)}
+	<button
+		type="button"
+		class="bind-btn"
+		class:bind-btn-bound={!!bound}
+		class:bind-btn-editing={bindEditingProp === propKey}
+		onclick={() => openBindEditor(propKey)}
+		aria-label={bound
+			? `Edit URL parameter binding for ${meta.label} (currently ?${bound.param || '(unnamed)'})`
+			: `Make ${meta.label} dynamic — bind to a URL parameter`}
+		aria-expanded={bindEditingProp === propKey}
+		title={bound
+			? `Bound to ?${bound.param || '(unnamed)'} — click to edit`
+			: 'Make dynamic — bind to a URL parameter'}
+		data-testid="bind-btn-{propKey}"
+	>
+		<Zap size={12} strokeWidth={2.25} />
+	</button>
+{/snippet}
+
+{#snippet bindEditor(propKey: string)}
+	{#if bindEditingProp === propKey}
+		{@const bound = paramBindings[propKey]}
+		{@const meta = metaFor(propKey)}
+		{#if bound}
+			{@const warning = paramNameWarning(bound.param)}
+			{@const urls = urlExample(bound.param, bound.default, meta.sample)}
+			<div class="binding-fields bind-editor-card" data-testid="bind-editor-{propKey}">
+				<div class="bind-editor-header">
+					<span class="bind-editor-title">Binding · {meta.label}</span>
+				</div>
+				<div class="field-row">
+					<label class="field-label small" for="bind-{propKey}-param">Param name</label>
+					<input
+						id="bind-{propKey}-param"
+						type="text"
+						class="field-input"
+						class:field-input-warning={!!warning}
+						value={bound.param}
+						oninput={(e) => setBinding(propKey, 'param', e.currentTarget.value)}
+						placeholder="e.g. title, price, userName"
+						aria-describedby={warning ? `bind-${propKey}-param-warning` : undefined}
+					/>
+				</div>
+				{#if warning}
+					<p id="bind-{propKey}-param-warning" class="binding-warning">
+						{warning}
+					</p>
+				{/if}
+				<div class="field-row">
+					<label class="field-label small" for="bind-{propKey}-default">Default</label>
+					<input
+						id="bind-{propKey}-default"
+						type="text"
+						class="field-input"
+						value={bound.default}
+						oninput={(e) => setBinding(propKey, 'default', e.currentTarget.value)}
+						placeholder="used when URL omits this param"
+					/>
+				</div>
+				{#if meta.allowFormat}
+					<!-- Formatters apply only to text-typed properties (text content,
+						badge label). Numeric / boolean props skip the formatter at
+						render time, and color / URL strings have no formatter that
+						makes sense for them. -->
+					<div class="field-row">
+						<label class="field-label small" for="bind-{propKey}-format">Format</label>
+						<select
+							id="bind-{propKey}-format"
+							class="field-select"
+							value={bound.format ?? ''}
+							onchange={(e) => setBinding(propKey, 'format', e.currentTarget.value)}
+						>
+							<option value="">No formatting</option>
+							<option value="number">Number (1,234)</option>
+							<option value="number:2">Number 2dp (1,234.56)</option>
+							<option value="currency:USD">Currency USD ($1,234.56)</option>
+							<option value="currency:EUR">Currency EUR (€1,234.56)</option>
+							<option value="percent">Percent (12%)</option>
+							<option value="percent:1">Percent 1dp (12.3%)</option>
+							<option value="signed-percent">Signed % (+12% / −12%)</option>
+							<option value="signed-percent:1">Signed % 1dp (+12.3%)</option>
+							<option value="compact">Compact (1.2k / 3.4M)</option>
+							<option value="compact:2">Compact 2dp (1.23k)</option>
+							<option value="crypto-price">Crypto price ($1,234.56 / $0.0001230)</option>
+							<option value="crypto-price:6">Crypto price 6 sig ($0.00123456)</option>
+							<option value="date:short">Date short (Jan 1, 2026)</option>
+							<option value="date:long">Date long (January 1, 2026)</option>
+							<option value="date:relative">Date relative (2 days ago)</option>
+						</select>
+					</div>
+					<p class="binding-format-hint">
+						Pass a number or ISO date as <code>?{bound.param || 'name'}=…</code>; it's formatted
+						before rendering.
+					</p>
+				{/if}
+				<p class="binding-url-preview">
+					<span class="url-preview-label">With default:</span>
+					<code>{urls.defaultUrl}</code>
+				</p>
+				<p class="binding-url-preview binding-url-sample">
+					<span class="url-preview-label">With a value:</span>
+					<code>{urls.sampleUrl}</code>
+				</p>
+				<div class="bind-editor-actions">
+					<button
+						type="button"
+						class="bind-editor-unbind"
+						onclick={() => unbind(propKey)}
+						data-testid="bind-editor-unbind-{propKey}"
+					>
+						Unbind
+					</button>
+					<button type="button" class="bind-editor-done" onclick={closeBindEditor}> Done </button>
+				</div>
+			</div>
+		{/if}
+	{/if}
+{/snippet}
+
 <aside class="property-panel">
 	{#if !editorState.selectedObject}
 		<div class="empty-state">
@@ -313,8 +559,11 @@
 				<section class="section" data-testid="property-section-text">
 					<h4 class="section-title">Text</h4>
 
-					<div class="field-row field-col">
-						<label class="field-label" for="prop-text">Content</label>
+					<div class="field-row field-col bind-row">
+						<div class="bind-row-label-line">
+							<label class="field-label" for="prop-text">Content</label>
+							{@render bindBtn('text')}
+						</div>
 						<textarea
 							id="prop-text"
 							class="field-textarea"
@@ -323,6 +572,7 @@
 							oninput={(e) => setProp('text', e.currentTarget.value)}
 						></textarea>
 					</div>
+					{@render bindEditor('text')}
 
 					<div class="field-row">
 						<label class="field-label" for="prop-font">Font</label>
@@ -348,7 +598,7 @@
 						</select>
 					</div>
 
-					<div class="field-row">
+					<div class="field-row bind-row">
 						<label class="field-label" for="prop-fontsize">Size</label>
 						<input
 							id="prop-fontsize"
@@ -358,7 +608,9 @@
 							value={fontSize}
 							onchange={(e) => setProp('fontSize', Number(e.currentTarget.value))}
 						/>
+						{@render bindBtn('fontSize')}
 					</div>
+					{@render bindEditor('fontSize')}
 
 					<div class="field-row">
 						<label class="field-label" for="prop-fontweight">Weight</label>
@@ -373,7 +625,7 @@
 						</select>
 					</div>
 
-					<div class="field-row">
+					<div class="field-row bind-row">
 						<label class="field-label" for="prop-fill">Color</label>
 						<input
 							id="prop-fill"
@@ -382,7 +634,9 @@
 							value={fill}
 							oninput={(e) => setProp('fill', e.currentTarget.value)}
 						/>
+						{@render bindBtn('fill')}
 					</div>
+					{@render bindEditor('fill')}
 
 					<div class="field-row">
 						<span class="field-label">Align</span>
@@ -444,10 +698,14 @@
 						</div>
 					{/if}
 
-					<div class="field-row field-col">
-						<label class="field-label" for="prop-src">Source URL</label>
+					<div class="field-row field-col bind-row">
+						<div class="bind-row-label-line">
+							<label class="field-label" for="prop-src">Source URL</label>
+							{@render bindBtn('src')}
+						</div>
 						<input id="prop-src" type="text" class="field-input" value={imageSrc} readonly />
 					</div>
+					{@render bindEditor('src')}
 
 					<!-- Fallback URL (TASK-86). Optional second URL the renderer
 						falls back to when the primary `src` fails (404, timeout,
@@ -474,8 +732,11 @@
 				<section class="section" data-testid="property-section-badge">
 					<h4 class="section-title">Badge</h4>
 
-					<div class="field-row field-col">
-						<label class="field-label" for="prop-badge-label">Label</label>
+					<div class="field-row field-col bind-row">
+						<div class="bind-row-label-line">
+							<label class="field-label" for="prop-badge-label">Label</label>
+							{@render bindBtn('label')}
+						</div>
 						<input
 							id="prop-badge-label"
 							type="text"
@@ -485,8 +746,9 @@
 							placeholder="e.g. Live, In Range, Sold"
 						/>
 					</div>
+					{@render bindEditor('label')}
 
-					<div class="field-row">
+					<div class="field-row bind-row">
 						<label class="field-label" for="prop-badge-fg">Foreground</label>
 						<input
 							id="prop-badge-fg"
@@ -495,9 +757,11 @@
 							value={badgeFg}
 							oninput={(e) => setProp('fg', e.currentTarget.value)}
 						/>
+						{@render bindBtn('fg')}
 					</div>
+					{@render bindEditor('fg')}
 
-					<div class="field-row">
+					<div class="field-row bind-row">
 						<label class="field-label" for="prop-badge-bg">Background</label>
 						<input
 							id="prop-badge-bg"
@@ -506,7 +770,9 @@
 							value={fill}
 							oninput={(e) => setProp('fill', e.currentTarget.value)}
 						/>
+						{@render bindBtn('fill')}
 					</div>
+					{@render bindEditor('fill')}
 
 					<div class="field-row">
 						<label class="field-label" for="prop-badge-padding">Padding</label>
@@ -536,8 +802,11 @@
 						/>
 					</div>
 
-					<div class="field-row field-col">
-						<label class="field-label" for="prop-badge-icon">Icon URL</label>
+					<div class="field-row field-col bind-row">
+						<div class="bind-row-label-line">
+							<label class="field-label" for="prop-badge-icon">Icon URL</label>
+							{@render bindBtn('iconImage')}
+						</div>
 						<input
 							id="prop-badge-icon"
 							type="text"
@@ -547,6 +816,7 @@
 							placeholder="Optional icon (URL or asset://)"
 						/>
 					</div>
+					{@render bindEditor('iconImage')}
 
 					<div class="field-row">
 						<label class="field-label" for="prop-badge-icon-pos">Icon position</label>
@@ -563,139 +833,89 @@
 				</section>
 			{/if}
 
-			<!-- Parameter Binding Section -->
-			<!-- Ordered ahead of Position so the most product-distinctive control
-				(URL parameter binding) is reachable without expanding two sections.
-				Position is rarely-edited pixel work; keep it collapsed at the bottom. -->
+			<!-- Style section (TASK-104) — fallback fill control for layers
+				without their own type-specific section (Rect, unknown shapes).
+				Text and Badge expose Color/Background in their own section, so
+				skip this for those types to avoid a duplicate field row.
+				Image layers don't draw `fill`, so omit too. Without this
+				section, starter templates like `crypto-lp-card` (which bind
+				`Rect.fill` to a URL param) would have NO inline bind affordance
+				on the rect layer's fill, and clicking the corresponding entry
+				in the Bound Parameters summary would no-op. -->
+			{#if !isText && !isBadge && !isImage}
+				<section class="section" data-testid="property-section-style">
+					<h4 class="section-title">Style</h4>
+
+					<div class="field-row bind-row">
+						<label class="field-label" for="prop-style-fill">Fill</label>
+						<input
+							id="prop-style-fill"
+							type="color"
+							class="field-color"
+							value={fill}
+							oninput={(e) => setProp('fill', e.currentTarget.value)}
+						/>
+						{@render bindBtn('fill')}
+					</div>
+					{@render bindEditor('fill')}
+				</section>
+			{/if}
+
+			<!-- Bound Parameters summary (TASK-104) -->
+			<!-- Replaces the old collapsed-by-default Dynamic Parameters list.
+				With the inline ⚡ pattern, every bindable property field
+				exposes its own binding entry-point — this section is just a
+				ledger so the user can see at a glance which params drive
+				the canvas and jump to one to edit it. -->
 			<section class="section" data-testid="property-section-dynamic">
-				<button
-					class="section-title collapsible"
-					onclick={() => (bindingsExpanded = !bindingsExpanded)}
-					aria-expanded={bindingsExpanded}
-				>
+				<h4 class="section-title section-title-static">
 					<span>
-						Dynamic Parameters
+						Bound Parameters
 						{#if boundCount > 0}
 							<span class="bound-count" aria-label="{boundCount} bound">{boundCount}</span>
 						{/if}
 					</span>
-					<span class="chevron" class:open={bindingsExpanded} aria-hidden="true"
-						><ChevronRight size={12} strokeWidth={2.5} /></span
-					>
-				</button>
+				</h4>
 
-				{#if bindingsExpanded}
-					<p class="bindings-intro">
-						Make a property change based on the URL. After publishing, append
-						<code>?name=value</code> to the share URL to override the default.
+				{#if boundCount === 0}
+					<p class="bindings-intro-compact">
+						Click the
+						<span class="zap-inline" aria-hidden="true">
+							<Zap size={11} strokeWidth={2.5} />
+						</span>
+						next to any property to make it dynamic. After publishing, append
+						<code>?name=value</code> to the share URL.
 					</p>
-
-					<div class="bindings-list">
-						{#each bindableProperties as prop (prop.key)}
-							{@const bound = paramBindings[prop.key]}
-							{@const warning = bound ? paramNameWarning(bound.param) : ''}
-							<div class="binding-row" class:binding-active={!!bound}>
-								<div class="binding-header">
-									<span class="binding-label">{prop.label}</span>
-									<button
-										class="binding-toggle"
-										class:active={!!bound}
-										onclick={() => toggleBinding(prop.key)}
-										aria-label={bound
-											? `Stop binding ${prop.label}`
-											: `Bind ${prop.label} to a URL parameter`}
-										title={bound ? 'Remove binding' : 'Bind this property to a URL parameter'}
-									>
-										{bound ? 'Unbind' : 'Bind'}
-									</button>
-								</div>
-
-								{#if bound}
-									{@const urls = urlExample(bound.param, bound.default, prop.sample)}
-									<div class="binding-fields">
-										<div class="field-row">
-											<label class="field-label small" for="bind-{prop.key}-param">
-												Param name
-											</label>
-											<input
-												id="bind-{prop.key}-param"
-												type="text"
-												class="field-input"
-												class:field-input-warning={!!warning}
-												value={bound.param}
-												oninput={(e) => setBinding(prop.key, 'param', e.currentTarget.value)}
-												placeholder="e.g. title, price, userName"
-												aria-describedby={warning ? `bind-${prop.key}-param-warning` : undefined}
-											/>
-										</div>
-										{#if warning}
-											<p id="bind-{prop.key}-param-warning" class="binding-warning">
-												{warning}
-											</p>
-										{/if}
-										<div class="field-row">
-											<label class="field-label small" for="bind-{prop.key}-default">
-												Default
-											</label>
-											<input
-												id="bind-{prop.key}-default"
-												type="text"
-												class="field-input"
-												value={bound.default}
-												oninput={(e) => setBinding(prop.key, 'default', e.currentTarget.value)}
-												placeholder="used when URL omits this param"
-											/>
-										</div>
-										{#if prop.key === 'text'}
-											<!-- Formatters apply only to text content. fill (color) and src
-												(image URL) are passed through as-is by the renderer. -->
-											<div class="field-row">
-												<label class="field-label small" for="bind-{prop.key}-format">
-													Format
-												</label>
-												<select
-													id="bind-{prop.key}-format"
-													class="field-select"
-													value={bound.format ?? ''}
-													onchange={(e) => setBinding(prop.key, 'format', e.currentTarget.value)}
-												>
-													<option value="">No formatting</option>
-													<option value="number">Number (1,234)</option>
-													<option value="number:2">Number 2dp (1,234.56)</option>
-													<option value="currency:USD">Currency USD ($1,234.56)</option>
-													<option value="currency:EUR">Currency EUR (€1,234.56)</option>
-													<option value="percent">Percent (12%)</option>
-													<option value="percent:1">Percent 1dp (12.3%)</option>
-													<option value="signed-percent">Signed % (+12% / −12%)</option>
-													<option value="signed-percent:1">Signed % 1dp (+12.3%)</option>
-													<option value="compact">Compact (1.2k / 3.4M)</option>
-													<option value="compact:2">Compact 2dp (1.23k)</option>
-													<option value="crypto-price">Crypto price ($1,234.56 / $0.0001230)</option
-													>
-													<option value="crypto-price:6">Crypto price 6 sig ($0.00123456)</option>
-													<option value="date:short">Date short (Jan 1, 2026)</option>
-													<option value="date:long">Date long (January 1, 2026)</option>
-													<option value="date:relative">Date relative (2 days ago)</option>
-												</select>
-											</div>
-											<p class="binding-format-hint">
-												Pass a number or ISO date as <code>?{bound.param || 'name'}=…</code>; it's
-												formatted before rendering.
-											</p>
-										{/if}
-										<p class="binding-url-preview">
-											<span class="url-preview-label">With default:</span>
-											<code>{urls.defaultUrl}</code>
-										</p>
-										<p class="binding-url-preview binding-url-sample">
-											<span class="url-preview-label">With a value:</span>
-											<code>{urls.sampleUrl}</code>
-										</p>
-									</div>
-								{/if}
-							</div>
+				{:else}
+					<ul class="bound-summary-list" data-testid="bound-summary-list">
+						{#each Object.entries(paramBindings) as [propKey, b] (propKey)}
+							{@const meta = metaFor(propKey)}
+							<li class="bound-summary-item">
+								<button
+									type="button"
+									class="bound-summary-jump"
+									class:bound-summary-jump-active={bindEditingProp === propKey}
+									onclick={() => openBindEditor(propKey)}
+									title="Edit binding"
+									data-testid="bound-summary-jump-{propKey}"
+								>
+									<Zap size={11} strokeWidth={2.5} />
+									<span class="bound-summary-param">?{b.param || '(unnamed)'}</span>
+									<span class="bound-summary-arrow" aria-hidden="true">→</span>
+									<span class="bound-summary-label">{meta.label}</span>
+								</button>
+								<button
+									type="button"
+									class="bound-summary-unbind"
+									onclick={() => unbind(propKey)}
+									aria-label="Unbind {meta.label}"
+									title="Unbind"
+								>
+									×
+								</button>
+							</li>
 						{/each}
-					</div>
+					</ul>
 				{/if}
 			</section>
 
@@ -842,7 +1062,7 @@
 				</button>
 
 				{#if positionExpanded}
-					<div class="field-row">
+					<div class="field-row bind-row">
 						<label class="field-label" for="prop-x">X</label>
 						<input
 							id="prop-x"
@@ -851,9 +1071,11 @@
 							value={Math.round(posX)}
 							onchange={(e) => setProp('left', Number(e.currentTarget.value))}
 						/>
+						{@render bindBtn('left')}
 					</div>
+					{@render bindEditor('left')}
 
-					<div class="field-row">
+					<div class="field-row bind-row">
 						<label class="field-label" for="prop-y">Y</label>
 						<input
 							id="prop-y"
@@ -862,9 +1084,20 @@
 							value={Math.round(posY)}
 							onchange={(e) => setProp('top', Number(e.currentTarget.value))}
 						/>
+						{@render bindBtn('top')}
 					</div>
+					{@render bindEditor('top')}
 
-					<div class="field-row">
+					<!-- Width / height bindings are NOT exposed for badge layers
+						because the renderer's `applyBadgeLayouts` recomputes
+						`obj.width` / `obj.height` from the label + icon layout
+						AFTER `mergeParams` runs, silently overwriting any URL-
+						bound value. Showing the ⚡ here would let the user wire
+						a binding that looks valid in the editor but has zero
+						effect at render. The manual W/H input is still shown
+						(informational — the auto-sized bounds), just without
+						the bind affordance. -->
+					<div class="field-row" class:bind-row={!isBadge}>
 						<label class="field-label" for="prop-w">Width</label>
 						<input
 							id="prop-w"
@@ -873,9 +1106,11 @@
 							value={Math.round(objWidth)}
 							onchange={(e) => setDimension('width', Number(e.currentTarget.value))}
 						/>
+						{#if !isBadge}{@render bindBtn('width')}{/if}
 					</div>
+					{#if !isBadge}{@render bindEditor('width')}{/if}
 
-					<div class="field-row">
+					<div class="field-row" class:bind-row={!isBadge}>
 						<label class="field-label" for="prop-h">Height</label>
 						<input
 							id="prop-h"
@@ -884,7 +1119,9 @@
 							value={Math.round(objHeight)}
 							onchange={(e) => setDimension('height', Number(e.currentTarget.value))}
 						/>
+						{#if !isBadge}{@render bindBtn('height')}{/if}
 					</div>
+					{#if !isBadge}{@render bindEditor('height')}{/if}
 
 					<div class="field-row">
 						<label class="field-label" for="prop-angle">Rotation</label>
@@ -900,7 +1137,7 @@
 						</div>
 					</div>
 
-					<div class="field-row">
+					<div class="field-row bind-row">
 						<label class="field-label" for="prop-opacity">Opacity</label>
 						<input
 							id="prop-opacity"
@@ -913,7 +1150,27 @@
 							oninput={(e) => setProp('opacity', Number(e.currentTarget.value))}
 						/>
 						<span class="range-value">{Math.round(opacity * 100)}%</span>
+						{@render bindBtn('opacity')}
 					</div>
+					{@render bindEditor('opacity')}
+
+					<!-- Visibility row (TASK-104). Adds a concrete field for the
+						`visible` property so the inline ⚡ has somewhere to live —
+						previously visibility was only reachable through the
+						Dynamic Parameters list. The checkbox itself is also a
+						useful manual toggle that the editor lacked. -->
+					<div class="field-row bind-row">
+						<label class="field-label" for="prop-visible">Visible</label>
+						<input
+							id="prop-visible"
+							type="checkbox"
+							class="field-checkbox"
+							checked={visible}
+							onchange={(e) => setProp('visible', e.currentTarget.checked)}
+						/>
+						{@render bindBtn('visible')}
+					</div>
+					{@render bindEditor('visible')}
 				{/if}
 			</section>
 		</div>
@@ -1258,66 +1515,6 @@
 		font-size: 10.5px;
 	}
 
-	.bindings-list {
-		margin-top: 8px;
-	}
-
-	.binding-row {
-		margin-bottom: 10px;
-		padding: 8px;
-		background: #f5f5f5;
-		border-radius: 4px;
-		border: 1px solid #eee;
-	}
-
-	.binding-row.binding-active {
-		background: #fffdf5;
-		border-color: #fde68a;
-	}
-
-	.binding-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-	}
-
-	.binding-label {
-		font-size: 12px;
-		font-weight: 500;
-		color: #555;
-	}
-
-	.binding-toggle {
-		background: #fff;
-		border: 1px solid #ccc;
-		border-radius: 4px;
-		padding: 2px 10px;
-		cursor: pointer;
-		font-size: 11px;
-		font-weight: 600;
-		line-height: 1.5;
-		color: #444;
-	}
-
-	.binding-toggle:hover {
-		background: #f3f4f6;
-	}
-
-	.binding-toggle:focus-visible {
-		outline: 2px solid #2563eb;
-		outline-offset: 2px;
-	}
-
-	.binding-toggle.active {
-		background: #fde68a;
-		border-color: #f59e0b;
-		color: #78350f;
-	}
-
-	.binding-toggle.active:hover {
-		background: #fcd34d;
-	}
-
 	.conditionals-empty {
 		margin: 8px 0;
 		font-size: 11.5px;
@@ -1484,5 +1681,290 @@
 	.binding-url-preview code {
 		color: #f9fafb;
 		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	}
+
+	/* TASK-104: Inline ⚡ Make-dynamic affordance.
+	   `.bind-row` marks any property field row that participates in the
+	   pattern; the ⚡ button at the end of the row stays hidden by default
+	   so unbound rows look identical to before, then fades in on hover or
+	   keyboard focus. Bound rows always show the icon (tinted) so the user
+	   can see at a glance which fields drive the published render. */
+	.bind-row {
+		position: relative;
+	}
+
+	.bind-row-label-line {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 2px;
+	}
+
+	.bind-row-label-line .field-label {
+		margin-bottom: 0;
+	}
+
+	.bind-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 22px;
+		height: 22px;
+		padding: 0;
+		margin-left: 4px;
+		border: 1px solid transparent;
+		border-radius: 4px;
+		background: transparent;
+		color: #cbd5e1;
+		cursor: pointer;
+		flex-shrink: 0;
+		opacity: 0;
+		transition:
+			opacity 0.12s ease,
+			color 0.12s ease,
+			background 0.12s ease,
+			border-color 0.12s ease;
+	}
+
+	.bind-row:hover .bind-btn,
+	.bind-row:focus-within .bind-btn {
+		opacity: 1;
+	}
+
+	.bind-btn:hover {
+		color: #2563eb;
+		background: #eff6ff;
+		border-color: #dbeafe;
+	}
+
+	.bind-btn:focus-visible {
+		outline: 2px solid #2563eb;
+		outline-offset: 1px;
+		opacity: 1;
+	}
+
+	.bind-btn-bound {
+		opacity: 1;
+		color: #b45309;
+		background: #fef3c7;
+		border-color: #fde68a;
+	}
+
+	.bind-btn-bound:hover {
+		color: #78350f;
+		background: #fde68a;
+		border-color: #f59e0b;
+	}
+
+	.bind-btn-editing {
+		color: #1e3a8a;
+		background: #dbeafe;
+		border-color: #93c5fd;
+		opacity: 1;
+	}
+
+	.bind-editor-card {
+		margin: 0 0 10px;
+		padding: 8px 10px;
+		background: #fffdf5;
+		border: 1px solid #fde68a;
+		border-radius: 4px;
+	}
+
+	.bind-editor-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 6px;
+	}
+
+	.bind-editor-title {
+		font-size: 11px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.4px;
+		color: #92400e;
+	}
+
+	.bind-editor-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 6px;
+		margin-top: 8px;
+	}
+
+	.bind-editor-unbind,
+	.bind-editor-done {
+		padding: 3px 10px;
+		border-radius: 4px;
+		font-size: 11px;
+		font-weight: 600;
+		cursor: pointer;
+		line-height: 1.5;
+		font-family: inherit;
+	}
+
+	.bind-editor-unbind {
+		background: #fff;
+		border: 1px solid #fde68a;
+		color: #92400e;
+	}
+
+	.bind-editor-unbind:hover {
+		background: #fef3c7;
+	}
+
+	.bind-editor-done {
+		background: #2563eb;
+		border: 1px solid #2563eb;
+		color: #fff;
+	}
+
+	.bind-editor-done:hover {
+		background: #1d4ed8;
+		border-color: #1d4ed8;
+	}
+
+	.bind-editor-unbind:focus-visible,
+	.bind-editor-done:focus-visible {
+		outline: 2px solid #2563eb;
+		outline-offset: 1px;
+	}
+
+	/* Static (non-collapsible) section title — used for the new
+	   compact Bound Parameters summary which is always visible. */
+	.section-title-static {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin: 0 0 8px;
+	}
+
+	.bindings-intro-compact {
+		margin: 4px 0 0;
+		font-size: 11.5px;
+		color: #6b7280;
+		line-height: 1.5;
+	}
+
+	.bindings-intro-compact code {
+		background: #f1f5f9;
+		padding: 0 0.25rem;
+		border-radius: 3px;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 10.5px;
+	}
+
+	.zap-inline {
+		display: inline-flex;
+		vertical-align: -1px;
+		color: #b45309;
+	}
+
+	.bound-summary-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.bound-summary-item {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.bound-summary-jump {
+		flex: 1;
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		min-width: 0;
+		padding: 4px 6px;
+		border: 1px solid #fde68a;
+		border-radius: 4px;
+		background: #fffdf5;
+		font-family: inherit;
+		font-size: 11.5px;
+		color: #78350f;
+		cursor: pointer;
+		text-align: left;
+	}
+
+	.bound-summary-jump :global(svg) {
+		flex-shrink: 0;
+		color: #b45309;
+	}
+
+	.bound-summary-jump:hover {
+		background: #fef3c7;
+		border-color: #f59e0b;
+	}
+
+	.bound-summary-jump:focus-visible {
+		outline: 2px solid #2563eb;
+		outline-offset: 1px;
+	}
+
+	.bound-summary-jump-active {
+		background: #fef3c7;
+		border-color: #f59e0b;
+	}
+
+	.bound-summary-param {
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-weight: 600;
+		color: #78350f;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.bound-summary-arrow {
+		color: #b45309;
+		opacity: 0.7;
+	}
+
+	.bound-summary-label {
+		color: #6b7280;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.bound-summary-unbind {
+		flex-shrink: 0;
+		width: 22px;
+		height: 22px;
+		padding: 0;
+		border: 1px solid transparent;
+		border-radius: 4px;
+		background: transparent;
+		color: #94a3b8;
+		font-size: 14px;
+		font-weight: 600;
+		line-height: 1;
+		cursor: pointer;
+	}
+
+	.bound-summary-unbind:hover {
+		color: #dc2626;
+		background: #fee2e2;
+		border-color: #fecaca;
+	}
+
+	.bound-summary-unbind:focus-visible {
+		outline: 2px solid #2563eb;
+		outline-offset: 1px;
+	}
+
+	.field-checkbox {
+		flex: 0 0 auto;
+		width: 16px;
+		height: 16px;
+		margin: 0;
+		cursor: pointer;
 	}
 </style>
