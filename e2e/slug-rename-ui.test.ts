@@ -100,6 +100,42 @@ test('slug rename: 409 on collision shows server message + clickable suggestion'
 	expect(body.slug).toBe(`${taken}-2`);
 });
 
+test('slug rename: Enter-submitted collision lets user click suggestion without losing it (Codex round 2 P3)', async ({
+	page
+}) => {
+	const request = page.request;
+	await signupAndLogin(page);
+
+	const taken = `enter-${Date.now()}`;
+	await page.request.post('/api/canvas', { data: { name: taken } });
+
+	const canvas = await createCanvas(page, { name: 'Enter Submit', preset: 'OG Image' });
+	await gotoEditor(page, canvas.id);
+	await addTextLayer(page, 'placeholder');
+	await publish(page);
+
+	// Submit with Enter (input remains focused). The 409 surfaces with
+	// the suggestion button. Without the mousedown-preventDefault fix,
+	// clicking the button would blur the input first → commitSlugRename
+	// runs again on the still-colliding draft → suggestion is cleared
+	// before the click handler runs.
+	const slugInput = page.getByTestId('slug-input');
+	await slugInput.focus();
+	await slugInput.fill(taken);
+	await slugInput.press('Enter');
+	const apply = page.getByTestId('slug-suggestion-apply');
+	await expect(apply).toBeVisible();
+
+	// Click the button. It should commit `${taken}-2`.
+	await apply.click();
+	await expect(async () => {
+		expect(await page.locator('#publish-share-url').inputValue()).toContain(`/c/${taken}-2`);
+	}).toPass({ timeout: 5_000 });
+	const r = await request.get(`/api/canvas/${canvas.id}`);
+	const body = (await r.json()) as { slug: string };
+	expect(body.slug).toBe(`${taken}-2`);
+});
+
 test('slug rename: closing modal with invalid draft resets state on reopen (Codex round 1 P3)', async ({
 	page
 }) => {

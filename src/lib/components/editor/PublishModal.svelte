@@ -118,10 +118,14 @@
 			sharing = { ogTitle: '', ogDescription: '', redirectUrl: '' };
 			// Reset slug-rename state on close so reopening for the same
 			// canvas doesn't show a stale 409 error or an invalid draft
-			// the user typed and then dismissed (Codex round 1 P3).
+			// the user typed and then dismissed. Bump the generation
+			// counter so any in-flight rename's completion writes are
+			// dropped (Codex round 1 P3, Codex round 2 P2).
 			slugDraft = slug;
 			slugServerError = null;
 			slugSuggestion = null;
+			slugBusy = false;
+			slugRenameGen++;
 		}
 	});
 
@@ -307,14 +311,25 @@
 	let slugBusy = $state(false);
 	let slugSuggestion = $state<string | null>(null);
 	let slugServerError = $state<string | null>(null);
+	// Generation counter — bumped on close, on canvasId change, and on
+	// any prop-driven slug reset. A late commit's writes (toast, error,
+	// busy flip, slugDraft update) only land if this generation hasn't
+	// rolled, so a stale completion from canvas A can't disable the
+	// input on B or repopulate an error after the modal was closed.
+	// Codex round 2 P2.
+	let slugRenameGen = 0;
 
 	$effect(() => {
 		// Reset the draft whenever the canonical slug changes (parent
 		// pushed a new value after rename, or modal reopened on a
-		// different canvas).
+		// different canvas). Also clear `slugBusy` so a stale rename
+		// from the previous canvas doesn't leave the input disabled
+		// on the new one (Codex round 2 P2).
 		slugDraft = slug;
 		slugSuggestion = null;
 		slugServerError = null;
+		slugBusy = false;
+		slugRenameGen++;
 	});
 
 	/** Same format contract as `validateSlug` in $lib/server/slug.ts.
@@ -343,12 +358,16 @@
 		if (slugBusy) return;
 		if (!slugDirty) return;
 		if (slugFormatError) return; // local validation already shown
-		// Snapshot the canvasId at request start. The editor route reuses
-		// this component across canvas-id navigations, so a slow rename
-		// from canvas A could land after the user has switched to canvas
-		// B and overwrite B's local slug. Drop the result if either has
-		// changed (Codex round 1 P2).
+		// Snapshot canvasId + generation at request start. The editor
+		// route reuses this component across canvas-id navigations, and
+		// the modal can close mid-flight — both produce stale completions
+		// whose writes must not land. The generation counter also makes
+		// the `finally`'s slugBusy reset safe: a stale completion no
+		// longer leaves the input disabled on a different canvas.
+		// Codex round 1 P2 + round 2 P2.
 		const requestCanvasId = canvasId;
+		const requestGen = slugRenameGen;
+		const isLive = () => requestCanvasId === canvasId && requestGen === slugRenameGen;
 		slugBusy = true;
 		slugServerError = null;
 		slugSuggestion = null;
@@ -358,31 +377,37 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ slug: candidate })
 			});
-			if (requestCanvasId !== canvasId) return;
+			if (!isLive()) return;
 			if (res.ok) {
 				const data = (await res.json()) as { slug: string };
-				if (requestCanvasId !== canvasId) return;
+				if (!isLive()) return;
 				onSlugChange?.(data.slug);
 				slugDraft = data.slug;
 				toast.success('Slug renamed');
 			} else if (res.status === 409) {
 				const body = (await res.json()) as { message: string; suggestion?: string };
-				if (requestCanvasId !== canvasId) return;
+				if (!isLive()) return;
 				slugServerError = body.message;
 				slugSuggestion = body.suggestion ?? null;
 			} else if (res.status === 400) {
 				const body = (await res.json()) as { message: string };
-				if (requestCanvasId !== canvasId) return;
+				if (!isLive()) return;
 				slugServerError = body.message;
 			} else {
-				if (requestCanvasId !== canvasId) return;
+				if (!isLive()) return;
 				slugServerError = `Couldn't rename slug (${res.status}).`;
 			}
 		} catch {
-			if (requestCanvasId !== canvasId) return;
+			if (!isLive()) return;
 			slugServerError = "Couldn't reach the server. Please try again.";
 		} finally {
-			if (requestCanvasId === canvasId) {
+			// Always release the busy flag if THIS request's generation
+			// is still live — even if we returned early via !isLive().
+			// Without this, a stale-completion path that drops on
+			// generation mismatch would leave slugBusy=true on the
+			// new canvas (the new canvas has its own generation now,
+			// and its commitSlugRename guard short-circuits on busy).
+			if (isLive()) {
 				slugBusy = false;
 			}
 		}
@@ -646,10 +671,20 @@
 				<p class="slug-error" data-testid="slug-server-error" role="alert">
 					{slugServerError}
 					{#if slugSuggestion}
+						<!--
+							`onmousedown preventDefault` keeps the input
+							from blurring when the user clicks this button.
+							Without it, blur fires first → commitSlugRename
+							runs on the still-colliding draft → clears
+							slugSuggestion → the button is now hidden, so
+							the click never lands and nothing happens.
+							Codex round 2 P3.
+						-->
 						<button
 							type="button"
 							class="slug-suggestion-btn"
 							data-testid="slug-suggestion-apply"
+							onmousedown={(e) => e.preventDefault()}
 							onclick={applySlugSuggestion}
 							disabled={slugBusy}
 						>
