@@ -391,13 +391,21 @@
 				URL. Leave blank to use the canvas name / no redirect.
 			</p>
 
+			<!--
+				Inputs stay disabled until `loadSharing()` resolves.
+				Codex round 1 P2: without the gate, a user typing into a
+				blank field before the GET completes would have their
+				input overwritten when the response arrived, then their
+				blur would save the (stale) server value.
+			-->
 			<div class="field">
 				<label for="publish-og-title">OG title</label>
 				<input
 					id="publish-og-title"
 					type="text"
 					data-testid="og-title-input"
-					placeholder="Defaults to canvas name"
+					placeholder={sharingLoaded ? 'Defaults to canvas name' : 'Loading…'}
+					disabled={!sharingLoaded}
 					value={sharing.ogTitle}
 					oninput={(e) => (sharing = { ...sharing, ogTitle: e.currentTarget.value })}
 					onblur={(e) => persistSharingField('ogTitle', e.currentTarget.value)}
@@ -414,7 +422,10 @@
 					id="publish-og-description"
 					data-testid="og-description-input"
 					rows="2"
-					placeholder="One- or two-sentence summary that appears under the title"
+					placeholder={sharingLoaded
+						? 'One- or two-sentence summary that appears under the title'
+						: 'Loading…'}
+					disabled={!sharingLoaded}
 					value={sharing.ogDescription}
 					oninput={(e) => (sharing = { ...sharing, ogDescription: e.currentTarget.value })}
 					onblur={(e) => persistSharingField('ogDescription', e.currentTarget.value)}
@@ -427,7 +438,10 @@
 					id="publish-redirect-url"
 					type="text"
 					data-testid="redirect-url-input"
-					placeholder="https://your-site.example.com/landing?utm_source={'{{utm}}'}"
+					placeholder={sharingLoaded
+						? `https://your-site.example.com/landing?utm_source={{utm}}`
+						: 'Loading…'}
+					disabled={!sharingLoaded}
 					value={sharing.redirectUrl}
 					oninput={(e) => (sharing = { ...sharing, redirectUrl: e.currentTarget.value })}
 					onblur={(e) => persistSharingField('redirectUrl', e.currentTarget.value)}
