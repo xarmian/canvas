@@ -1,37 +1,21 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import type { HTMLButtonAttributes } from 'svelte/elements';
 
 	export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'copy' | 'link';
 	export type ButtonSize = 'sm' | 'md';
 
-	interface Props {
+	interface Props extends HTMLButtonAttributes {
 		/** Visual variant. Maps 1:1 to the inline `.btn-*` classes that
 		 *  are re-defined across PublishModal / ConfirmDialog / etc. */
 		variant?: ButtonVariant;
 		/** `sm` is the compact size used in inline rows (e.g. slug
 		 *  suggestion chip), `md` is the default modal-footer size. */
 		size?: ButtonSize;
-		/** Native disabled — also covers the visual disabled state and
-		 *  short-circuits onclick. */
-		disabled?: boolean;
 		/** Shows an inline spinner before the label and prevents clicks
 		 *  while pending. The label stays rendered so the button width
 		 *  doesn't collapse mid-request. */
 		loading?: boolean;
-		/** Native button type. Default `button` so a stray submit doesn't
-		 *  fire on accidental Enter inside an enclosing form. */
-		type?: 'button' | 'submit' | 'reset';
-		/**
-		 * Required for icon-only buttons (no text in `children`) to keep
-		 * screen readers happy. Optional for label-bearing buttons —
-		 * Svelte 5 lets us forward it via `...rest`.
-		 */
-		'aria-label'?: string;
-		/** Optional extra class for one-off layout tweaks at the call site
-		 *  (e.g. `class="full-width"`). Variant styling stays canonical. */
-		class?: string;
-		/** Click handler. Suppressed while `disabled` or `loading`. */
-		onclick?: (event: MouseEvent) => void;
 		/** Button content — text, icons, or a mix. */
 		children?: Snippet;
 	}
@@ -42,10 +26,10 @@
 		disabled = false,
 		loading = false,
 		type = 'button',
-		'aria-label': ariaLabel,
 		class: className,
 		onclick,
-		children
+		children,
+		...rest
 	}: Props = $props();
 
 	function handleClick(event: MouseEvent) {
@@ -54,16 +38,18 @@
 			event.stopPropagation();
 			return;
 		}
-		onclick?.(event);
+		// Svelte's typed event handlers receive `MouseEvent & { currentTarget: HTMLButtonElement }`.
+		// Casting here keeps the generated handler signature aligned with HTMLButtonAttributes.
+		onclick?.(event as MouseEvent & { currentTarget: EventTarget & HTMLButtonElement });
 	}
 </script>
 
 <button
+	{...rest}
 	{type}
 	class="btn btn-{variant} size-{size} {className ?? ''}"
 	class:is-loading={loading}
 	disabled={disabled || loading}
-	aria-label={ariaLabel}
 	aria-busy={loading || undefined}
 	onclick={handleClick}
 >
