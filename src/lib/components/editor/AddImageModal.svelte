@@ -22,8 +22,14 @@
 		onClose: () => void;
 		/** Called when the user picks an image (either uploaded or selected
 		 *  from the library). The modal hands the URL back so the editor can
-		 *  insert it via `addImageFromUrl`. */
-		onSelect: (url: string) => void;
+		 *  insert it via `addImageFromUrl`.
+		 *
+		 *  `assetId` (TASK-116) is included whenever the image is library-
+		 *  backed — both fresh uploads (we have the id from the response)
+		 *  and library picks. The editor stores this on the layer as
+		 *  `srcAssetId` so save-time translation can rewrite the persisted
+		 *  src to `asset://{id}`. */
+		onSelect: (url: string, assetId?: string) => void;
 		/** Notifies the parent when an upload starts/finishes inside the
 		 *  modal. The editor mirrors this onto its own `isUploading` so the
 		 *  beforeunload + beforeNavigate guards still fire while a modal
@@ -167,7 +173,7 @@
 			libraryOffset = library.length;
 			libraryLoaded = true;
 
-			onSelect(body.url);
+			onSelect(body.url, body.id);
 		} catch {
 			toast.error('Upload failed. Check your connection.');
 		} finally {
@@ -177,7 +183,7 @@
 	}
 
 	function selectFromLibrary(asset: AssetItem) {
-		onSelect(asset.url);
+		onSelect(asset.url, asset.id);
 	}
 </script>
 

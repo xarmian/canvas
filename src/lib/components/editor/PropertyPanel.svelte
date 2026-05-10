@@ -56,6 +56,12 @@
 	// duplicate). The renderer uses it when the primary `src` fails to fetch.
 	let fallbackSrc = $derived(getObjProp<string>('fallbackSrc', ''));
 
+	// Asset-library link (TASK-116). When the user picks from the library,
+	// the editor stamps the asset id on the layer so save-time translation
+	// can rewrite `src` → `asset://{id}`. The pill below surfaces this so
+	// the user can see they're linked, and the Unlink button detaches.
+	let srcAssetId = $derived(getObjProp<string | undefined>('srcAssetId', undefined));
+
 	// Badge primitive (TASK-87). Mirrors the Badge class fields. The pill's
 	// background color reuses the standard `fill` property so the existing
 	// param-binding / conditional pipelines drive the bg color naturally.
@@ -163,6 +169,31 @@
 		editorState.selectedObject.setCoords();
 		editorState.fabricCanvas.renderAll();
 		markDirty();
+	}
+
+	/** Map of URL fields → their library-link id stamp (TASK-116). When
+	 *  the user edits a URL field directly, the corresponding *AssetId
+	 *  must be cleared — otherwise the save serializer would rewrite the
+	 *  user's manually-edited URL back to `asset://{id}` and silently
+	 *  discard the change. The Unlink button is the explicit detach for
+	 *  the visible primary `src` link; this auto-clear is the implicit
+	 *  detach for the URL-edit path. */
+	const ASSET_LINK_STAMPS: Record<string, string> = {
+		src: 'srcAssetId',
+		fallbackSrc: 'fallbackSrcAssetId',
+		iconImage: 'iconImageAssetId'
+	};
+
+	/** setProp wrapper for URL fields — sets the URL AND clears the
+	 *  matching id stamp so a manual edit detaches the layer from the
+	 *  asset library. Use for any input that targets src/fallbackSrc/
+	 *  iconImage. */
+	function setUrlProp(prop: 'src' | 'fallbackSrc' | 'iconImage', value: unknown) {
+		const stamp = ASSET_LINK_STAMPS[prop];
+		if (stamp && editorState.selectedObject?.get(stamp) !== undefined) {
+			setProp(stamp, undefined);
+		}
+		setProp(prop, value);
 	}
 
 	/** Set width/height accounting for scale — resets scale to 1 and sets intrinsic dimension */
@@ -393,6 +424,26 @@
 				<section class="section" data-testid="property-section-image">
 					<h4 class="section-title">Image</h4>
 
+					{#if srcAssetId}
+						<!-- Library-link pill (TASK-116). Shown when the layer's
+							src came from the asset library; the save serializer
+							rewrites src → asset://{id} based on this id stamp.
+							Unlink clears the stamp without touching the URL —
+							the user keeps the same render but the persisted
+							JSON drops back to an absolute URL. -->
+						<div class="asset-link-pill" data-testid="asset-link-pill">
+							<span class="asset-link-label">Linked to asset library</span>
+							<button
+								type="button"
+								class="asset-link-unlink"
+								onclick={() => setProp('srcAssetId', undefined)}
+								data-testid="asset-link-unlink"
+							>
+								Unlink
+							</button>
+						</div>
+					{/if}
+
 					<div class="field-row field-col">
 						<label class="field-label" for="prop-src">Source URL</label>
 						<input id="prop-src" type="text" class="field-input" value={imageSrc} readonly />
@@ -411,7 +462,7 @@
 							type="text"
 							class="field-input"
 							value={fallbackSrc}
-							oninput={(e) => setProp('fallbackSrc', e.currentTarget.value || undefined)}
+							oninput={(e) => setUrlProp('fallbackSrc', e.currentTarget.value || undefined)}
 							placeholder="Used when the bound image URL fails to load"
 						/>
 					</div>
@@ -492,7 +543,7 @@
 							type="text"
 							class="field-input"
 							value={badgeIcon}
-							oninput={(e) => setProp('iconImage', e.currentTarget.value)}
+							oninput={(e) => setUrlProp('iconImage', e.currentTarget.value)}
 							placeholder="Optional icon (URL or asset://)"
 						/>
 					</div>
@@ -1026,6 +1077,45 @@
 	.field-input[readonly] {
 		background: #f0f0f0;
 		color: #888;
+	}
+
+	.asset-link-pill {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		padding: 0.35rem 0.6rem;
+		margin-bottom: 0.5rem;
+		background: #ecfeff;
+		border: 1px solid #a5f3fc;
+		border-radius: 999px;
+		font-size: 0.75rem;
+		color: #0e7490;
+	}
+
+	.asset-link-label {
+		font-weight: 500;
+	}
+
+	.asset-link-unlink {
+		border: none;
+		background: transparent;
+		color: #0e7490;
+		font-size: 0.75rem;
+		font-weight: 500;
+		cursor: pointer;
+		padding: 0;
+		text-decoration: underline;
+	}
+
+	.asset-link-unlink:hover {
+		color: #155e75;
+	}
+
+	.asset-link-unlink:focus-visible {
+		outline: 2px solid #2563eb;
+		outline-offset: 1px;
+		border-radius: 2px;
 	}
 
 	.input-with-suffix {

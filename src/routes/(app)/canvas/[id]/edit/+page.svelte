@@ -35,6 +35,12 @@
 		endSuppressSnapshots
 	} from '$lib/components/editor/history.svelte';
 	import { EDITOR_TO_OBJECT_PROPS } from '$lib/components/editor/serialize';
+	import {
+		collectAssetIdsFromTemplate,
+		fetchAssetUrlsByIds,
+		rewriteAssetRefsForEditor,
+		serializeAssetLinks
+	} from '$lib/components/editor/asset-link';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { ConfirmDialog } from '$lib/components/ui';
 	import { fontStore } from '$lib/stores/fonts.svelte';
@@ -301,20 +307,46 @@
 			markClean();
 
 			if (data.canvas.templateJson) {
-				const json = data.canvas.templateJson;
-				canvas
-					.loadFromJSON(json)
-					.then(() => {
+				// Resolve asset:// references in a fresh deep clone so the
+				// loaded canvas isn't mutated against the data prop. The
+				// resolver replaces each `asset://{id}` in src / fallbackSrc
+				// / iconImage with the public URL Fabric needs to fetch, and
+				// stamps the id onto the layer (srcAssetId etc.) so the save
+				// path can reverse the rewrite.
+				const json = JSON.parse(JSON.stringify(data.canvas.templateJson)) as Record<
+					string,
+					unknown
+				>;
+				const ids = collectAssetIdsFromTemplate(
+					json as { objects?: Array<Record<string, unknown>> }
+				);
+				const loadFromHydratedJson = (hydratedJson: typeof json) => {
+					canvas
+						.loadFromJSON(hydratedJson)
+						.then(() => {
+							if (hydrationToken !== thisToken) return;
+							canvas.renderAll();
+						})
+						.finally(() => {
+							// Only end suppression if this is still the active hydration
+							if (hydrationToken !== thisToken) return;
+							endSuppressSnapshots();
+							saveSnapshot(canvas);
+							hydrationComplete = true;
+						});
+				};
+				if (ids.length === 0) {
+					loadFromHydratedJson(json);
+				} else {
+					fetchAssetUrlsByIds(ids).then((idToUrl) => {
 						if (hydrationToken !== thisToken) return;
-						canvas.renderAll();
-					})
-					.finally(() => {
-						// Only end suppression if this is still the active hydration
-						if (hydrationToken !== thisToken) return;
-						endSuppressSnapshots();
-						saveSnapshot(canvas);
-						hydrationComplete = true;
+						rewriteAssetRefsForEditor(
+							json as { objects?: Array<Record<string, unknown>> },
+							idToUrl
+						);
+						loadFromHydratedJson(json);
 					});
+				}
 			} else {
 				// Empty canvas — end suppression and save initial blank snapshot
 				endSuppressSnapshots();
@@ -652,6 +684,11 @@
 		const isStale = () => !isMounted || data.canvas.id !== originCanvasId;
 		try {
 			const json = editorState.fabricCanvas.toObject([...EDITOR_TO_OBJECT_PROPS]);
+			// Persisted JSON references library assets via `asset://{id}`
+			// (TASK-116) so the canvas survives storage migrations and
+			// asset-URL changes. Layers with a tracked *AssetId get their
+			// URL field rewritten back to the asset:// form here.
+			serializeAssetLinks(json);
 			const res = await fetch(`/api/canvas/${originCanvasId}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
@@ -723,7 +760,7 @@
 	 *  Wrapping the await in isInsertingImage=true/false keeps
 	 *  hasPendingWork() truthful during the FabricImage.fromURL window so
 	 *  the navigation guard fires if the user clicks away mid-insert. */
-	async function insertExistingAsset(url: string, originCanvasId: string) {
+	async function insertExistingAsset(url: string, originCanvasId: string, assetId?: string) {
 		if (data.canvas.id !== originCanvasId) {
 			toast.info('Image was not added — you switched canvases.');
 			return;
@@ -734,7 +771,7 @@
 		}
 		isInsertingImage = true;
 		try {
-			const inserted = await editorRef.addImageFromUrl(url);
+			const inserted = await editorRef.addImageFromUrl(url, assetId);
 			if (inserted) {
 				toast.success('Image added');
 			} else {
@@ -761,10 +798,10 @@
 	 *  don't reuse queueUpload() here because (a) there's nothing to upload,
 	 *  and (b) serializing inserts behind the upload chain would needlessly
 	 *  block the library-tab insertion on any in-flight drag-drop upload. */
-	function onAddImageModalSelect(url: string) {
+	function onAddImageModalSelect(url: string, assetId?: string) {
 		const originCanvasId = data.canvas.id;
 		showAddImageModal = false;
-		void insertExistingAsset(url, originCanvasId);
+		void insertExistingAsset(url, originCanvasId, assetId);
 	}
 
 	async function uploadAndInsertImage(file: File, originCanvasId: string) {
@@ -794,7 +831,14 @@
 				toast.error(`Upload failed${detail}`);
 				return;
 			}
-			const { url } = (await res.json()) as { url: string };
+			// `id` (TASK-116) — drag-drop and direct uploads are library-
+			// backed too, so stamp the assetId on insertion to drive the
+			// save-time `asset://` rewrite. Pre-existing /api/upload
+			// responses don't include `id` so we tolerate it being absent.
+			const { url, id: assetId } = (await res.json()) as {
+				url: string;
+				id?: string;
+			};
 			if (data.canvas.id !== originCanvasId) {
 				// User switched canvases during the upload. The asset is saved to
 				// their library but we don't silently inject it into the new canvas.
@@ -807,7 +851,7 @@
 				toast.error('Image uploaded but editor was unavailable — refresh and try again.');
 				return;
 			}
-			const inserted = await editorRef.addImageFromUrl(url);
+			const inserted = await editorRef.addImageFromUrl(url, assetId);
 			if (inserted) {
 				toast.success('Image added');
 			} else {
