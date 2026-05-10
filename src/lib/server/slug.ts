@@ -19,12 +19,21 @@ import type { db as Db } from './db';
  *  long links (Twitter, SMS, scanner UIs). */
 export const SLUG_MAX_LENGTH = 80;
 
-/** Reserved slugs that would collide with first-class app routes. The
- *  SvelteKit router evaluates static segments before `[slug]`, so a
- *  reserved match wouldn't actually break the app — but the share URL
- *  would silently 404 because `c/api` shadows our actual `c/[slug]`
- *  resolver only for the ones we haven't routed elsewhere. Reject up
- *  front so the user gets a clear error instead of debugging a dead URL. */
+/** Reserved slugs that would collide with first-class app routes or with
+ *  system-owned demo canvases. The SvelteKit router evaluates static
+ *  segments before `[slug]`, so a reserved-route match wouldn't actually
+ *  break the app — but the share URL would silently 404 because `c/api`
+ *  shadows our actual `c/[slug]` resolver only for the ones we haven't
+ *  routed elsewhere. Reject up front so the user gets a clear error
+ *  instead of debugging a dead URL.
+ *
+ *  Demo-namespace slugs (e.g. `crypto-lp-card`, used by the public
+ *  landing page TASK-99) live here too: the public landing's hero
+ *  hardcodes the share URL, so a user-claimed `crypto-lp-card` could
+ *  hijack or 404 the demo. Reservation blocks both validateSlug
+ *  (rename) and findAvailableSlug (auto-derive); operators seed the
+ *  demo canvas via a direct DB insert (see HT runbook in
+ *  TASK-99 / PLAN-82). */
 const RESERVED_SLUGS = new Set([
 	'',
 	'api',
@@ -39,7 +48,9 @@ const RESERVED_SLUGS = new Set([
 	'public',
 	'settings',
 	'signup',
-	'static'
+	'static',
+	// Demo namespace — system-owned, not user-claimable. See TASK-99.
+	'crypto-lp-card'
 ]);
 
 /** Convert an arbitrary string into a URL-safe slug.
@@ -113,12 +124,24 @@ export async function findAvailableSlug(
 ): Promise<string> {
 	if (base.length === 0) base = 'canvas';
 
-	const initial = await dbInstance
-		.select({ id: canvases.id })
-		.from(canvases)
-		.where(eq(canvases.slug, base));
-	if (initial.length === 0 || (opts.ignoreId && initial[0].id === opts.ignoreId)) {
-		return base;
+	// Reserved slugs are not auto-derivable: a user creating a canvas
+	// named "Crypto LP card" must NOT silently land on the system demo
+	// slug. validateSlug already blocks the rename path; this branch
+	// closes the auto-derive path so the suffix loop bumps to `-2`,
+	// `-3`, ... until a free non-reserved candidate is found. The
+	// rename-ignoreId branch in the suffix loop still applies if a
+	// caller is renaming an already-reserved canvas (the reservation
+	// is still respected — we only ignore the same row's own slug).
+	if (RESERVED_SLUGS.has(base)) {
+		// Skip the no-suffix probe entirely; jump into the suffix loop.
+	} else {
+		const initial = await dbInstance
+			.select({ id: canvases.id })
+			.from(canvases)
+			.where(eq(canvases.slug, base));
+		if (initial.length === 0 || (opts.ignoreId && initial[0].id === opts.ignoreId)) {
+			return base;
+		}
 	}
 
 	for (let n = 2; n < 10_000; n++) {

@@ -689,11 +689,12 @@ export const TEMPLATES: TemplateDefinition[] = [
 		// hidden.
 		const lpCardTemplate: TemplateDefinition = {
 			id: 'crypto-lp-card',
-			// `name` is also what `POST /api/canvas` slugifies into the
-			// public share path. The landing page's live demo (TASK-99)
-			// hard-codes `/c/crypto-lp-card`, so the canvas name must
-			// slugify to `crypto-lp-card` — keep them in lockstep when
-			// renaming.
+			// "Crypto LP card" matches the landing-page copy (TASK-99) so
+			// the gallery card and the marketing surface share vocabulary.
+			// Note: the slug `crypto-lp-card` is reserved for the public
+			// landing demo (see `src/lib/server/slug.ts`), so a user
+			// cloning this template auto-derives `crypto-lp-card-2` —
+			// they own that slug, not the system demo URL.
 			name: 'Crypto LP card',
 			description:
 				'Liquidity-pool position card with token logos, gain/loss color, in/edge/out-of-range pill, and optional boosted star.',

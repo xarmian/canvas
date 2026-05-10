@@ -15,13 +15,16 @@
 	 * Authenticated visitors are redirected to /dashboard server-side via
 	 * +page.server.ts; this component only renders for unauth visitors.
 	 *
-	 * `/c/crypto-lp-card` is the canonical demo slug. The gallery template
-	 * (`src/lib/templates/gallery.ts`) is named "Crypto LP card" precisely
-	 * so that the auto-derived slug from `POST /api/canvas` lands at this
-	 * URL — operators publish via "Use this template" with no rename step.
-	 * On a fresh self-host before the template is published, `<img onerror>`
-	 * swaps the hero to a "preview unavailable" state so the page still
-	 * looks intentional.
+	 * `/c/crypto-lp-card` is the canonical demo slug. Reserved in
+	 * `src/lib/server/slug.ts` (`RESERVED_SLUGS`) so a user-claimed
+	 * canvas cannot hijack or 404 the public hero — both `validateSlug`
+	 * (rename) and `findAvailableSlug` (auto-derive) treat it as
+	 * already-taken. Because reservation also blocks the operator's
+	 * "Use this template" → publish flow from landing on this slug,
+	 * the demo canvas must be seeded by a direct DB insert (see the
+	 * Human-Tasks runbook spawned for PLAN-82). On a fresh self-host
+	 * before the seed lands, `<img onerror>` swaps the hero to a
+	 * "preview unavailable" state so the page still looks intentional.
 	 *
 	 * No public Gallery link: `/templates` is still inside the (app)
 	 * group and auth-gated, so a public-facing "Browse the gallery" link
