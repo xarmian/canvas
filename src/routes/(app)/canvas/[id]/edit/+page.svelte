@@ -60,12 +60,17 @@
 	// silences svelte-check's "state_referenced_locally" warning — the resync effect
 	// below is what actually keeps this in step with `data`.
 	let isPublished = $state(untrack(() => data.canvas.published));
+	// Local mirror of the canvas slug so the Publish modal's rename UI
+	// (TASK-98) can update the displayed slug across the editor without
+	// a full page reload. Resynced when the loaded canvas changes.
+	let canvasSlug = $state(untrack(() => data.canvas.slug));
 	let canvasScopedSyncId = $state(untrack(() => data.canvas.id));
 	$effect(() => {
 		if (data.canvas.id !== canvasScopedSyncId) {
 			canvasScopedSyncId = data.canvas.id;
 			// Resync publish state for the newly loaded canvas.
 			isPublished = data.canvas.published;
+			canvasSlug = data.canvas.slug;
 			// Resync dimensions + background for the new canvas.
 			canvasWidth = data.canvas.width;
 			canvasHeight = data.canvas.height;
@@ -1422,12 +1427,13 @@
 	<PublishModal
 		open={showPublishModal}
 		canvasId={data.canvas.id}
-		slug={data.canvas.slug}
+		slug={canvasSlug}
 		published={isPublished}
 		bindings={publishBindings}
 		bindingsStale={publishBindingsStale}
 		onClose={() => (showPublishModal = false)}
 		onPublishedChange={(next) => (isPublished = next)}
+		onSlugChange={(next) => (canvasSlug = next)}
 		onBeforePublish={async () => {
 			// Flush pending autosave so the published URL renders the latest edits,
 			// not whatever was last committed before the user hit Publish.
@@ -1444,7 +1450,7 @@
 			<div class="preview-header">
 				<strong>Rendered Preview</strong>
 				<span class="preview-info">
-					{data.canvas.width} × {data.canvas.height} · {data.canvas.slug}
+					{data.canvas.width} × {data.canvas.height} · {canvasSlug}
 				</span>
 			</div>
 			<div class="preview-body">
@@ -1485,8 +1491,7 @@
 				</div>
 			</div>
 			<div class="preview-url">
-				<code>/c/{data.canvas.slug}/image.png{previewQuery ? `?${previewQuery.slice(1)}` : ''}</code
-				>
+				<code>/c/{canvasSlug}/image.png{previewQuery ? `?${previewQuery.slice(1)}` : ''}</code>
 			</div>
 		</div>
 	{/if}
