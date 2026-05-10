@@ -280,6 +280,71 @@
 		return 'saved';
 	});
 
+	/**
+	 * Derived UI state for the live-render-sync indicator (TASK-108).
+	 *
+	 * Whereas `saveStatus` answers "are my edits persisted?", this
+	 * answers the next question: "does what's at /c/<slug> reflect
+	 * the canvas I'm currently looking at?"
+	 *
+	 * The render endpoint serves the freshly-saved canvas as soon as
+	 * the PATCH commits — the underlying contentVersion token bumps on
+	 * canvas.updatedAt. So in the editor's frame of reference the
+	 * answer is purely a function of saveStatus:
+	 *  - `saved`   → the current Fabric state matches what the server
+	 *                stores → the live render is in sync.
+	 *  - `dirty`   → unsaved local edits → the live render shows the
+	 *                LAST saved state, not what's on screen.
+	 *  - `saving`  → the PATCH is mid-flight → still showing last
+	 *                saved state, but about to flip back to in-sync.
+	 *  - `failed`  → the last save errored, so the live render is
+	 *                stuck on the last successful save.
+	 *
+	 * The deliberate gap this leaves (and why this is "stops short of
+	 * IDEA-59") is downstream CDN/social-cache caching of the OG image
+	 * URL. Those caches roll over on the contentVersion token bump,
+	 * but we can't observe their state from the editor — the indicator
+	 * therefore only describes the editor → render endpoint relationship,
+	 * not the editor → social-card-on-twitter relationship. The popover
+	 * copy says as much.
+	 */
+	type LiveRenderStatus = 'in-sync' | 'out-of-date' | 'saving' | 'failed';
+	let liveRenderStatus: LiveRenderStatus = $derived.by(() => {
+		if (saveStatus === 'failed') return 'failed';
+		if (saveStatus === 'saving') return 'saving';
+		if (saveStatus === 'dirty') return 'out-of-date';
+		return 'in-sync';
+	});
+
+	function liveRenderLabel(s: LiveRenderStatus): string {
+		switch (s) {
+			case 'in-sync':
+				return 'Live render: in sync';
+			case 'out-of-date':
+				return 'Live render: out of date';
+			case 'saving':
+				return 'Live render: updating…';
+			case 'failed':
+				return 'Live render: save failed';
+		}
+	}
+
+	/** Toggle for the explanatory popover anchored to the indicator.
+	 *  Click-outside closes it (handled by the document-level
+	 *  pointerdown listener installed in $effect below). */
+	let liveRenderPopoverOpen = $state(false);
+
+	$effect(() => {
+		if (!liveRenderPopoverOpen) return;
+		function onPointerDown(e: PointerEvent) {
+			const target = e.target as Element | null;
+			if (target?.closest('[data-live-render]')) return;
+			liveRenderPopoverOpen = false;
+		}
+		document.addEventListener('pointerdown', onPointerDown, true);
+		return () => document.removeEventListener('pointerdown', onPointerDown, true);
+	});
+
 	// Locally-tracked canvas dimensions/background so the settings modal can
 	// update them live without a full route reload. Synced to `data` in the
 	// canvas-switch effect. `untrack` on the initial read mirrors the
@@ -1388,6 +1453,49 @@
 			<span class="save-label">{saveStatusLabel(saveStatus)}</span>
 		</span>
 
+		<!--
+			Live-render-sync indicator (TASK-108). Surfaces the relationship
+			between the in-editor canvas state and what /c/<slug> would
+			render right now. Hidden for unpublished canvases — there's no
+			"live render" to be in sync with until the user clicks Publish.
+			The button DOUBLES as the popover trigger and as the visual
+			status pill, so click-anywhere-on-it opens the explainer.
+		-->
+		{#if isPublished}
+			<div class="live-render-wrap" data-live-render>
+				<button
+					type="button"
+					class="live-render-indicator live-render-{liveRenderStatus}"
+					data-testid="live-render-indicator"
+					data-state={liveRenderStatus}
+					aria-expanded={liveRenderPopoverOpen}
+					aria-haspopup="dialog"
+					onclick={() => (liveRenderPopoverOpen = !liveRenderPopoverOpen)}
+					title={liveRenderLabel(liveRenderStatus)}
+				>
+					<span class="live-render-dot" aria-hidden="true"></span>
+					<span class="live-render-label">{liveRenderLabel(liveRenderStatus)}</span>
+				</button>
+				{#if liveRenderPopoverOpen}
+					<div
+						class="live-render-popover"
+						role="dialog"
+						aria-label="Live render sync explainer"
+						data-testid="live-render-popover"
+					>
+						<p>
+							Your saved canvas drives <code>/c/{canvasSlug}</code>. Edits go live the moment you
+							hit save — there's no separate "publish updates" step.
+						</p>
+						<p class="live-render-popover-secondary">
+							Heads-up: social platforms (Twitter, Bluesky, Discord) cache the share preview image.
+							Re-share the link or use a refresh tool to update the cached card.
+						</p>
+					</div>
+				{/if}
+			</div>
+		{/if}
+
 		<button class="save-btn" onclick={save} disabled={isSaving}>
 			{isSaving ? 'Saving...' : 'Save'}
 		</button>
@@ -1808,6 +1916,121 @@
 		50% {
 			opacity: 0.4;
 		}
+	}
+
+	/* TASK-108: Live-render-sync indicator. Visually mirrors the
+	   save-indicator pill (pill shape, dot + label) so the toolbar's
+	   two status pills read as a related pair, but uses a distinct
+	   color palette so the user doesn't conflate "saved" with "live
+	   render in sync" — they describe different layers. The button
+	   itself is the popover trigger; the popover is positioned
+	   absolutely below it. */
+	.live-render-wrap {
+		position: relative;
+		display: inline-flex;
+	}
+
+	.live-render-indicator {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 12px;
+		font-weight: 500;
+		padding: 3px 10px;
+		border-radius: 9999px;
+		white-space: nowrap;
+		user-select: none;
+		border: 1px solid transparent;
+		background: transparent;
+		font-family: inherit;
+		cursor: pointer;
+	}
+
+	.live-render-indicator:focus-visible {
+		outline: 2px solid #2563eb;
+		outline-offset: 1px;
+	}
+
+	.live-render-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.live-render-in-sync {
+		background: #ecfdf5;
+		color: #065f46;
+		border-color: #a7f3d0;
+	}
+	.live-render-in-sync .live-render-dot {
+		background: #10b981;
+	}
+
+	.live-render-out-of-date {
+		background: #fefce8;
+		color: #854d0e;
+		border-color: #fde68a;
+	}
+	.live-render-out-of-date .live-render-dot {
+		background: #ca8a04;
+	}
+
+	.live-render-saving {
+		background: #fefce8;
+		color: #854d0e;
+		border-color: #fde68a;
+	}
+	.live-render-saving .live-render-dot {
+		background: #ca8a04;
+		animation: pulse 1s ease-in-out infinite;
+	}
+
+	.live-render-failed {
+		background: #fef2f2;
+		color: #991b1b;
+		border-color: #fecaca;
+	}
+	.live-render-failed .live-render-dot {
+		background: #dc2626;
+	}
+
+	.live-render-popover {
+		position: absolute;
+		top: calc(100% + 6px);
+		right: 0;
+		min-width: 280px;
+		max-width: 340px;
+		padding: 10px 12px;
+		background: #fff;
+		border: 1px solid #e5e7eb;
+		border-radius: 6px;
+		box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+		font-size: 12px;
+		color: #1f2937;
+		line-height: 1.45;
+		z-index: 50;
+	}
+
+	.live-render-popover p {
+		margin: 0 0 0.4rem;
+	}
+
+	.live-render-popover p:last-child {
+		margin-bottom: 0;
+	}
+
+	.live-render-popover code {
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 11.5px;
+		background: #f1f5f9;
+		padding: 0 0.25rem;
+		border-radius: 3px;
+	}
+
+	.live-render-popover-secondary {
+		color: #4b5563;
+		font-size: 11.5px;
 	}
 
 	.save-btn {
