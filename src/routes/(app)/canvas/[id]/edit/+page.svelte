@@ -14,12 +14,14 @@
 		EyeOff,
 		Copy,
 		Keyboard,
+		Sliders,
 		AlertTriangle as AlertTriangleIcon
 	} from '@lucide/svelte';
 	import CanvasEditor from '$lib/components/editor/Canvas.svelte';
 	import LayerPanel from '$lib/components/editor/LayerPanel.svelte';
 	import PropertyPanel from '$lib/components/editor/PropertyPanel.svelte';
 	import PublishModal from '$lib/components/editor/PublishModal.svelte';
+	import ParamsPanel from '$lib/components/editor/ParamsPanel.svelte';
 	import MobileBanner from '$lib/components/editor/MobileBanner.svelte';
 	import CanvasSettingsModal, {
 		type CanvasSettingsPatch
@@ -117,6 +119,12 @@
 	let showPublishModal = $state(false);
 	let openingPublish = $state(false);
 	let duplicating = $state(false);
+	// Params modal (TASK-105). Surfaces the same per-canvas schema editor
+	// the publish modal hosts, but accessible directly from the editor —
+	// so authors don't have to publish → edit-types → republish to fix a
+	// wrong type or default. Distinct from showPublishModal so the user
+	// can have either open without losing their place.
+	let showParamsPanel = $state(false);
 
 	/**
 	 * Duplicate the current canvas via POST /api/canvas/[id]/duplicate and
@@ -1269,6 +1277,15 @@
 		{/if}
 
 		<span class="toolbar-sep"></span>
+		<button
+			class="tool-btn"
+			data-testid="toolbar-params"
+			onclick={() => (showParamsPanel = true)}
+			title="View / edit URL parameters for this canvas"
+		>
+			<Sliders size={14} />
+			<span>Params</span>
+		</button>
 		<button class="tool-btn" class:active={showPreview} onclick={togglePreview}>
 			{#if showPreview}
 				<EyeOff size={14} />
@@ -1441,6 +1458,13 @@
 			if (!editorState.isDirty) return true;
 			return await save();
 		}}
+	/>
+
+	<ParamsPanel
+		open={showParamsPanel}
+		canvasId={data.canvas.id}
+		published={isPublished}
+		onClose={() => (showParamsPanel = false)}
 	/>
 
 	<ShortcutsCheatsheetModal open={showCheatsheet} onClose={() => (showCheatsheet = false)} />
