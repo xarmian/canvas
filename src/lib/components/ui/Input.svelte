@@ -1,7 +1,22 @@
 <script lang="ts">
 	import type { HTMLInputAttributes } from 'svelte/elements';
 
-	export type InputVariant = 'text' | 'number' | 'color';
+	/**
+	 * Supported native input types. `text` / `password` / `email` / `url` /
+	 * `search` / `tel` all render with the same baseline styling — the
+	 * variant only changes the `<input type>` attribute (and therefore
+	 * the OS input affordances + autocomplete behavior). `number` adds
+	 * tabular numerics, and `color` collapses to a fixed-aspect swatch.
+	 */
+	export type InputVariant =
+		| 'text'
+		| 'password'
+		| 'email'
+		| 'url'
+		| 'search'
+		| 'tel'
+		| 'number'
+		| 'color';
 	export type InputSize = 'sm' | 'md';
 
 	interface Props extends Omit<HTMLInputAttributes, 'value' | 'type' | 'size'> {
