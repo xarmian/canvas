@@ -9,6 +9,7 @@ import type { CanvasTemplate, FabricCanvasJson, OutputFormat } from '$lib/engine
 import { validateParams } from '$lib/server/canvas-params';
 import { getDefaultRenderCache } from '$lib/server/render-cache';
 import { ensureUserFontsRegistered, getLiveUserFontDescriptors } from '$lib/server/user-fonts';
+import { resolveAssetReferences } from '$lib/server/asset-resolver';
 import {
 	acquireRenderSlot,
 	checkRateLimit,
@@ -362,6 +363,12 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 			(canvas.templateJson as unknown as FabricCanvasJson) ?? { objects: [] },
 			liveFamilies
 		);
+
+		// Resolve `asset://{id}` references to their storage URLs (TASK-89).
+		// Owner-scoped — cross-user refs and deleted IDs are silently
+		// dropped to the placeholder path inside the renderer's image
+		// fetcher, never 500s.
+		await resolveAssetReferences(sanitizedJson, canvas.userId);
 
 		const template: CanvasTemplate = {
 			width: canvas.width,

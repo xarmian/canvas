@@ -6,6 +6,7 @@ import { eq, and } from 'drizzle-orm';
 import { render } from '$lib/engine';
 import type { CanvasTemplate, FabricCanvasJson } from '$lib/engine';
 import { ensureUserFontsRegistered, getLiveUserFontFamilies } from '$lib/server/user-fonts';
+import { resolveAssetReferences } from '$lib/server/asset-resolver';
 
 /** Match the public render route's sanitizer — kept inline (not
  *  exported) so the two endpoints don't accidentally drift. */
@@ -63,6 +64,12 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
 		(canvas.templateJson as unknown as FabricCanvasJson) ?? { objects: [] },
 		liveFamilies
 	);
+
+	// Resolve `asset://{id}` references to their storage URLs (TASK-89).
+	// Mirrors the public render route. Owner-scoped via canvas.userId
+	// (which equals locals.user.id here, since the SELECT above already
+	// filtered to the requesting user's canvases).
+	await resolveAssetReferences(sanitizedJson, canvas.userId);
 
 	const template: CanvasTemplate = {
 		width: canvas.width,
