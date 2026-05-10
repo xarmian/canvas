@@ -477,6 +477,11 @@
 													<option value="percent:1">Percent 1dp (12.3%)</option>
 													<option value="signed-percent">Signed % (+12% / −12%)</option>
 													<option value="signed-percent:1">Signed % 1dp (+12.3%)</option>
+													<option value="compact">Compact (1.2k / 3.4M)</option>
+													<option value="compact:2">Compact 2dp (1.23k)</option>
+													<option value="crypto-price">Crypto price ($1,234.56 / $0.0001230)</option
+													>
+													<option value="crypto-price:6">Crypto price 6 sig ($0.00123456)</option>
 													<option value="date:short">Date short (Jan 1, 2026)</option>
 													<option value="date:long">Date long (January 1, 2026)</option>
 													<option value="date:relative">Date relative (2 days ago)</option>

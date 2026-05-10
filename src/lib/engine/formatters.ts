@@ -14,11 +14,13 @@
  *   <name>:<arg>    — single string argument (e.g. currency:USD, percent:1)
  *
  * Supported formatters:
- *   - currency:CODE              ($1,234.56)
- *   - percent:digits=0           (12.3%)
- *   - signed-percent:digits=0    (+12.3% / -12.3%)
- *   - number:digits=0            (1,234.56)
- *   - date:short|long|relative   (Jan 1, 2026 / January 1, 2026 / 2 days ago)
+ *   - currency:CODE                   ($1,234.56)
+ *   - percent:digits=0                (12.3%)
+ *   - signed-percent:digits=0         (+12.3% / -12.3%)
+ *   - number:digits=0                 (1,234.56)
+ *   - compact:digits=1                (1.2k / 3.4M / 1.2B / 5.6T)
+ *   - crypto-price:sigDigits=4        (auto-precision $: $1,234.56 / $0.0001230)
+ *   - date:short|long|relative        (Jan 1, 2026 / January 1, 2026 / 2 days ago)
  *
  * Unknown formatters fall through to the input string unchanged so a typo
  * doesn't blank out the user's content. Renderer logs are out of scope for
@@ -33,7 +35,15 @@ export interface ParsedFormat {
 
 /** Lowercased registry of known formatter names. Editor UIs can read this
  * to populate dropdowns without re-listing the strings inline. */
-export const FORMATTER_NAMES = ['currency', 'percent', 'signed-percent', 'number', 'date'] as const;
+export const FORMATTER_NAMES = [
+	'currency',
+	'percent',
+	'signed-percent',
+	'number',
+	'compact',
+	'crypto-price',
+	'date'
+] as const;
 export type FormatterName = (typeof FORMATTER_NAMES)[number];
 
 /** Parse a "name:arg" or "name" string. Whitespace is trimmed; an empty
@@ -64,6 +74,17 @@ function digitsArg(arg: string | undefined, fallback: number): number {
 	if (!Number.isFinite(n)) return fallback;
 	if (n < 0) return 0;
 	if (n > 20) return 20; // Intl spec maximum
+	return n;
+}
+
+/** Significant-digits arg parser for `crypto-price`. Same shape as
+ * `digitsArg` but clamps to Intl's significant-digit range [1, 21]. */
+function sigDigitsArg(arg: string | undefined, fallback: number): number {
+	if (arg === undefined) return fallback;
+	const n = Number.parseInt(arg, 10);
+	if (!Number.isFinite(n)) return fallback;
+	if (n < 1) return 1;
+	if (n > 21) return 21; // Intl spec maximum for significant digits
 	return n;
 }
 
@@ -130,6 +151,28 @@ export function applyFormat(value: string, format: string | undefined | null): s
 				maximumFractionDigits: digits
 			}).format(num);
 		}
+		case 'compact': {
+			const num = safeNumber(value);
+			if (num === null) return value;
+			// `digits` is a CEILING for the shrunk-value precision, not a
+			// floor — the unshrinkable case (e.g. 999) should render as
+			// "999", not "999.0". Fixing this required setting
+			// minimumFractionDigits to 0 instead of mirroring digits the
+			// way percent / signed-percent / number do, where mandatory
+			// trailing zeros are usually desirable.
+			const digits = digitsArg(parsed.arg, 1);
+			return new Intl.NumberFormat('en-US', {
+				notation: 'compact',
+				minimumFractionDigits: 0,
+				maximumFractionDigits: digits
+			}).format(num);
+		}
+		case 'crypto-price': {
+			const num = safeNumber(value);
+			if (num === null) return value;
+			const sigDigits = sigDigitsArg(parsed.arg, 4);
+			return formatCryptoPrice(num, sigDigits);
+		}
 		case 'date': {
 			// Accept ISO strings, RFC 2822, and milliseconds since epoch.
 			const millis = safeNumber(value);
@@ -147,6 +190,52 @@ export function applyFormat(value: string, format: string | undefined | null): s
 		default:
 			return value;
 	}
+}
+
+/** Format a numeric USD value with auto-precision tuned for crypto prices.
+ *
+ * Magnitude tiers:
+ *   - `|n| ≥ 1` or `n === 0`:  standard currency, 2 fraction digits
+ *                              (`$1,234.56`, `$0.00`).
+ *   - `1e-7 ≤ |n| < 1`:        Intl currency with `sigDigits` significant
+ *                              digits (`$0.0001230` for sigDigits=4).
+ *   - `|n| < 1e-7`:            scientific notation in dollars
+ *                              (`$1.000e-9`) — keeps very small token
+ *                              prices readable instead of `$0.00`.
+ *
+ * Negative values reuse Intl's locale-correct sign placement; the
+ * scientific branch prefixes a manual `-` since `toExponential` doesn't
+ * render through Intl. */
+function formatCryptoPrice(num: number, sigDigits: number): string {
+	const abs = Math.abs(num);
+
+	// Standard-currency path: ≥1 (and exactly zero, which Intl handles
+	// cleanly with 2 fraction digits — significant-digits would emit
+	// "$0.000" for sigDigits=4).
+	if (abs >= 1 || num === 0) {
+		return new Intl.NumberFormat('en-US', {
+			style: 'currency',
+			currency: 'USD',
+			minimumFractionDigits: 2,
+			maximumFractionDigits: 2
+		}).format(num);
+	}
+
+	// Very small magnitude: drop into scientific notation. Intl's
+	// `notation: 'scientific'` doesn't compose with `style: 'currency'`,
+	// so format the mantissa+exponent ourselves and prefix `$`.
+	if (abs < 1e-7) {
+		const sign = num < 0 ? '-' : '';
+		return `${sign}$${abs.toExponential(sigDigits - 1)}`;
+	}
+
+	// Sub-dollar but still representable: significant-digit currency.
+	return new Intl.NumberFormat('en-US', {
+		style: 'currency',
+		currency: 'USD',
+		minimumSignificantDigits: sigDigits,
+		maximumSignificantDigits: sigDigits
+	}).format(num);
 }
 
 /** Relative-time helper that mirrors Intl.RelativeTimeFormat without the
