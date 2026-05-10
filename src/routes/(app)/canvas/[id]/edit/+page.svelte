@@ -649,7 +649,11 @@
 		const originCanvasId = data.canvas.id;
 		const isStale = () => !isMounted || data.canvas.id !== originCanvasId;
 		try {
-			const json = editorState.fabricCanvas.toObject(['paramBindings', 'conditionalStyles']);
+			const json = editorState.fabricCanvas.toObject([
+				'paramBindings',
+				'conditionalStyles',
+				'fallbackSrc'
+			]);
 			const res = await fetch(`/api/canvas/${originCanvasId}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },

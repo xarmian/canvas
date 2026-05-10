@@ -107,6 +107,18 @@ export interface FabricObject {
 	lineHeight?: number;
 	// Image properties
 	src?: string;
+	/**
+	 * Optional single-level fallback URL used when `src` fails to load
+	 * (404, timeout, SSRF block, network error). The renderer attempts
+	 * `fallbackSrc` exactly once before drawing the built-in gray placeholder
+	 * (TASK-86). Accepts both raw URLs and `asset://{id}` references — the
+	 * latter resolves through the same path as a primary `src`.
+	 *
+	 * Single-level only: if `fallbackSrc` itself fails, the gray placeholder
+	 * is drawn. A multi-level chain isn't worth the API complexity until
+	 * real-world usage demands it.
+	 */
+	fallbackSrc?: string;
 	crossOrigin?: string;
 	/** Skip rendering when explicitly false. Bindable via paramBindings.visible
 	 * (TASK-51) — boolean values like 'true'/'1' show the layer, 'false'/'0'
