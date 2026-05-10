@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { Modal } from '$lib/components/ui';
 	import { toast } from '$lib/stores/toast.svelte';
 
@@ -34,6 +35,12 @@
 		 * state, not a stale autosave snapshot. Return false to abort the publish.
 		 */
 		onBeforePublish?: () => Promise<boolean>;
+		/**
+		 * Called after a successful slug rename (TASK-98) so the parent
+		 * editor can update its local mirror of the slug — that
+		 * propagates to share URLs, image URLs, og snippets, etc.
+		 */
+		onSlugChange?: (newSlug: string) => void;
 	}
 
 	let {
@@ -45,7 +52,8 @@
 		bindingsStale = false,
 		onClose,
 		onPublishedChange,
-		onBeforePublish
+		onBeforePublish,
+		onSlugChange
 	}: Props = $props();
 
 	let busy = $state(false);
@@ -280,6 +288,95 @@
 		);
 	});
 
+	// --- Slug rename (TASK-98) ---
+	// Local draft so the user can type freely (with live format
+	// validation) without committing on every keystroke. Reset
+	// whenever the parent's `slug` prop changes (after a successful
+	// rename, the parent calls onSlugChange and re-passes the new
+	// slug as the prop).
+	// `untrack` silences svelte-check's state_referenced_locally warning
+	// — the $effect below is what keeps `slugDraft` in step with the
+	// `slug` prop.
+	let slugDraft = $state(untrack(() => slug));
+	let slugBusy = $state(false);
+	let slugSuggestion = $state<string | null>(null);
+	let slugServerError = $state<string | null>(null);
+
+	$effect(() => {
+		// Reset the draft whenever the canonical slug changes (parent
+		// pushed a new value after rename, or modal reopened on a
+		// different canvas).
+		slugDraft = slug;
+		slugSuggestion = null;
+		slugServerError = null;
+	});
+
+	/** Same format contract as `validateSlug` in $lib/server/slug.ts.
+	 *  Kept inline (rather than imported) to avoid pulling the server
+	 *  module into the client bundle — the regex is stable and a
+	 *  format mismatch is a minor UX annoyance, not a security
+	 *  concern (the server still re-validates on PATCH). */
+	const SLUG_FORMAT_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+	const SLUG_MAX_LENGTH = 80;
+
+	let slugFormatError = $derived.by(() => {
+		const v = slugDraft.trim();
+		if (v.length === 0) return 'Slug cannot be empty.';
+		if (v.length > SLUG_MAX_LENGTH)
+			return `Slug cannot be longer than ${SLUG_MAX_LENGTH} characters.`;
+		if (!SLUG_FORMAT_RE.test(v)) {
+			return 'Use lowercase letters, numbers, and hyphens only (no leading/trailing/consecutive hyphens).';
+		}
+		return null;
+	});
+
+	let slugDirty = $derived(slugDraft.trim() !== slug);
+
+	async function commitSlugRename(): Promise<void> {
+		const candidate = slugDraft.trim();
+		if (slugBusy) return;
+		if (!slugDirty) return;
+		if (slugFormatError) return; // local validation already shown
+		slugBusy = true;
+		slugServerError = null;
+		slugSuggestion = null;
+		try {
+			const res = await fetch(`/api/canvas/${canvasId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ slug: candidate })
+			});
+			if (res.ok) {
+				const data = (await res.json()) as { slug: string };
+				onSlugChange?.(data.slug);
+				slugDraft = data.slug;
+				toast.success('Slug renamed');
+			} else if (res.status === 409) {
+				const body = (await res.json()) as { message: string; suggestion?: string };
+				slugServerError = body.message;
+				slugSuggestion = body.suggestion ?? null;
+			} else if (res.status === 400) {
+				const body = (await res.json()) as { message: string };
+				slugServerError = body.message;
+			} else {
+				slugServerError = `Couldn't rename slug (${res.status}).`;
+			}
+		} catch {
+			slugServerError = "Couldn't reach the server. Please try again.";
+		} finally {
+			slugBusy = false;
+		}
+	}
+
+	function applySlugSuggestion(): void {
+		if (slugSuggestion) {
+			slugDraft = slugSuggestion;
+			slugSuggestion = null;
+			slugServerError = null;
+			void commitSlugRename();
+		}
+	}
+
 	async function persistSharingField<K extends keyof SharingState>(
 		key: K,
 		value: SharingState[K]
@@ -492,6 +589,61 @@
 			Your canvas is live. Share the page URL, or use the image URL directly in an
 			<code>og:image</code> tag or API call.
 		</p>
+
+		<div class="field">
+			<label for="publish-slug">Slug</label>
+			<!--
+				Slug rename (TASK-98). Format-validated locally so a typo
+				is caught without a roundtrip; collisions surface as a
+				server 409 with an inline "Use {{suggestion}}" button so
+				the user can accept the alternative with one click.
+				No 308 from the old slug — pre-launch latitude (PLAN-81).
+			-->
+			<div class="copy-row">
+				<input
+					id="publish-slug"
+					type="text"
+					data-testid="slug-input"
+					value={slugDraft}
+					disabled={slugBusy}
+					oninput={(e) => {
+						slugDraft = e.currentTarget.value;
+						slugServerError = null;
+						slugSuggestion = null;
+					}}
+					onblur={() => void commitSlugRename()}
+					onkeydown={(e) => {
+						if (e.key === 'Enter') {
+							e.preventDefault();
+							void commitSlugRename();
+						}
+					}}
+				/>
+			</div>
+			{#if slugDirty && slugFormatError}
+				<p class="slug-error" data-testid="slug-format-error">{slugFormatError}</p>
+			{:else if slugServerError}
+				<p class="slug-error" data-testid="slug-server-error" role="alert">
+					{slugServerError}
+					{#if slugSuggestion}
+						<button
+							type="button"
+							class="slug-suggestion-btn"
+							data-testid="slug-suggestion-apply"
+							onclick={applySlugSuggestion}
+							disabled={slugBusy}
+						>
+							Use “{slugSuggestion}”
+						</button>
+					{/if}
+				</p>
+			{:else}
+				<p class="help">
+					The user-typed half of <code>/c/{`{slug}`}</code>. Lowercase letters, numbers, hyphens. No
+					back-compat redirect from the old slug — old URLs 404 immediately.
+				</p>
+			{/if}
+		</div>
 
 		<div class="field">
 			<label for="publish-share-url">Share page URL</label>
@@ -894,6 +1046,40 @@
 		font-size: 0.75rem;
 		color: #6b7280;
 		line-height: 1.4;
+	}
+
+	.slug-error {
+		margin: 0.4rem 0 0;
+		padding: 0.4rem 0.55rem;
+		background: #fef2f2;
+		border: 1px solid #fecaca;
+		border-radius: 4px;
+		font-size: 0.75rem;
+		color: #991b1b;
+		line-height: 1.45;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.4rem;
+	}
+
+	.slug-suggestion-btn {
+		font-size: 0.7rem;
+		padding: 0.15rem 0.45rem;
+		border-radius: 4px;
+		background: #fff;
+		border: 1px solid #fecaca;
+		color: #991b1b;
+		cursor: pointer;
+	}
+
+	.slug-suggestion-btn:hover:not(:disabled) {
+		background: #fee2e2;
+	}
+
+	.slug-suggestion-btn:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
 	}
 
 	.help code {
