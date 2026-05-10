@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { canvases } from '$lib/server/db/schema';
 import { eq, desc } from 'drizzle-orm';
-import { findAvailableSlug, slugify } from '$lib/server/slug';
+import { insertWithUniqueSlug, slugify } from '$lib/server/slug';
 
 /** List all canvases for the authenticated user */
 export const GET: RequestHandler = async ({ locals }) => {
@@ -51,21 +51,27 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	}
 
 	const baseSlug = slugify(name);
-	const slug = await findAvailableSlug(db, baseSlug);
 
-	const [canvas] = await db
-		.insert(canvases)
-		.values({
-			userId: locals.user.id,
-			name: name.trim(),
-			slug,
-			width: width || 1200,
-			height: height || 630,
-			backgroundType: backgroundType || 'color',
-			backgroundValue: backgroundValue || '#ffffff',
-			templateJson: safeTemplate
-		})
-		.returning();
+	// `insertWithUniqueSlug` closes the TOCTOU window between the slug
+	// probe and the INSERT: if a concurrent create wins the race for the
+	// chosen slug, the unique-index violation is caught and the next
+	// free `-N` is tried instead of bubbling a 500.
+	const canvas = await insertWithUniqueSlug(db, baseSlug, async (slug) => {
+		const [row] = await db
+			.insert(canvases)
+			.values({
+				userId: locals.user!.id,
+				name: name.trim(),
+				slug,
+				width: width || 1200,
+				height: height || 630,
+				backgroundType: backgroundType || 'color',
+				backgroundValue: backgroundValue || '#ffffff',
+				templateJson: safeTemplate
+			})
+			.returning();
+		return row;
+	});
 
 	return json(canvas, { status: 201 });
 };

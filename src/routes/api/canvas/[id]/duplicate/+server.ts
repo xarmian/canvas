@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { canvases } from '$lib/server/db/schema';
 import { eq, and } from 'drizzle-orm';
-import { findAvailableSlug, slugify } from '$lib/server/slug';
+import { insertWithUniqueSlug, slugify } from '$lib/server/slug';
 import { syncCanvasParams } from '$lib/server/canvas-params';
 import type { FabricCanvasJson } from '$lib/engine';
 
@@ -44,26 +44,29 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 	// v1 slug scheme (TASK-92): auto-derive from name, resolve collisions
 	// with the smallest free `-N` suffix. Repeated duplicates of the same
 	// source produce `foo-copy`, `foo-copy-2`, `foo-copy-3`, etc. — no
-	// nanoid noise in the URL.
-	const newSlug = await findAvailableSlug(db, slugify(newName));
-
-	const [duplicated] = await db
-		.insert(canvases)
-		.values({
-			userId: locals.user.id,
-			name: newName,
-			slug: newSlug,
-			width: source.width,
-			height: source.height,
-			backgroundType: source.backgroundType,
-			backgroundValue: source.backgroundValue,
-			templateJson: source.templateJson,
-			ogTitle: source.ogTitle,
-			ogDescription: source.ogDescription,
-			redirectUrl: source.redirectUrl
-			// published intentionally omitted → defaults to false (draft)
-		})
-		.returning();
+	// nanoid noise in the URL. `insertWithUniqueSlug` retries on the
+	// unique-index 23505 so two concurrent duplicates of the same source
+	// land on distinct suffixes instead of one bubbling a 500.
+	const duplicated = await insertWithUniqueSlug(db, slugify(newName), async (newSlug) => {
+		const [row] = await db
+			.insert(canvases)
+			.values({
+				userId: locals.user!.id,
+				name: newName,
+				slug: newSlug,
+				width: source.width,
+				height: source.height,
+				backgroundType: source.backgroundType,
+				backgroundValue: source.backgroundValue,
+				templateJson: source.templateJson,
+				ogTitle: source.ogTitle,
+				ogDescription: source.ogDescription,
+				redirectUrl: source.redirectUrl
+				// published intentionally omitted → defaults to false (draft)
+			})
+			.returning();
+		return row;
+	});
 
 	// Re-derive canvas_params for the new canvas. Without this the
 	// duplicated editor would load with no Param Schema rows, and the

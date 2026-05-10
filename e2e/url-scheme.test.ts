@@ -64,9 +64,7 @@ test('POST /api/canvas resolves slug collision with smallest -N suffix', async (
 test('PATCH /api/canvas/:id accepts a user-chosen slug', async ({ page }) => {
 	await signupAndLogin(page);
 	const { name } = uniqueBase('Rename Me');
-	const created = await (
-		await page.request.post('/api/canvas', { data: { name } })
-	).json();
+	const created = await (await page.request.post('/api/canvas', { data: { name } })).json();
 	const target = `final-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 
 	const patched = await page.request.patch(`/api/canvas/${created.id}`, {
@@ -120,15 +118,36 @@ test('PATCH /api/canvas/:id rejects reserved slugs', async ({ page }) => {
 test('PATCH /api/canvas/:id no-op rename to current slug succeeds', async ({ page }) => {
 	await signupAndLogin(page);
 	const { name } = uniqueBase('Idempotent');
-	const created = await (
-		await page.request.post('/api/canvas', { data: { name } })
-	).json();
+	const created = await (await page.request.post('/api/canvas', { data: { name } })).json();
 
 	const res = await page.request.patch(`/api/canvas/${created.id}`, {
 		data: { slug: created.slug }
 	});
 	expect(res.status()).toBe(200);
 	expect((await res.json()).slug).toBe(created.slug);
+});
+
+test('POST /api/canvas concurrent same-name creates resolve to distinct slugs (no 500s)', async ({
+	page
+}) => {
+	await signupAndLogin(page);
+	const { name, slug: expected } = uniqueBase('Race');
+
+	// Fire 5 concurrent POSTs with the same name. The TOCTOU window
+	// between the slug probe and the INSERT means at least two of these
+	// can pre-write resolve to the same `-N` candidate; the unique index
+	// would 500 the loser without `insertWithUniqueSlug`'s retry.
+	const responses = await Promise.all(
+		Array.from({ length: 5 }, () => page.request.post('/api/canvas', { data: { name } }))
+	);
+	expect(responses.every((r) => r.status() === 201)).toBe(true);
+
+	const slugs = await Promise.all(responses.map(async (r) => (await r.json()).slug as string));
+	const unique = new Set(slugs);
+	expect(unique.size).toBe(slugs.length); // every winner got a distinct slug
+	for (const slug of slugs) {
+		expect(slug === expected || slug.startsWith(`${expected}-`)).toBe(true);
+	}
 });
 
 test('POST /api/canvas/:id/duplicate produces a slug with no nanoid suffix', async ({ page }) => {

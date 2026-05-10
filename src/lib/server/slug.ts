@@ -140,12 +140,94 @@ export async function findAvailableSlug(
 
 /** Suggest the next-best slug to a user whose chosen slug is already
  *  taken. Used by the rename PATCH (TASK-98) and the create POST when
- *  surfacing a collision error. Stops at 10 suffixes so the response
- *  payload doesn't blow up on a popular name. */
+ *  surfacing a collision error. */
 export async function suggestAlternateSlug(
 	dbInstance: typeof Db,
 	base: string,
 	opts: { ignoreId?: string } = {}
 ): Promise<string> {
 	return findAvailableSlug(dbInstance, base, opts);
+}
+
+/** Postgres unique_violation SQLSTATE.
+ *  See https://www.postgresql.org/docs/current/errcodes-appendix.html.
+ *  We catch this at the write boundary (instead of relying on the
+ *  pre-write probe alone) to close the TOCTOU window between
+ *  `findAvailableSlug` and the actual INSERT/UPDATE. */
+export const PG_UNIQUE_VIOLATION = '23505';
+
+/** Type guard for "this error came from the slug unique index." Matches
+ *  on SQLSTATE + the column/constraint name so we don't misinterpret a
+ *  unique-violation on a different column (e.g. `assets.storage_key`)
+ *  as a slug collision.
+ *
+ *  Drizzle wraps driver errors in `DrizzleQueryError` whose original
+ *  postgres.js error is on `.cause`. Walk the cause chain (bounded so
+ *  a circular cause can't loop forever) so callers don't have to
+ *  unwrap explicitly. */
+export function isSlugUniqueViolation(err: unknown): boolean {
+	for (let depth = 0; depth < 5; depth++) {
+		if (typeof err !== 'object' || err === null) return false;
+		const e = err as {
+			code?: unknown;
+			constraint_name?: unknown;
+			constraint?: unknown;
+			detail?: unknown;
+			column_name?: unknown;
+			cause?: unknown;
+		};
+		if (e.code === PG_UNIQUE_VIOLATION) {
+			// postgres.js exposes `constraint_name`; node-postgres uses `constraint`.
+			const constraint =
+				typeof e.constraint_name === 'string'
+					? e.constraint_name
+					: typeof e.constraint === 'string'
+						? e.constraint
+						: '';
+			if (constraint && constraint.includes('slug')) return true;
+			if (typeof e.column_name === 'string' && e.column_name === 'slug') return true;
+			// Fallback: inspect the human-readable detail message. Postgres formats
+			// it like `Key (slug)=(...) already exists.` — sufficient when the
+			// driver doesn't surface the constraint name.
+			if (typeof e.detail === 'string' && /\(slug\)=/i.test(e.detail)) return true;
+			return false;
+		}
+		err = e.cause;
+	}
+	return false;
+}
+
+/** Run `attempt(slug)` and on a slug-unique-violation re-run with the
+ *  next free slug, up to `maxRetries` times. Used for auto-generated
+ *  slugs (POST + duplicate) so concurrent same-name creates land on
+ *  distinct `-N` suffixes instead of one of them 500ing.
+ *
+ *  Why a retry loop instead of an upsert / advisory lock: the unique
+ *  index already enforces the invariant, so the optimistic strategy
+ *  (probe → write → retry-on-collision) gives correct results without
+ *  serializing all canvas creates. Two concurrent creates probe the
+ *  same free slug and collide on the unique index; one wins, the loser
+ *  retries `findAvailableSlug` (which now sees the winner's row) and
+ *  picks `-2`. After ~3 retries even a wide-open thundering herd
+ *  resolves. */
+export async function insertWithUniqueSlug<T>(
+	dbInstance: typeof Db,
+	base: string,
+	attempt: (slug: string) => Promise<T>,
+	opts: { ignoreId?: string; maxRetries?: number } = {}
+): Promise<T> {
+	const maxRetries = opts.maxRetries ?? 5;
+	let lastErr: unknown;
+	for (let i = 0; i <= maxRetries; i++) {
+		const slug = await findAvailableSlug(dbInstance, base, opts);
+		try {
+			return await attempt(slug);
+		} catch (err) {
+			if (!isSlugUniqueViolation(err)) throw err;
+			lastErr = err;
+			// Loop: another writer claimed the slug between probe and write.
+			// `findAvailableSlug` will see the new row and pick the next free.
+		}
+	}
+	throw lastErr;
 }

@@ -8,7 +8,7 @@ import {
 	applyParamUpdates,
 	type ParamSchemaUpdate
 } from '$lib/server/canvas-params';
-import { suggestAlternateSlug, validateSlug } from '$lib/server/slug';
+import { isSlugUniqueViolation, suggestAlternateSlug, validateSlug } from '$lib/server/slug';
 import type { FabricCanvasJson } from '$lib/engine';
 
 /** Helper: fetch canvas and verify ownership */
@@ -133,9 +133,31 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 				? { updatedAt: new Date() }
 				: null;
 
-	const [updated] = finalUpdates
-		? await db.update(canvases).set(finalUpdates).where(eq(canvases.id, params.id)).returning()
-		: [canvas];
+	// Catch the 23505 race: another writer claimed `updates.slug` between
+	// our pre-write probe and this UPDATE. Convert to the same 409 +
+	// suggestion shape the up-front collision branch returns so clients
+	// have a single error contract for slug conflicts.
+	let updated;
+	try {
+		updated = finalUpdates
+			? (
+					await db.update(canvases).set(finalUpdates).where(eq(canvases.id, params.id)).returning()
+				)[0]
+			: canvas;
+	} catch (err) {
+		if (isSlugUniqueViolation(err) && typeof updates.slug === 'string') {
+			const suggestion = await suggestAlternateSlug(db, updates.slug, { ignoreId: canvas.id });
+			return json(
+				{
+					error: 'slug_taken',
+					message: `"${updates.slug}" is already in use. Try "${suggestion}".`,
+					suggestion
+				},
+				{ status: 409 }
+			);
+		}
+		throw err;
+	}
 
 	// Re-derive canvas_params from the new templateJson (if templateJson
 	// was part of this PATCH) so bindings/conditional rules are reflected
