@@ -379,6 +379,14 @@
 		// the `finally`'s slugBusy reset safe: a stale completion no
 		// longer leaves the input disabled on a different canvas.
 		// Codex round 1 P2 + round 2 P2.
+		//
+		// Bump the generation BEFORE capturing it so a newer rename in
+		// the same canvas invalidates an earlier in-flight one. Without
+		// this bump, a close→reopen→submit-different-slug sequence
+		// could share a generation with the still-pending earlier
+		// request — request A's late success would call onSlugChange
+		// and bump gen, dropping request B. Codex round 4 P2.
+		slugRenameGen++;
 		const requestCanvasId = canvasId;
 		const requestGen = slugRenameGen;
 		const isLive = () => requestCanvasId === canvasId && requestGen === slugRenameGen;

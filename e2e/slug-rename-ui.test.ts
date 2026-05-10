@@ -220,9 +220,67 @@ test('slug rename: closing modal mid-flight still updates editor slug (Codex rou
 	// the late onSlugChange.
 	await page.getByTestId('toolbar-publish').click();
 	await expect(page.getByTestId('sharing-section')).toBeVisible();
-	await expect(page.locator('#publish-share-url')).toHaveValue(
-		new RegExp(`/c/${newSlug}$`)
-	);
+	await expect(page.locator('#publish-share-url')).toHaveValue(new RegExp(`/c/${newSlug}$`));
+	await page.unroute(`**/api/canvas/${canvas.id}`);
+});
+
+test('slug rename: close-then-resubmit drops the earlier in-flight rename (Codex round 4 P2)', async ({
+	page
+}) => {
+	const request = page.request;
+	await signupAndLogin(page);
+	const canvas = await createCanvas(page, { name: 'Sequenced Renames', preset: 'OG Image' });
+	await gotoEditor(page, canvas.id);
+	await addTextLayer(page, 'placeholder');
+	await publish(page);
+
+	const slugA = `seq-a-${Date.now()}`;
+	const slugB = `seq-b-${Date.now()}`;
+	let patchesSeen = 0;
+
+	// Delay the FIRST PATCH (slug A) so we can submit a SECOND one
+	// (slug B) while it's still in flight. The second PATCH responds
+	// quickly. Without the round-4 P2 fix, A's late success would
+	// call onSlugChange(A), bump the generation, and drop B's
+	// completion — leaving the editor showing slug A while the
+	// server stored slug B.
+	await page.route(`**/api/canvas/${canvas.id}`, async (route) => {
+		if (route.request().method() === 'PATCH') {
+			patchesSeen++;
+			if (patchesSeen === 1) {
+				await new Promise((r) => setTimeout(r, 1500));
+			}
+		}
+		await route.continue();
+	});
+
+	const slugInput = page.getByTestId('slug-input');
+
+	// 1. Submit slug A (slow PATCH starts).
+	await slugInput.fill(slugA);
+	await slugInput.press('Enter');
+
+	// 2. Close + reopen modal mid-flight.
+	await page.keyboard.press('Escape');
+	await expect(page.getByTestId('sharing-section')).toBeHidden();
+	await page.getByTestId('toolbar-publish').click();
+	await expect(page.getByTestId('sharing-section')).toBeVisible();
+
+	// 3. Submit slug B (fast PATCH).
+	await page.getByTestId('slug-input').fill(slugB);
+	await page.getByTestId('slug-input').blur();
+
+	// Both PATCHes have been issued. After the slow A completes, B
+	// should be the canonical slug because B was submitted last.
+	await expect(async () => {
+		const r = await request.get(`/api/canvas/${canvas.id}`);
+		const body = (await r.json()) as { slug: string };
+		expect(body.slug).toBe(slugB);
+	}).toPass({ timeout: 6_000 });
+
+	// Editor's local mirror also reflects slug B (not slug A) once
+	// both completions have landed.
+	await expect(page.locator('#publish-share-url')).toHaveValue(new RegExp(`/c/${slugB}$`));
 	await page.unroute(`**/api/canvas/${canvas.id}`);
 });
 
