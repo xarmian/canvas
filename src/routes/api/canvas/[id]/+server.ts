@@ -21,22 +21,82 @@ async function getOwnedCanvas(canvasId: string, userId: string) {
 	return canvas ?? null;
 }
 
-/** Get a single canvas (owner only) */
+/** Build the optimistic-concurrency ETag for a canvas. The version is
+ *  the row's `updatedAt` in milliseconds-since-epoch — Drizzle's
+ *  `$onUpdate` advances it on every write, so the ETag is a strong
+ *  monotonic version token. Clients pass this back via `If-Match` on
+ *  PATCH; a stale value yields 412.
+ *
+ *  Quoted per RFC 9110 §8.8.3 (ETags are quoted-strings). The PATCH
+ *  comparator strips the quotes so callers can submit either the
+ *  bare digits or the quoted form. */
+function canvasEtag(canvas: { updatedAt: Date }): string {
+	return `"${canvas.updatedAt.getTime()}"`;
+}
+
+/** Strip `W/` weak prefix and surrounding quotes so the comparator
+ *  doesn't reject `If-Match: "12345"` against the bare-digit version
+ *  the server holds internally. */
+function normalizeIfMatch(value: string): string {
+	const trimmed = value.trim();
+	const stripped = trimmed.startsWith('W/') ? trimmed.slice(2) : trimmed;
+	return stripped.replace(/^"|"$/g, '');
+}
+
+/** Get a single canvas (owner only). Emits an ETag header so clients
+ *  can capture the current version for optimistic-concurrency PATCHes
+ *  via `If-Match`. */
 export const GET: RequestHandler = async ({ params, locals }) => {
 	if (!locals.user) error(401, 'Unauthorized');
 
 	const canvas = await getOwnedCanvas(params.id, locals.user.id);
 	if (!canvas) error(404, 'Canvas not found');
 
-	return json(canvas);
+	return json(canvas, { headers: { ETag: canvasEtag(canvas) } });
 };
 
-/** Update a canvas (template_json, name, settings) */
+/** Update a canvas (template_json, name, settings).
+ *
+ *  Optimistic concurrency (TASK-98 follow-up): if the request includes
+ *  `If-Match: "<updatedAt-ms>"`, the handler compares it to the
+ *  canvas's current `updatedAt` and returns 412 Precondition Failed
+ *  on mismatch. This closes the server-side concurrent-write race
+ *  that AbortController alone can't fix — once two PATCHes are
+ *  in-flight at the server, ordering is undefined; If-Match makes
+ *  the loser observable so the client can refetch and retry.
+ *
+ *  If-Match is opt-in. Existing callers (sharing fields, params)
+ *  that don't send the header continue to use last-write-wins
+ *  semantics, which is fine for field-by-field auto-saves. The
+ *  slug-rename path opts in.
+ */
 export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 	if (!locals.user) error(401, 'Unauthorized');
 
 	const canvas = await getOwnedCanvas(params.id, locals.user.id);
 	if (!canvas) error(404, 'Canvas not found');
+
+	const ifMatch = request.headers.get('if-match');
+	if (ifMatch !== null) {
+		const currentVersion = String(canvas.updatedAt.getTime());
+		// Loose comparator: accept either the bare digits or any
+		// quoted/`W/`-weak form so curl-style integrations don't have
+		// to think about quote escaping.
+		const provided = normalizeIfMatch(ifMatch);
+		if (provided !== '*' && provided !== currentVersion) {
+			return json(
+				{
+					error: 'precondition_failed',
+					message: 'Canvas was updated by another request. Refresh and try again.',
+					currentVersion
+				},
+				{
+					status: 412,
+					headers: { ETag: canvasEtag(canvas) }
+				}
+			);
+		}
+	}
 
 	const body = await request.json();
 	const updates: Record<string, unknown> = {};
@@ -177,7 +237,7 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 		await applyParamUpdates(db, params.id, paramUpdates);
 	}
 
-	return json(updated);
+	return json(updated, { headers: { ETag: canvasEtag(updated) } });
 };
 
 /** Delete a canvas */

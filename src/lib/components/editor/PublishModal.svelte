@@ -129,6 +129,7 @@
 			slugSuggestion = null;
 			slugBusy = false;
 			slugLastFailed = null;
+			canvasVersion = null;
 			// Don't abort on close — the user may have submitted right
 			// before closing and expects the rename to land. The
 			// successful completion's `isLive()` check will still call
@@ -198,6 +199,10 @@
 			const res = await fetch(`/api/canvas/${canvasId}`);
 			if (requestCanvasId !== canvasId || requestGen !== sharingGen) return;
 			if (res.ok) {
+				// Capture the ETag for optimistic-concurrency PATCHes
+				// (slug rename). Strip the standard `W/`/quote wrapping
+				// so the value can be re-emitted as `If-Match: "<v>"`.
+				const etag = readEtag(res.headers);
 				const data = (await res.json()) as {
 					ogTitle: string | null;
 					ogDescription: string | null;
@@ -209,6 +214,7 @@
 					ogDescription: data.ogDescription ?? '',
 					redirectUrl: data.redirectUrl ?? ''
 				};
+				if (etag) canvasVersion = etag;
 			}
 			// Even on a non-OK / network error, flip the loaded flag so
 			// the inputs unlock and the user can edit manually. Codex
@@ -333,10 +339,23 @@
 	let slugLastFailed = $state<string | null>(null);
 	// AbortController for the currently-in-flight slug PATCH. A newer
 	// commit aborts the older one so the server doesn't process them
-	// out of order (Codex round 5 P2 — purely client-side gen-checking
-	// can drop stale completions but can't prevent the server from
-	// committing two writes in the wrong order).
+	// out of order (Codex round 5 P2).
 	let slugInFlightController: AbortController | null = null;
+	// Optimistic-concurrency version captured from the most recent
+	// canvas read. Sent as `If-Match` on slug-rename PATCH so the
+	// server returns 412 if another write landed first — closes the
+	// server-side ordering race even if AbortController didn't reach
+	// the server in time (Codex round 6). Pulled from the canvas
+	// updatedAt's millisecond timestamp; updated from every successful
+	// fetch / PATCH response.
+	let canvasVersion = $state<string | null>(null);
+
+	function readEtag(headers: Headers): string | null {
+		const raw = headers.get('etag');
+		if (!raw) return null;
+		const stripped = raw.startsWith('W/') ? raw.slice(2) : raw;
+		return stripped.replace(/^"|"$/g, '');
+	}
 
 	$effect(() => {
 		// Reset the draft whenever the canonical slug changes (parent
@@ -414,14 +433,27 @@
 		slugServerError = null;
 		slugSuggestion = null;
 		try {
-			const res = await fetch(`/api/canvas/${requestCanvasId}`, {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ slug: candidate }),
-				signal: controller.signal
-			});
+			let res = await sendSlugPatch(requestCanvasId, candidate, canvasVersion, controller);
+			// Optimistic-concurrency retry (TASK-98 / Codex round 6):
+			// on 412 the server's seen a write since our last read.
+			// Refetch to get the fresh version and retry once. The
+			// refetch is bounded (one attempt) so a persistent
+			// concurrent-edit storm surfaces an error instead of
+			// looping forever.
+			if (res.status === 412 && isLive()) {
+				const refreshed = await fetchCanvasVersion(requestCanvasId, controller);
+				if (!isLive()) return;
+				if (refreshed === null) {
+					slugServerError = "Couldn't refresh canvas state. Please try again.";
+					slugLastFailed = candidate;
+				} else {
+					canvasVersion = refreshed;
+					res = await sendSlugPatch(requestCanvasId, candidate, refreshed, controller);
+				}
+			}
 			if (!isLive()) return;
 			if (res.ok) {
+				const etag = readEtag(res.headers);
 				const data = (await res.json()) as { slug: string };
 				// onSlugChange should fire only if THIS request is still
 				// the live one — same canvas AND same generation. A
@@ -432,6 +464,7 @@
 				onSlugChange?.(data.slug);
 				slugDraft = data.slug;
 				slugLastFailed = null;
+				if (etag) canvasVersion = etag;
 				toast.success('Slug renamed');
 			} else if (res.status === 409) {
 				const body = (await res.json()) as { message: string; suggestion?: string };
@@ -443,6 +476,12 @@
 				const body = (await res.json()) as { message: string };
 				if (!isLive()) return;
 				slugServerError = body.message;
+				slugLastFailed = candidate;
+			} else if (res.status === 412) {
+				// Second 412 after a refetch+retry — surface so the user
+				// knows the state is contested and can decide.
+				if (!isLive()) return;
+				slugServerError = 'Canvas is being updated by another tab or device. Please try again.';
 				slugLastFailed = candidate;
 			} else {
 				if (!isLive()) return;
@@ -469,6 +508,41 @@
 				slugBusy = false;
 				slugInFlightController = null;
 			}
+		}
+	}
+
+	/** Issue a slug-rename PATCH with the given If-Match version. Pulled
+	 *  out of `commitSlugRename` so the 412 retry path can re-issue
+	 *  with a fresh version. */
+	async function sendSlugPatch(
+		id: string,
+		candidate: string,
+		ifMatchVersion: string | null,
+		controller: AbortController
+	): Promise<Response> {
+		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+		if (ifMatchVersion) headers['If-Match'] = `"${ifMatchVersion}"`;
+		return fetch(`/api/canvas/${id}`, {
+			method: 'PATCH',
+			headers,
+			body: JSON.stringify({ slug: candidate }),
+			signal: controller.signal
+		});
+	}
+
+	/** Refetch the canvas just to get the current ETag for a 412 retry.
+	 *  Returns null if the GET itself failed — the caller surfaces a
+	 *  generic error in that case. */
+	async function fetchCanvasVersion(
+		id: string,
+		controller: AbortController
+	): Promise<string | null> {
+		try {
+			const res = await fetch(`/api/canvas/${id}`, { signal: controller.signal });
+			if (!res.ok) return null;
+			return readEtag(res.headers);
+		} catch {
+			return null;
 		}
 	}
 
