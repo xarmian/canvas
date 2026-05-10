@@ -258,9 +258,11 @@ export async function render(
 	const mergedJson = mergeParams(template.templateJson, params);
 	applyConditionalStyles(mergedJson.objects, params);
 
-	// Collect and fetch remote images in parallel
+	// Collect and fetch remote images in parallel. `preloadedImages`
+	// (TASK-89) lets the caller inject trusted in-process bytes for
+	// owned assets that bypass the SSRF-bounded fetch.
 	const imageUrls = collectImageUrls(mergedJson.objects);
-	const imageMap = await loadImagesParallel(imageUrls);
+	const imageMap = await loadImagesParallel(imageUrls, 3000, options.preloadedImages);
 
 	// Create canvas at the scaled physical size, then `ctx.scale(dpr, dpr)`
 	// so all draw calls use the original logical coordinates. This keeps

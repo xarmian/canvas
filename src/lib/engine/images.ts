@@ -232,23 +232,44 @@ export function loadImageFromBuffer(buffer: Buffer): Image {
 
 /**
  * Loads multiple images with bounded concurrency, returning null for any that fail.
+ *
+ * `preloaded` (TASK-89): URL → Buffer map of trusted bytes. Any URL with
+ * an entry takes the in-process path (no HTTP fetch, no SSRF check)
+ * instead of going through `loadRemoteImage`. Used by the asset://
+ * resolver so owned assets stored locally or behind private S3 endpoints
+ * don't hit `isUrlSafe` rejection.
  */
 export async function loadImagesParallel(
 	urls: string[],
-	timeoutMs: number = 3000
+	timeoutMs: number = 3000,
+	preloaded?: Map<string, Buffer>
 ): Promise<Map<string, Image | null>> {
-	// Bounded concurrency: process in chunks of MAX_CONCURRENT_FETCHES
+	const imageMap = new Map<string, Image | null>();
+	const toFetch: string[] = [];
+
+	// Trusted-bytes path first. A preloaded entry short-circuits the
+	// fetch — these URLs were already authorized by the resolver and
+	// wouldn't pass `isUrlSafe` for local-storage / private-host cases.
+	for (const url of urls) {
+		const buf = preloaded?.get(url);
+		if (buf) {
+			imageMap.set(url, loadImageFromBuffer(buf));
+		} else {
+			toFetch.push(url);
+		}
+	}
+
+	// Bounded concurrency for the remaining (untrusted) URLs.
 	const results: PromiseSettledResult<Image | null>[] = [];
-	for (let i = 0; i < urls.length; i += MAX_CONCURRENT_FETCHES) {
-		const chunk = urls.slice(i, i + MAX_CONCURRENT_FETCHES);
+	for (let i = 0; i < toFetch.length; i += MAX_CONCURRENT_FETCHES) {
+		const chunk = toFetch.slice(i, i + MAX_CONCURRENT_FETCHES);
 		const chunkResults = await Promise.allSettled(
 			chunk.map((url) => loadRemoteImage(url, timeoutMs))
 		);
 		results.push(...chunkResults);
 	}
 
-	const imageMap = new Map<string, Image | null>();
-	urls.forEach((url, i) => {
+	toFetch.forEach((url, i) => {
 		const result = results[i];
 		imageMap.set(url, result.status === 'fulfilled' ? result.value : null);
 	});
