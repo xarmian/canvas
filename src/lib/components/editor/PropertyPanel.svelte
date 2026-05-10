@@ -994,12 +994,13 @@
 										<input
 											type="text"
 											class="field-input conditional-param"
-											class:field-input-warning={refStatus.kind === 'unknown'}
+											class:field-input-warning={refStatus.kind === 'unknown' &&
+												!!refStatus.suggestion}
 											value={rule.when.param}
 											oninput={(e) => updateRule(i, 'when', 'param', e.currentTarget.value)}
 											placeholder="param"
 											aria-label="Rule {i + 1} parameter name"
-											aria-describedby={refStatus.kind === 'unknown'
+											aria-describedby={refStatus.kind === 'unknown' && refStatus.suggestion
 												? `rule-${i}-param-warning`
 												: undefined}
 										/>
@@ -1026,13 +1027,17 @@
 											aria-label="Rule {i + 1} comparison value"
 										/>
 									</div>
-									{#if refStatus.kind === 'unknown'}
+									{#if refStatus.kind === 'unknown' && refStatus.suggestion}
 										<!--
-											Param-name typo warning (TASK-106). Visible only when
-											the user has typed a name that no binding on this
-											canvas references. The Levenshtein-based suggestion
-											chip is click-to-fix so a single click corrects the
-											typo without making the user retype.
+											Param-name typo warning (TASK-106). Only fires when
+											the typed name has a close-enough match in the set
+											of known canvas params — without that gate we'd
+											false-positive on the legitimate "URL-only param
+											consumed only by this rule" pattern (e.g. `?status=win`
+											that drives a fill rule but isn't bound to any
+											property). With the suggestion-required gate, the
+											warning lights up only for actual typos and offers
+											a click-to-fix. Codex round 1 P2.
 										-->
 										<p
 											id="rule-{i}-param-warning"
@@ -1040,17 +1045,15 @@
 											role="alert"
 											data-testid="rule-{i}-param-warning"
 										>
-											No binding references <code>{rule.when.param}</code>; this rule won't fire.
-											{#if refStatus.suggestion}
-												<button
-													type="button"
-													class="conditional-warning-suggest"
-													onclick={() => updateRule(i, 'when', 'param', refStatus.suggestion ?? '')}
-													data-testid="rule-{i}-param-suggest"
-												>
-													Did you mean <code>{refStatus.suggestion}</code>?
-												</button>
-											{/if}
+											No param matches <code>{rule.when.param}</code>.
+											<button
+												type="button"
+												class="conditional-warning-suggest"
+												onclick={() => updateRule(i, 'when', 'param', refStatus.suggestion ?? '')}
+												data-testid="rule-{i}-param-suggest"
+											>
+												Did you mean <code>{refStatus.suggestion}</code>?
+											</button>
 										</p>
 									{/if}
 									<div class="conditional-row">

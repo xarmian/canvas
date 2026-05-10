@@ -101,9 +101,16 @@ export type ParamRefStatus =
 	| { kind: 'unknown'; suggestion: string | null };
 
 export function paramRefStatus(name: string, knownNames: readonly string[]): ParamRefStatus {
-	const trimmed = name.trim();
-	if (!trimmed) return { kind: 'empty' };
-	if (knownNames.includes(trimmed)) return { kind: 'known' };
-	const match = nearestParamName(trimmed, knownNames);
+	// `kind === 'empty'` allows whitespace-only too — the rule editor's
+	// initial "user hasn't started typing" state shouldn't render a
+	// warning even if the input has stray whitespace from a paste.
+	if (!name.trim()) return { kind: 'empty' };
+	// Don't trim before the membership check: the renderer resolves
+	// `params[rule.when.param]` verbatim, so `gainPercent ` (trailing
+	// space) is a real mismatch even if `gainPercent` exists. Marking
+	// it `known` would hide a typo the user can't otherwise see.
+	// Codex round 1 P2.
+	if (knownNames.includes(name)) return { kind: 'known' };
+	const match = nearestParamName(name, knownNames);
 	return { kind: 'unknown', suggestion: match?.name ?? null };
 }
