@@ -20,6 +20,11 @@
 		objType === 'i-text' || objType === 'itext' || objType === 'textbox' || objType === 'text'
 	);
 	let isImage = $derived(objType === 'image' || objType === 'fabricimage');
+	// Badge primitive (TASK-87). Fabric stores `type` as the registered
+	// class identifier — Badge registers itself as 'Badge', which lowercases
+	// to 'badge' through the same code path the existing isText/isImage
+	// checks use.
+	let isBadge = $derived(objType === 'badge');
 
 	// Position (scale-aware: displayed dimensions = intrinsic × scale)
 	let posX = $derived(getObjProp<number>('left', 0));
@@ -50,6 +55,16 @@
 	// / conditionalStyles when the canvas is serialized (history, autosave,
 	// duplicate). The renderer uses it when the primary `src` fails to fetch.
 	let fallbackSrc = $derived(getObjProp<string>('fallbackSrc', ''));
+
+	// Badge primitive (TASK-87). Mirrors the Badge class fields. The pill's
+	// background color reuses the standard `fill` property so the existing
+	// param-binding / conditional pipelines drive the bg color naturally.
+	let badgeLabel = $derived(getObjProp<string>('label', ''));
+	let badgeFg = $derived(getObjProp<string>('fg', '#ffffff'));
+	let badgePadding = $derived(getObjProp<number>('padding', 10));
+	let badgeRadius = $derived(getObjProp<number | undefined>('radius', undefined));
+	let badgeIcon = $derived(getObjProp<string>('iconImage', ''));
+	let badgeIconPos = $derived(getObjProp<'left' | 'right'>('iconPosition', 'left'));
 
 	// Parameter bindings
 	let paramBindings: Record<string, { param: string; default: string; format?: string }> = $derived(
@@ -199,6 +214,14 @@
 		}
 		if (isImage) {
 			props.push({ key: 'src', label: 'Image Source', sample: 'https://example.com/pic.png' });
+		}
+		// Badge (TASK-87) — the most useful bindings are the label text and
+		// the optional icon URL; the bg comes from `fill` (already in the
+		// list below) and the fg from a dedicated badge binding.
+		if (isBadge) {
+			props.push({ key: 'label', label: 'Badge Label', sample: 'Live' });
+			props.push({ key: 'iconImage', label: 'Badge Icon', sample: 'https://example.com/icon.png' });
+			props.push({ key: 'fg', label: 'Badge Foreground', sample: '#ffffff' });
 		}
 		props.push({ key: 'fill', label: 'Fill Color', sample: '#ff0000' });
 		// Visibility (TASK-51) — boolean prop. Sample is 'true' so the URL
@@ -391,6 +414,100 @@
 							oninput={(e) => setProp('fallbackSrc', e.currentTarget.value || undefined)}
 							placeholder="Used when the bound image URL fails to load"
 						/>
+					</div>
+				</section>
+			{/if}
+
+			<!-- Badge Section (TASK-87) -->
+			{#if isBadge}
+				<section class="section" data-testid="property-section-badge">
+					<h4 class="section-title">Badge</h4>
+
+					<div class="field-row field-col">
+						<label class="field-label" for="prop-badge-label">Label</label>
+						<input
+							id="prop-badge-label"
+							type="text"
+							class="field-input"
+							value={badgeLabel}
+							oninput={(e) => setProp('label', e.currentTarget.value)}
+							placeholder="e.g. Live, In Range, Sold"
+						/>
+					</div>
+
+					<div class="field-row">
+						<label class="field-label" for="prop-badge-fg">Foreground</label>
+						<input
+							id="prop-badge-fg"
+							type="color"
+							class="field-input field-input-color"
+							value={badgeFg}
+							oninput={(e) => setProp('fg', e.currentTarget.value)}
+						/>
+					</div>
+
+					<div class="field-row">
+						<label class="field-label" for="prop-badge-bg">Background</label>
+						<input
+							id="prop-badge-bg"
+							type="color"
+							class="field-input field-input-color"
+							value={fill}
+							oninput={(e) => setProp('fill', e.currentTarget.value)}
+						/>
+					</div>
+
+					<div class="field-row">
+						<label class="field-label" for="prop-badge-padding">Padding</label>
+						<input
+							id="prop-badge-padding"
+							type="number"
+							class="field-input"
+							min="0"
+							value={badgePadding}
+							onchange={(e) => setProp('padding', Number(e.currentTarget.value))}
+						/>
+					</div>
+
+					<div class="field-row">
+						<label class="field-label" for="prop-badge-radius">Corner radius</label>
+						<input
+							id="prop-badge-radius"
+							type="number"
+							class="field-input"
+							min="0"
+							value={badgeRadius ?? ''}
+							placeholder="auto (pill)"
+							onchange={(e) => {
+								const v = e.currentTarget.value;
+								setProp('radius', v === '' ? undefined : Number(v));
+							}}
+						/>
+					</div>
+
+					<div class="field-row field-col">
+						<label class="field-label" for="prop-badge-icon">Icon URL</label>
+						<input
+							id="prop-badge-icon"
+							type="text"
+							class="field-input"
+							value={badgeIcon}
+							oninput={(e) => setProp('iconImage', e.currentTarget.value)}
+							placeholder="Optional icon (URL or asset://)"
+						/>
+					</div>
+
+					<div class="field-row">
+						<label class="field-label" for="prop-badge-icon-pos">Icon position</label>
+						<select
+							id="prop-badge-icon-pos"
+							class="field-input"
+							value={badgeIconPos}
+							onchange={(e) => setProp('iconPosition', e.currentTarget.value)}
+						>
+							<option value="left">Left</option>
+							<option value="right">Right</option>
+						</select>
 					</div>
 				</section>
 			{/if}

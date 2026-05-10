@@ -59,10 +59,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * I/O on every cache miss. */
 const MAX_CONCURRENT_STORAGE_READS = 6;
 
-/** Image layers gain a `fallbackSrc` field in TASK-86. Until that lands the
- * resolver still walks it conditionally so the two tasks compose cleanly
- * without a follow-up rev. */
-type ImageLayerWithFallback = FabricObject & { fallbackSrc?: string };
+/** Image layers expose `fallbackSrc` (TASK-86) and badge layers expose
+ * `iconImage` (TASK-87). Both fields can carry `asset://{id}` refs that
+ * need the same owner-scoped resolution / preload as `src`. */
+type AssetReferencingLayer = FabricObject & {
+	fallbackSrc?: string;
+	iconImage?: string;
+};
 
 /**
  * Walks a template JSON and rewrites any `asset://{id}` URLs in image
@@ -113,7 +116,7 @@ export async function resolveAssetReferences(
 	ownerId: string
 ): Promise<Map<string, Buffer>> {
 	const empty = new Map<string, Buffer>();
-	const objects: ImageLayerWithFallback[] = templateJson.objects ?? [];
+	const objects: AssetReferencingLayer[] = templateJson.objects ?? [];
 	if (objects.length === 0) return empty;
 
 	// Collect every asset ID referenced anywhere in the JSON. Use a Set
@@ -127,6 +130,11 @@ export async function resolveAssetReferences(
 		if (srcId) referencedIds.add(srcId);
 		const fallbackId = parseAssetId(obj.fallbackSrc);
 		if (fallbackId) referencedIds.add(fallbackId);
+		// Badge `iconImage` (TASK-87) — same scheme, same authorization model
+		// as image src/fallbackSrc; a badge layer must be able to reference
+		// an owned icon (token logo, status glyph) without re-uploading.
+		const iconId = parseAssetId(obj.iconImage);
+		if (iconId) referencedIds.add(iconId);
 	}
 	if (referencedIds.size === 0) return empty;
 
@@ -176,6 +184,8 @@ export async function resolveAssetReferences(
 		if (newSrc !== undefined) obj.src = newSrc;
 		const newFallback = rewrite(obj.fallbackSrc, idToUrl);
 		if (newFallback !== undefined) obj.fallbackSrc = newFallback;
+		const newIcon = rewrite(obj.iconImage, idToUrl);
+		if (newIcon !== undefined) obj.iconImage = newIcon;
 	}
 
 	return preloaded;

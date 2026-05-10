@@ -7,6 +7,7 @@
 		Redo2,
 		Type as TypeIcon,
 		Square,
+		Tag as TagIcon,
 		Image as ImageIcon,
 		Trash2,
 		Eye,
@@ -33,6 +34,7 @@
 		beginSuppressSnapshots,
 		endSuppressSnapshots
 	} from '$lib/components/editor/history.svelte';
+	import { EDITOR_TO_OBJECT_PROPS } from '$lib/components/editor/serialize';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { ConfirmDialog } from '$lib/components/ui';
 	import { fontStore } from '$lib/stores/fonts.svelte';
@@ -649,11 +651,7 @@
 		const originCanvasId = data.canvas.id;
 		const isStale = () => !isMounted || data.canvas.id !== originCanvasId;
 		try {
-			const json = editorState.fabricCanvas.toObject([
-				'paramBindings',
-				'conditionalStyles',
-				'fallbackSrc'
-			]);
+			const json = editorState.fabricCanvas.toObject([...EDITOR_TO_OBJECT_PROPS]);
 			const res = await fetch(`/api/canvas/${originCanvasId}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
@@ -941,7 +939,7 @@
 	 * present and silently dropped. */
 	function collectBoundParams(): BoundParamInfo[] {
 		if (!editorState.fabricCanvas) return [];
-		const json = editorState.fabricCanvas.toObject(['paramBindings', 'conditionalStyles']) as {
+		const json = editorState.fabricCanvas.toObject([...EDITOR_TO_OBJECT_PROPS]) as {
 			objects?: FabricLikeObject[];
 		};
 		const seen: Record<string, BoundParamInfo> = Object.create(null);
@@ -1109,6 +1107,15 @@
 			<button class="tool-btn" onclick={() => editorRef?.addRect()}>
 				<Square size={14} />
 				<span>Rectangle</span>
+			</button>
+			<button
+				class="tool-btn"
+				data-testid="toolbar-add-badge"
+				onclick={() => editorRef?.addBadge()}
+				title="Add badge / pill (auto-sizes to label)"
+			>
+				<TagIcon size={14} />
+				<span>Badge</span>
 			</button>
 			<button
 				class="tool-btn"

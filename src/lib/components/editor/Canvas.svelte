@@ -12,6 +12,10 @@
 	} from './state.svelte.ts';
 	import { saveSnapshot, undo, redo, resetHistory, historyState } from './history.svelte.ts';
 	import { setupSnapping } from './snapping.js';
+	import { EDITOR_TO_OBJECT_PROPS } from './serialize.ts';
+	// Importing Badge runs its `classRegistry.setClass(Badge)` side effect so
+	// `loadFromJSON` / `enlivenObjects` can deserialize Badge layers (TASK-87).
+	import { Badge } from './Badge.ts';
 
 	let {
 		width,
@@ -120,6 +124,26 @@
 		editorState.fabricCanvas.requestRenderAll();
 	}
 
+	/** Insert a default badge centered on the canvas (TASK-87). The badge
+	 *  auto-sizes to its label + padding, so we leave width/height to the
+	 *  shape's `_syncBounds()`; only the (left, top) center it visually. */
+	export function addBadge() {
+		if (!editorState.fabricCanvas) return;
+		const badge = new Badge({
+			label: 'Badge',
+			fill: '#10b981',
+			fg: '#ffffff'
+		});
+		// Center on the canvas after auto-sizing fills width/height.
+		badge.set({
+			left: width / 2 - badge.width / 2,
+			top: height / 2 - badge.height / 2
+		});
+		editorState.fabricCanvas.add(badge);
+		editorState.fabricCanvas.setActiveObject(badge);
+		editorState.fabricCanvas.requestRenderAll();
+	}
+
 	/** Returns true when the image was actually added to the canvas, false
 	 * when the underlying Fabric canvas wasn't ready. Callers can use this
 	 * to decide whether to emit a success affordance. */
@@ -203,9 +227,7 @@
 		// when the user is mid-edit so we don't interrupt typing.
 		const active = editorState.fabricCanvas.getActiveObject();
 		if (active && active.type === 'i-text' && (active as IText).isEditing) return;
-		const clones = await Promise.all(
-			objects.map((o) => o.clone(['paramBindings', 'conditionalStyles', 'fallbackSrc']))
-		);
+		const clones = await Promise.all(objects.map((o) => o.clone([...EDITOR_TO_OBJECT_PROPS])));
 		editorState.fabricCanvas.discardActiveObject();
 		for (const clone of clones) {
 			clone.set({ left: (clone.left ?? 0) + 10, top: (clone.top ?? 0) + 10 });

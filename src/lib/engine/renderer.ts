@@ -1,6 +1,7 @@
 import { createCanvas, type SKRSContext2D, type Image } from '@napi-rs/canvas';
 import sharp from 'sharp';
 import type {
+	BadgeIconPosition,
 	CanvasTemplate,
 	FabricObject,
 	FabricCanvasJson,
@@ -98,8 +99,16 @@ function collectImageUrls(objects: FabricObject[]): string[] {
 	const seen = new Set<string>();
 	for (const obj of objects) {
 		if (obj.visible === false) continue;
-		if (obj.type !== 'image' && obj.type !== 'Image') continue;
-		if (obj.src) seen.add(obj.src);
+		if (obj.type === 'image' || obj.type === 'Image') {
+			if (obj.src) seen.add(obj.src);
+			continue;
+		}
+		// Badge icons are optional images embedded in the pill (TASK-87).
+		// Pre-fetch via the same path so they participate in the LRU /
+		// SSRF / asset-preload pipeline.
+		if (obj.type === 'badge' || obj.type === 'Badge') {
+			if (obj.iconImage) seen.add(obj.iconImage);
+		}
 	}
 	return [...seen];
 }
@@ -202,6 +211,11 @@ function drawObject(
 			drawRectObject(ctx, obj);
 			break;
 
+		case 'badge':
+		case 'Badge':
+			drawBadgeObject(ctx, obj, imageMap);
+			break;
+
 		default:
 			// Unknown type — skip silently
 			break;
@@ -279,6 +293,186 @@ function drawRectObject(ctx: SKRSContext2D, obj: FabricObject): void {
 	ctx.fillRect(0, 0, width, height);
 }
 
+/** Default visual constants for the badge primitive (TASK-87). */
+const BADGE_DEFAULTS = {
+	padding: 10,
+	iconGap: 6,
+	bg: '#10b981',
+	fg: '#ffffff',
+	fontSize: 16,
+	fontFamily: 'Inter',
+	fontWeight: 600,
+	iconPosition: 'left' as const
+};
+
+/** Resolved layout dimensions for a badge layer. Computed once per
+ *  render after params + conditionals settle, then reused by both the
+ *  origin-offset pre-pass (so drawObject's center/right anchoring sees
+ *  the post-binding bounds) and the actual `drawBadgeObject` draw. */
+interface BadgeLayout {
+	totalWidth: number;
+	totalHeight: number;
+	innerHeight: number;
+	padding: number;
+	iconGap: number;
+	iconSize: number;
+	iconRendered: boolean;
+	labelWidth: number;
+	radius: number;
+	bg: string;
+	fg: string;
+	font: string;
+	label: string;
+	iconPosition: BadgeIconPosition;
+}
+
+/** Compute the badge's auto-sized bounds from its props. Mutates the
+ *  measurement ctx's `font` (callers that share a ctx should restore it
+ *  with save/restore — drawObject already does so). */
+function computeBadgeLayout(
+	ctx: SKRSContext2D,
+	obj: FabricObject,
+	imageMap: Map<string, Image | null>
+): BadgeLayout {
+	const label = obj.label ?? obj.text ?? '';
+	const padding = obj.padding ?? BADGE_DEFAULTS.padding;
+	const fontSize = obj.fontSize ?? BADGE_DEFAULTS.fontSize;
+	const fontFamily = obj.fontFamily ?? BADGE_DEFAULTS.fontFamily;
+	const fontWeight = obj.fontWeight ?? BADGE_DEFAULTS.fontWeight;
+	const fontStyle = obj.fontStyle ?? 'normal';
+	const bg = obj.fill ?? obj.bg ?? BADGE_DEFAULTS.bg;
+	const fg = obj.fg ?? BADGE_DEFAULTS.fg;
+	const iconPosition: BadgeIconPosition = obj.iconPosition ?? BADGE_DEFAULTS.iconPosition;
+
+	const font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+	ctx.font = font;
+	const labelWidth = label ? ctx.measureText(label).width : 0;
+
+	const iconUrl = obj.iconImage;
+	const iconImg = iconUrl ? (imageMap.get(iconUrl) ?? null) : null;
+	const iconRendered = !!iconImg;
+	const iconSize = iconRendered ? Math.round(fontSize * 1.1) : 0;
+	const iconGap = label && iconRendered ? BADGE_DEFAULTS.iconGap : 0;
+
+	const innerHeight = Math.max(fontSize, iconSize);
+	const totalHeight = innerHeight + padding * 2;
+	const totalWidth = labelWidth + (iconRendered ? iconSize + iconGap : 0) + padding * 2;
+	const radius = Math.max(0, Math.min(obj.radius ?? totalHeight / 2, totalHeight / 2));
+
+	return {
+		totalWidth,
+		totalHeight,
+		innerHeight,
+		padding,
+		iconGap,
+		iconSize,
+		iconRendered,
+		labelWidth,
+		radius,
+		bg,
+		fg,
+		font,
+		label,
+		iconPosition
+	};
+}
+
+/**
+ * Pre-pass: stamp the auto-sized bounds onto every badge layer so the
+ * subsequent `drawObject` origin offsets (center / right anchoring,
+ * scaleX/scaleY math) see the post-binding dimensions, not the editor-
+ * time placeholders. Without this, a centered badge whose param-bound
+ * label widens at render time would shift left of its anchor.
+ */
+function applyBadgeLayouts(
+	ctx: SKRSContext2D,
+	objects: FabricObject[],
+	imageMap: Map<string, Image | null>
+): void {
+	for (const obj of objects) {
+		if (obj.type !== 'badge' && obj.type !== 'Badge') continue;
+		ctx.save();
+		const layout = computeBadgeLayout(ctx, obj, imageMap);
+		ctx.restore();
+		obj.width = layout.totalWidth;
+		obj.height = layout.totalHeight;
+	}
+}
+
+/**
+ * Draws a badge / pill primitive (TASK-87).
+ *
+ * Layout: rounded rectangle background sized to (label width + optional
+ * icon width + 2*padding + iconGap) × (max(icon, fontSize) + 2*padding).
+ * Default radius = height/2 produces a true pill; users can override
+ * `radius` for a softer rounded-rect look. Icon position is left/right
+ * relative to the label.
+ *
+ * `applyBadgeLayouts` runs ahead of drawObject so the origin transforms
+ * (center / right anchor, scale*) see the final width/height. By the time
+ * we get here, the surrounding `drawObject` has applied left, top, rotate,
+ * scale, opacity — so we draw at (0,0) in object-local space.
+ */
+function drawBadgeObject(
+	ctx: SKRSContext2D,
+	obj: FabricObject,
+	imageMap: Map<string, Image | null>
+): void {
+	const layout = computeBadgeLayout(ctx, obj, imageMap);
+	const { totalWidth, totalHeight, innerHeight, padding, iconGap, iconSize } = layout;
+	const { iconRendered, labelWidth, radius, bg, fg, label, iconPosition } = layout;
+	const iconUrl = obj.iconImage;
+	const iconImg = iconUrl ? (imageMap.get(iconUrl) ?? null) : null;
+
+	// Background pill
+	ctx.fillStyle = bg;
+	if (radius > 0 && typeof ctx.roundRect === 'function') {
+		ctx.beginPath();
+		ctx.roundRect(0, 0, totalWidth, totalHeight, radius);
+		ctx.fill();
+	} else {
+		ctx.fillRect(0, 0, totalWidth, totalHeight);
+	}
+
+	// Layout x positions for icon and label
+	let cursorX = padding;
+	if (iconRendered && iconImg && iconPosition === 'left') {
+		ctx.drawImage(
+			iconImg as unknown as Image,
+			cursorX,
+			padding + (innerHeight - iconSize) / 2,
+			iconSize,
+			iconSize
+		);
+		cursorX += iconSize + iconGap;
+	}
+
+	// Label baseline: vertically centered. textBaseline 'middle' lets us
+	// position by row center, which is more robust than alphabetic
+	// baseline math when the user picks an unfamiliar font.
+	if (label) {
+		ctx.fillStyle = fg;
+		ctx.textBaseline = 'middle';
+		ctx.textAlign = 'left';
+		ctx.fillText(label, cursorX, padding + innerHeight / 2);
+		cursorX += labelWidth;
+	}
+
+	if (iconRendered && iconImg && iconPosition === 'right') {
+		ctx.drawImage(
+			iconImg as unknown as Image,
+			cursorX + iconGap,
+			padding + (innerHeight - iconSize) / 2,
+			iconSize,
+			iconSize
+		);
+	}
+
+	// Reset baseline for any subsequent draws (defense in depth — drawObject
+	// wraps each layer in save/restore but a future caller might not).
+	ctx.textBaseline = 'alphabetic';
+}
+
 /**
  * Renders a canvas template with parameters to an image buffer.
  *
@@ -335,6 +529,13 @@ export async function render(
 	const canvas = createCanvas(template.width * dpr, template.height * dpr);
 	const ctx = canvas.getContext('2d');
 	if (dpr !== 1) ctx.scale(dpr, dpr);
+
+	// TASK-87: badges auto-size to (label + icon + padding). Stamp the
+	// post-binding bounds onto each badge layer BEFORE the draw loop so
+	// drawObject's origin / scale math (center anchoring etc.) uses the
+	// final dimensions. Otherwise a center-anchored badge whose param-
+	// bound label widens would shift left of its anchor.
+	applyBadgeLayouts(ctx, mergedJson.objects, imageMap);
 
 	// Draw background
 	if (template.backgroundType === 'color') {
