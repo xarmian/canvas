@@ -15,6 +15,7 @@
 		Copy,
 		Keyboard,
 		Sliders,
+		ExternalLink,
 		AlertTriangle as AlertTriangleIcon
 	} from '@lucide/svelte';
 	import CanvasEditor from '$lib/components/editor/Canvas.svelte';
@@ -1088,6 +1089,76 @@
 		showPreview ? `/api/canvas/${data.canvas.id}/preview?_t=${previewNonce}${previewQuery}` : ''
 	);
 
+	/**
+	 * Public share URL for the current canvas with the editor's test
+	 * parameter values applied (TASK-107). This is what a viewer would
+	 * load — `/c/<slug>?<params>` — NOT the editor's internal preview
+	 * proxy. Provided as both a relative path (used in the inline
+	 * preview-url code block to keep the display compact) and an
+	 * absolute URL (used by the Copy / Open buttons so the copied
+	 * value is immediately useful in any context).
+	 *
+	 * `previewQuery` is stored with a leading `&` because it splices
+	 * into the preview proxy URL after `?_t=…`. For the standalone
+	 * share URL we strip that leader and re-prefix `?` only when the
+	 * query is non-empty so a no-params canvas stays clean.
+	 */
+	let sharePathWithParams = $derived(
+		`/c/${canvasSlug}${previewQuery ? `?${previewQuery.slice(1)}` : ''}`
+	);
+	let shareUrlWithParams = $derived(
+		typeof window !== 'undefined' ? `${window.location.origin}${sharePathWithParams}` : ''
+	);
+
+	/**
+	 * Copy the current share URL to the clipboard. Toast confirms the
+	 * action — without it the user has no signal whether the click
+	 * registered, and the URL itself is not visually distinguishable
+	 * from before vs. after the copy. Falls back to a textarea-select
+	 * approach on the (rare) clients without async clipboard support
+	 * (in-app webviews, older Safari) so the button is never a no-op.
+	 */
+	async function copyShareUrl(): Promise<void> {
+		const url = shareUrlWithParams;
+		if (!url) return;
+		try {
+			if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+				await navigator.clipboard.writeText(url);
+			} else {
+				// Fallback: synthesize a hidden textarea and use the legacy
+				// document.execCommand('copy') path. Permissions for the
+				// async clipboard API are gated by user activation, which
+				// IS present here (the click handler), so the fallback is
+				// almost never exercised — but skipping it would leave a
+				// dead button on environments that disable the modern API.
+				const ta = document.createElement('textarea');
+				ta.value = url;
+				ta.setAttribute('readonly', '');
+				ta.style.position = 'fixed';
+				ta.style.left = '-9999px';
+				document.body.appendChild(ta);
+				ta.select();
+				document.execCommand('copy');
+				document.body.removeChild(ta);
+			}
+			toast.success('Share URL copied');
+		} catch {
+			toast.error("Couldn't copy URL — copy it from the field above instead.");
+		}
+	}
+
+	/**
+	 * Open the current share URL in a new tab. `noopener,noreferrer`
+	 * keeps the destination from accessing this window's `opener` and
+	 * strips the Referer — both standard hygiene for user-supplied
+	 * URLs (slug + query are user-controlled).
+	 */
+	function openShareUrl(): void {
+		const url = shareUrlWithParams;
+		if (!url) return;
+		window.open(url, '_blank', 'noopener,noreferrer');
+	}
+
 	async function togglePreview() {
 		if (showPreview) {
 			showPreview = false;
@@ -1519,7 +1590,45 @@
 				</div>
 			</div>
 			<div class="preview-url">
-				<code>/c/{canvasSlug}/image.png{previewQuery ? `?${previewQuery.slice(1)}` : ''}</code>
+				<code>{sharePathWithParams}</code>
+				<!--
+					Copy / open buttons (TASK-107). previewQuery is already
+					reactive against testParams, so the buttons always copy
+					the URL the user is CURRENTLY previewing. Disabled until
+					the canvas is published — visiting /c/<slug> on an
+					unpublished canvas 404s, so opening / copying that link
+					would lead to a dead end.
+				-->
+				<div class="preview-url-actions" data-testid="preview-url-actions">
+					<button
+						type="button"
+						class="preview-url-btn"
+						onclick={copyShareUrl}
+						disabled={!isPublished}
+						aria-label="Copy share URL with current preview parameters"
+						title={isPublished
+							? 'Copies the share URL with your current test param values filled in.'
+							: 'Publish the canvas first.'}
+						data-testid="preview-url-copy"
+					>
+						<Copy size={12} />
+						<span>Copy URL</span>
+					</button>
+					<button
+						type="button"
+						class="preview-url-btn"
+						onclick={openShareUrl}
+						disabled={!isPublished}
+						aria-label="Open share URL in a new tab"
+						title={isPublished
+							? 'Opens the share URL with your current test param values in a new tab.'
+							: 'Publish the canvas first.'}
+						data-testid="preview-url-open"
+					>
+						<ExternalLink size={12} />
+						<span>Open</span>
+					</button>
+				</div>
 			</div>
 		</div>
 	{/if}
@@ -1980,5 +2089,47 @@
 		background: #e2e8f0;
 		padding: 2px 8px;
 		border-radius: 3px;
+	}
+
+	/* TASK-107: Copy / Open buttons in the preview-url block. Sit on
+	   their own line below the URL so the URL itself stays the visual
+	   anchor of the section — pushing them inline with `code` would
+	   either crowd the URL or wrap awkwardly on narrow viewports. */
+	.preview-url-actions {
+		display: flex;
+		justify-content: center;
+		gap: 6px;
+		margin-top: 6px;
+	}
+
+	.preview-url-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 3px 9px;
+		border: 1px solid #cbd5e1;
+		border-radius: 4px;
+		background: #fff;
+		color: #334155;
+		font-family: inherit;
+		font-size: 11.5px;
+		font-weight: 500;
+		cursor: pointer;
+	}
+
+	.preview-url-btn:hover {
+		background: #f1f5f9;
+		border-color: #94a3b8;
+	}
+
+	.preview-url-btn:focus-visible {
+		outline: 2px solid #2563eb;
+		outline-offset: 1px;
+	}
+
+	.preview-url-btn:disabled {
+		opacity: 0.55;
+		cursor: not-allowed;
+		background: #f8fafc;
 	}
 </style>
