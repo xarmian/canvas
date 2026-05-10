@@ -153,9 +153,7 @@ test('re-uploading after delete keeps the cache invalidated (canvas still refere
 	expect(await bytesHash(await afterReupload.body())).not.toBe(primedHash);
 });
 
-test('_v token rolls when a referenced asset is deleted (Codex round 1 P1)', async ({
-	page
-}) => {
+test('_v token rolls when a referenced asset is deleted (Codex round 1 P1)', async ({ page }) => {
 	// Without folding the asset-set fingerprint into `_v`, social-CDN
 	// immutable-cache opt-in URLs would still match after a delete →
 	// CDNs would keep serving the pre-delete render for up to a year.

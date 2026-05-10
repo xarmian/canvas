@@ -94,7 +94,7 @@
 				error = mapped.message;
 				errorAction = mapped.action;
 			} else {
-				await goto('/');
+				await goto('/dashboard');
 			}
 		} catch (err) {
 			const raw = err instanceof Error ? err.message : undefined;

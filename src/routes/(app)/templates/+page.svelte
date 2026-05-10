@@ -64,7 +64,7 @@
 				try changing the URL params on the published image to see dynamic generation in action.
 			</p>
 		</div>
-		<a href="/" class="btn btn-secondary">Back to dashboard</a>
+		<a href="/dashboard" class="btn btn-secondary">Back to dashboard</a>
 	</header>
 
 	<div class="grid">

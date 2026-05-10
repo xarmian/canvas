@@ -1121,7 +1121,7 @@
 
 <div class="editor-layout">
 	<header class="toolbar" data-testid="editor-toolbar">
-		<a href="/" class="back-link" aria-label="Back to dashboard">
+		<a href="/dashboard" class="back-link" aria-label="Back to dashboard">
 			<ArrowLeft size={14} aria-hidden="true" />
 			<span>Dashboard</span>
 		</a>

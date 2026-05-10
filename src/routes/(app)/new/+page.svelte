@@ -114,7 +114,7 @@
 		</label>
 
 		<div class="actions">
-			<a href="/" class="btn btn-cancel">Cancel</a>
+			<a href="/dashboard" class="btn btn-cancel">Cancel</a>
 			<button type="submit" class="btn btn-primary" disabled={loading}>
 				{#if loading}
 					Creating...
