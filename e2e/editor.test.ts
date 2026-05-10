@@ -9,7 +9,7 @@ import { signupAndLogin, createCanvas, gotoEditor, addTextLayer } from './helper
 test.describe('Editor UX', () => {
 	test.beforeEach(async ({ page }) => {
 		await signupAndLogin(page);
-		const canvas = await createCanvas(page, { name: 'Editor UX', preset: 'OG Image' });
+		const canvas = await createCanvas(page, { name: 'Editor UX', preset: 'OG / Twitter' });
 		await gotoEditor(page, canvas.id);
 	});
 
@@ -100,7 +100,7 @@ test.describe('Editor UX', () => {
 
 	test('canvas dimensions modal opens and applies new size', async ({ page }) => {
 		const sizeBtn = page.getByTestId('toolbar-canvas-size');
-		// OG Image preset: starts at 1200×630.
+		// OG / Twitter preset: starts at 1200×630.
 		await expect(sizeBtn).toHaveText(/1200×630/);
 		await sizeBtn.click();
 

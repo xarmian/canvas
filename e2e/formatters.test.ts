@@ -20,7 +20,7 @@ test.describe('Pipe formatters', () => {
 		// to ?price= and formatted as currency:USD. The renderer should
 		// substitute "$1,234.56" for ?price=1234.56.
 		await signupAndLogin(page);
-		const canvas = await createCanvas(page, { name: 'Formatter currency', preset: 'OG Image' });
+		const canvas = await createCanvas(page, { name: 'Formatter currency', preset: 'OG / Twitter' });
 		await gotoEditor(page, canvas.id);
 		await addTextLayer(page, '$0.00');
 		await bindParam(page, 'Text Content', 'price', '0');
@@ -57,7 +57,10 @@ test.describe('Pipe formatters', () => {
 	test('non-numeric input falls through unchanged', async ({ page }) => {
 		const request = page.request;
 		await signupAndLogin(page);
-		const canvas = await createCanvas(page, { name: 'Formatter fall-through', preset: 'OG Image' });
+		const canvas = await createCanvas(page, {
+			name: 'Formatter fall-through',
+			preset: 'OG / Twitter'
+		});
 		await gotoEditor(page, canvas.id);
 		await addTextLayer(page, 'placeholder');
 		await bindParam(page, 'Text Content', 'value', 'fallback text');
@@ -76,7 +79,7 @@ test.describe('Pipe formatters', () => {
 	test('compact formatter shrinks large numbers (TASK-88)', async ({ page }) => {
 		const request = page.request;
 		await signupAndLogin(page);
-		const canvas = await createCanvas(page, { name: 'Compact', preset: 'OG Image' });
+		const canvas = await createCanvas(page, { name: 'Compact', preset: 'OG / Twitter' });
 		await gotoEditor(page, canvas.id);
 		await addTextLayer(page, '0');
 		await bindParam(page, 'Text Content', 'mc', '0');
@@ -118,7 +121,7 @@ test.describe('Pipe formatters', () => {
 	test('crypto-price digit arg changes precision (TASK-88)', async ({ page }) => {
 		const request = page.request;
 		await signupAndLogin(page);
-		const canvas = await createCanvas(page, { name: 'Crypto price', preset: 'OG Image' });
+		const canvas = await createCanvas(page, { name: 'Crypto price', preset: 'OG / Twitter' });
 		await gotoEditor(page, canvas.id);
 		await addTextLayer(page, '$0');
 		await bindParam(page, 'Text Content', 'price', '0');

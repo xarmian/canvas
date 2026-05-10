@@ -69,7 +69,7 @@ async function patchSingleImageCanvas(
 test('asset:// resolves to the owner asset (TASK-89)', async ({ page }) => {
 	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Asset URL', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Asset URL', preset: 'OG / Twitter' });
 
 	const asset = await uploadPng(request, 'logo.png');
 
@@ -127,7 +127,7 @@ test('asset:// for a non-owner asset id falls back gracefully (TASK-89)', async 
 	const ctxB = await browser.newContext();
 	const pageB = await ctxB.newPage();
 	await signupAndLogin(pageB, { email: `user-b-${Date.now()}@e2e.test` });
-	const canvasB = await createCanvas(pageB, { name: 'B canvas', preset: 'OG Image' });
+	const canvasB = await createCanvas(pageB, { name: 'B canvas', preset: 'OG / Twitter' });
 
 	// User B tries to reference user A's asset id. The resolver's WHERE
 	// clause filters on userId, so user B's preview request looks up the

@@ -56,7 +56,7 @@ test.describe('v0.2 UX regressions', () => {
 		});
 
 		await signupAndLogin(page);
-		const canvas = await createCanvas(page, { name: 'No native dialogs', preset: 'OG Image' });
+		const canvas = await createCanvas(page, { name: 'No native dialogs', preset: 'OG / Twitter' });
 		await gotoEditor(page, canvas.id);
 		await addTextLayer(page, 'Hello');
 		await publish(page);
@@ -72,7 +72,7 @@ test.describe('v0.2 UX regressions', () => {
 		// already reflects the small width.
 		await page.setViewportSize({ width: 600, height: 900 });
 		await signupAndLogin(page);
-		const canvas = await createCanvas(page, { name: 'Mobile', preset: 'OG Image' });
+		const canvas = await createCanvas(page, { name: 'Mobile', preset: 'OG / Twitter' });
 		// gotoEditor waits for the toolbar testid; the banner is an overlay
 		// above the toolbar so it should be visible too.
 		await page.goto(`/canvas/${canvas.id}/edit`);
@@ -101,7 +101,7 @@ test.describe('v0.2 UX regressions', () => {
 
 	test('disabled toolbar buttons get cursor:not-allowed and dimmed contrast', async ({ page }) => {
 		await signupAndLogin(page);
-		const canvas = await createCanvas(page, { name: 'Disabled state', preset: 'OG Image' });
+		const canvas = await createCanvas(page, { name: 'Disabled state', preset: 'OG / Twitter' });
 		await gotoEditor(page, canvas.id);
 
 		// Empty canvas: undo + redo are both disabled.
@@ -122,7 +122,7 @@ test.describe('v0.2 UX regressions', () => {
 
 	test('every icon-only toolbar button has a non-empty aria-label', async ({ page }) => {
 		await signupAndLogin(page);
-		const canvas = await createCanvas(page, { name: 'A11y', preset: 'OG Image' });
+		const canvas = await createCanvas(page, { name: 'A11y', preset: 'OG / Twitter' });
 		await gotoEditor(page, canvas.id);
 
 		// All icon-only buttons in the toolbar must declare an aria-label so

@@ -17,7 +17,7 @@ import { signupAndLogin, createCanvas, gotoEditor, addTextLayer, bindParam } fro
 test('conditional rule hides a layer when condition matches', async ({ page }) => {
 	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Cond visibility', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Cond visibility', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 
 	// Constant text — DO NOT bind it. Same rationale as e2e/conditionals.test.ts:
@@ -72,7 +72,7 @@ test('conditional rule wins over a visible binding (precedence)', async ({ page 
 	await signupAndLogin(page);
 	const canvas = await createCanvas(page, {
 		name: 'Cond vis precedence',
-		preset: 'OG Image'
+		preset: 'OG / Twitter'
 	});
 	await gotoEditor(page, canvas.id);
 

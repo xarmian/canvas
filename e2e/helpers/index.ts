@@ -77,7 +77,11 @@ export async function signupAndLogin(
 
 export interface CreateCanvasOptions {
 	name?: string;
-	preset?: 'OG Image' | 'Twitter Card' | 'Instagram Post' | 'Custom';
+	/** Preset radio name. Updated in TASK-102 alongside the on-page
+	 *  rename ("OG Image" → "OG / Twitter", etc.). The strings here
+	 *  are matched as `^${preset}\\b` against the radio's accessible
+	 *  name, so they only need to be a unique prefix. */
+	preset?: 'OG / Twitter' | 'Twitter card' | 'Instagram post' | 'Custom';
 	customWidth?: number;
 	customHeight?: number;
 	backgroundColor?: string;
@@ -93,7 +97,7 @@ export async function createCanvas(
 	opts: CreateCanvasOptions = {}
 ): Promise<{ id: string; name: string }> {
 	const name = opts.name ?? `E2E Canvas ${Date.now()}`;
-	const preset = opts.preset ?? 'OG Image';
+	const preset = opts.preset ?? 'OG / Twitter';
 
 	await page.goto('/new');
 	// Same hydration discipline as signupAndLogin — wait for SvelteKit to
@@ -102,10 +106,14 @@ export async function createCanvas(
 	// editor never happens, and waitForURL eventually times out.
 	await page.waitForLoadState('networkidle');
 	await page.getByLabel('Name').fill(name);
-	// Preset is a radio whose visible label includes the size (e.g.
-	// "OG Image 1200×630"). Match by exact preset prefix to avoid coupling
-	// to the formatting of the size suffix.
-	await page.getByRole('radio', { name: new RegExp(`^${preset}\\b`) }).check();
+	// Preset is a radio whose accessible name follows the pattern
+	// "<label> [recommended] <description> <width>×<height>" (TASK-102).
+	// Match the preset's exact prefix so we don't get tripped up by the
+	// description text. Escape regex metacharacters (`/`, `+`, `.`) in
+	// the preset string so labels like "OG / Twitter" produce a literal
+	// match.
+	const escapedPreset = preset.replace(/[\\/^$.*+?()[\]{}|]/g, '\\$&');
+	await page.getByRole('radio', { name: new RegExp(`^${escapedPreset}\\b`) }).check();
 
 	if (preset === 'Custom') {
 		if (opts.customWidth !== undefined) {

@@ -16,7 +16,7 @@ import {
 
 test('parameter binding round-trips editor → render', async ({ page, request }) => {
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Binding RT', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Binding RT', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 
 	// Add a text layer, bind its content to ?title= with default 'Hello'.

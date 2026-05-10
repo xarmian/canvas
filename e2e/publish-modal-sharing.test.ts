@@ -15,7 +15,7 @@ import { signupAndLogin, createCanvas, gotoEditor, addTextLayer, publish } from 
 test('OG title and description from PublishModal land on the share page', async ({ page }) => {
 	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'OG editable', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'OG editable', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	const { shareUrl } = await publish(page);
@@ -53,7 +53,7 @@ test('Redirect URL set in PublishModal sends humans to the configured destinatio
 }) => {
 	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Redirect editable', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Redirect editable', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	const { shareUrl } = await publish(page);
@@ -82,7 +82,7 @@ test('Redirect URL set in PublishModal sends humans to the configured destinatio
 test('Reopening the modal pre-fills the saved sharing values', async ({ page }) => {
 	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'OG persisted', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'OG persisted', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await publish(page);

@@ -18,7 +18,7 @@ import {
 test('valid {{param}} reference shows green affirmation + live preview', async ({ page }) => {
 	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Redirect valid', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Redirect valid', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await bindParam(page, 'Text Content', 'tokenA', 'fallback');
@@ -48,7 +48,7 @@ test('valid {{param}} reference shows green affirmation + live preview', async (
 
 test('unknown {{param}} reference shows a red warning listing the unknowns', async ({ page }) => {
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Redirect unknown', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Redirect unknown', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await bindParam(page, 'Text Content', 'realParam');
@@ -71,7 +71,7 @@ test('unknown {{param}} reference shows a red warning listing the unknowns', asy
 
 test('mix of known + unknown only shows the warning (warning trumps OK)', async ({ page }) => {
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Redirect mixed', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Redirect mixed', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await bindParam(page, 'Text Content', 'tokenA');
@@ -89,7 +89,7 @@ test('mix of known + unknown only shows the warning (warning trumps OK)', async 
 
 test('preview updates live as the user types', async ({ page }) => {
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Redirect live', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Redirect live', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await bindParam(page, 'Text Content', 'utm', 'twitter');
@@ -111,7 +111,7 @@ test('preview updates live as the user types', async ({ page }) => {
 
 test('blank redirect URL shows neither warning nor preview', async ({ page }) => {
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Redirect blank', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Redirect blank', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await publish(page);

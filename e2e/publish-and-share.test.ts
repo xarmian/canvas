@@ -40,7 +40,7 @@ test('full happy path — signup to share URL, bot meta, image render', async ({
 
 	const canvas = await createCanvas(page, {
 		name: 'Happy Path Canvas',
-		preset: 'OG Image'
+		preset: 'OG / Twitter'
 	});
 	await gotoEditor(page, canvas.id);
 

@@ -30,7 +30,7 @@ test('helpers — signup → create → edit → publish → share URL', async (
 	expect(creds.email).toMatch(/@test\.com$/);
 
 	// ---- createCanvas + gotoEditor (round-trip via id)
-	const canvas = await createCanvas(page, { name: 'Helpers Smoke', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Helpers Smoke', preset: 'OG / Twitter' });
 	expect(canvas.id).toBeTruthy();
 	expect(canvas.name).toBe('Helpers Smoke');
 	await gotoEditor(page, canvas.id);

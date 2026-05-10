@@ -80,7 +80,7 @@ test('deleting an asset that a published canvas references invalidates the cache
 	// Canvas references an uploaded asset.
 	const created = await createCanvas(page, {
 		name: `Asset cache ${Date.now()}`,
-		preset: 'OG Image'
+		preset: 'OG / Twitter'
 	});
 	const asset = await uploadPng(request, 'pic.png');
 	const { slug } = await patchAndPublish(request, created.id, `asset://${asset.id}`);
@@ -124,7 +124,7 @@ test('re-uploading after delete keeps the cache invalidated (canvas still refere
 
 	const created = await createCanvas(page, {
 		name: `Asset reupload ${Date.now()}`,
-		preset: 'OG Image'
+		preset: 'OG / Twitter'
 	});
 	const asset = await uploadPng(request, 'logo.png');
 	const { slug } = await patchAndPublish(request, created.id, `asset://${asset.id}`);
@@ -161,7 +161,7 @@ test('_v token rolls when a referenced asset is deleted (Codex round 1 P1)', asy
 	await signupAndLogin(page);
 	const created = await createCanvas(page, {
 		name: `Asset _v ${Date.now()}`,
-		preset: 'OG Image'
+		preset: 'OG / Twitter'
 	});
 	const asset = await uploadPng(request, 'tok.png');
 	const { slug } = await patchAndPublish(request, created.id, `asset://${asset.id}`);
@@ -200,7 +200,7 @@ test('renders without asset:// refs are unaffected by asset library mutations', 
 
 	const created = await createCanvas(page, {
 		name: `No asset refs ${Date.now()}`,
-		preset: 'OG Image'
+		preset: 'OG / Twitter'
 	});
 	// Empty templateJson — no image layers, no asset refs.
 	const patchRes = await request.patch(`/api/canvas/${created.id}`, {
