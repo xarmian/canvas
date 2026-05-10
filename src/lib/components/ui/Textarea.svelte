@@ -28,6 +28,7 @@
 		id,
 		rows = 3,
 		class: className,
+		'aria-describedby': consumerAriaDescribedBy,
 		...rest
 	}: Props = $props();
 
@@ -36,8 +37,12 @@
 	const uid = $props.id();
 	const errorId = $derived(`${id ?? uid}-error`);
 
+	// Merge the consumer's native `aria-describedby` with our error id and
+	// optional `describedBy` (Codex round 2 P2 — without this, the
+	// explicit attribute below overwrites the spread).
 	const ariaDescribedBy = $derived(
-		[errorMessage && errorId, describedBy].filter(Boolean).join(' ') || undefined
+		[errorMessage && errorId, describedBy, consumerAriaDescribedBy].filter(Boolean).join(' ') ||
+			undefined
 	);
 </script>
 

@@ -44,6 +44,7 @@
 		describedBy,
 		id,
 		class: className,
+		'aria-describedby': consumerAriaDescribedBy,
 		...rest
 	}: Props = $props();
 
@@ -54,8 +55,14 @@
 	const uid = $props.id();
 	const errorId = $derived(`${id ?? uid}-error`);
 
+	// Merge the consumer's native `aria-describedby` with our error id and
+	// optional `describedBy`, so passing all three (e.g. for a help-text
+	// element + an inline validation error) preserves every reference
+	// rather than letting the explicit attribute below overwrite the
+	// spread (Codex round 2 P2).
 	const ariaDescribedBy = $derived(
-		[errorMessage && errorId, describedBy].filter(Boolean).join(' ') || undefined
+		[errorMessage && errorId, describedBy, consumerAriaDescribedBy].filter(Boolean).join(' ') ||
+			undefined
 	);
 </script>
 
