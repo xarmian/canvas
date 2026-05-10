@@ -315,6 +315,34 @@ test('slug rename: closing modal with invalid draft resets state on reopen (Code
 	await expect(page.getByTestId('slug-server-error')).toBeHidden();
 });
 
+test('slug rename: input is disabled until canvasVersion loads (Codex round 7 P2)', async ({
+	page
+}) => {
+	await signupAndLogin(page);
+	const canvas = await createCanvas(page, { name: 'Slug gate', preset: 'OG Image' });
+	await gotoEditor(page, canvas.id);
+	await addTextLayer(page, 'placeholder');
+	// Throttle the loadSharing GET so we can observe the disabled
+	// state. Without the gate, the slug input would be enabled
+	// immediately and a fast typist could submit a rename without
+	// If-Match — bypassing optimistic concurrency entirely.
+	await page.route(`**/api/canvas/${canvas.id}`, async (route) => {
+		if (route.request().method() === 'GET') {
+			await new Promise((r) => setTimeout(r, 1000));
+		}
+		await route.continue();
+	});
+	await publish(page);
+
+	const slugInput = page.getByTestId('slug-input');
+	// While loadSharing is in flight, the input is disabled.
+	await expect(slugInput).toBeDisabled();
+	// Once the GET completes (and canvasVersion is captured), the
+	// input becomes enabled.
+	await expect(slugInput).toBeEnabled({ timeout: 5_000 });
+	await page.unroute(`**/api/canvas/${canvas.id}`);
+});
+
 test('slug rename: image URL with new slug renders 200 (cache key uses new slug)', async ({
 	page
 }) => {

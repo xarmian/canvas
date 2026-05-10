@@ -402,6 +402,13 @@
 		// 409 error/suggestion before the user could interact with
 		// it (Codex round 3 P3 — Tab from input to suggestion button).
 		if (candidate === slugLastFailed) return;
+		// Defensive guard (Codex round 7 P2): the input is also
+		// disabled until canvasVersion loads, but if a caller invokes
+		// commitSlugRename programmatically we still don't want to
+		// PATCH without an If-Match — that would bypass the optimistic
+		// concurrency entirely. Bail; the user can retry once the
+		// modal finishes loading.
+		if (!canvasVersion) return;
 		// Snapshot canvasId + generation at request start. The editor
 		// route reuses this component across canvas-id navigations, and
 		// the modal can close mid-flight — both produce stale completions
@@ -782,8 +789,9 @@
 					id="publish-slug"
 					type="text"
 					data-testid="slug-input"
+					placeholder={canvasVersion ? '' : 'Loading…'}
 					value={slugDraft}
-					disabled={slugBusy}
+					disabled={slugBusy || !canvasVersion}
 					oninput={(e) => {
 						slugDraft = e.currentTarget.value;
 						slugServerError = null;

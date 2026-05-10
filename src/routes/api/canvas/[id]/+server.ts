@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { canvases } from '$lib/server/db/schema';
-import { eq, and, ne } from 'drizzle-orm';
+import { eq, and, ne, sql } from 'drizzle-orm';
 import {
 	syncCanvasParams,
 	applyParamUpdates,
@@ -77,11 +77,14 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 	if (!canvas) error(404, 'Canvas not found');
 
 	const ifMatch = request.headers.get('if-match');
+	// Pre-write precondition check + a snapshot of the version we're
+	// committing against. The actual write below repeats the predicate
+	// in the SQL `WHERE` so two concurrent PATCHes that both pass this
+	// gate can't both commit (Codex round 7 P1) — Postgres serializes
+	// the UPDATEs and only one matches on `updated_at`.
+	let expectedUpdatedAt: Date | null = null;
 	if (ifMatch !== null) {
 		const currentVersion = String(canvas.updatedAt.getTime());
-		// Loose comparator: accept either the bare digits or any
-		// quoted/`W/`-weak form so curl-style integrations don't have
-		// to think about quote escaping.
 		const provided = normalizeIfMatch(ifMatch);
 		if (provided !== '*' && provided !== currentVersion) {
 			return json(
@@ -95,6 +98,13 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 					headers: { ETag: canvasEtag(canvas) }
 				}
 			);
+		}
+		// `*` says "any version is fine" — skip the SQL predicate. A
+		// specific version means "only commit if THIS is still the
+		// current row". Captured here and used in the `eq(updatedAt)`
+		// WHERE clause below.
+		if (provided !== '*') {
+			expectedUpdatedAt = canvas.updatedAt;
 		}
 	}
 
@@ -201,13 +211,53 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 	// our pre-write probe and this UPDATE. Convert to the same 409 +
 	// suggestion shape the up-front collision branch returns so clients
 	// have a single error contract for slug conflicts.
+	//
+	// Atomic optimistic concurrency (Codex round 7 P1): when the client
+	// supplied a specific `If-Match`, the UPDATE's WHERE includes
+	// `updated_at = expectedUpdatedAt`. Two concurrent PATCHes that
+	// both passed the application-level precondition serialize at
+	// the row in Postgres; only one matches on the version, the
+	// loser's UPDATE returns zero rows. We treat zero-rows as 412.
 	let updated;
 	try {
-		updated = finalUpdates
-			? (
-					await db.update(canvases).set(finalUpdates).where(eq(canvases.id, params.id)).returning()
-				)[0]
-			: canvas;
+		if (finalUpdates) {
+			// Use a millisecond-truncated epoch comparison instead of
+			// `eq(updatedAt, $date)`. Postgres `current_timestamp` (the
+			// default for new rows) stores microsecond precision; JS
+			// Date is millisecond, so a direct equality check fails on
+			// the first PATCH of a freshly-inserted canvas.
+			// `floor(extract(epoch from updated_at) * 1000)::bigint`
+			// matches the JS Date round-trip both for current_timestamp
+			// rows and for rows already updated through drizzle's
+			// JS-side `$onUpdate`.
+			const whereClause =
+				expectedUpdatedAt !== null
+					? and(
+							eq(canvases.id, params.id),
+							sql`floor(extract(epoch from ${canvases.updatedAt}) * 1000)::bigint = ${expectedUpdatedAt.getTime()}`
+						)
+					: eq(canvases.id, params.id);
+			const rows = await db.update(canvases).set(finalUpdates).where(whereClause).returning();
+			if (rows.length === 0) {
+				// Either the row vanished (extremely unlikely — owner
+				// check above would 404 first) or another writer raced
+				// us and bumped updated_at. Refetch to surface the
+				// fresh version to the client.
+				const fresh = await getOwnedCanvas(params.id, locals.user.id);
+				if (!fresh) error(404, 'Canvas not found');
+				return json(
+					{
+						error: 'precondition_failed',
+						message: 'Canvas was updated by another request. Refresh and try again.',
+						currentVersion: String(fresh.updatedAt.getTime())
+					},
+					{ status: 412, headers: { ETag: canvasEtag(fresh) } }
+				);
+			}
+			updated = rows[0];
+		} else {
+			updated = canvas;
+		}
 	} catch (err) {
 		if (isSlugUniqueViolation(err) && typeof updates.slug === 'string') {
 			// See ignoreId comment above — same rationale: the conflict

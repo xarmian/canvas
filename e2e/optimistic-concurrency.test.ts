@@ -87,6 +87,43 @@ test('PATCH accepts If-Match: * (any version)', async ({ page }) => {
 	expect(res.status()).toBe(200);
 });
 
+test('Atomic CAS: two PATCHes that both pass the precondition still serialize (Codex round 7 P1)', async ({
+	page
+}) => {
+	// Without the WHERE-clause version predicate, two concurrent
+	// PATCHes that both passed the application-level If-Match check
+	// could both UPDATE the row in arbitrary order — no 412.
+	// Postgres serializes the UPDATEs at the row level, and the
+	// `eq(updatedAt, expected)` predicate makes the loser's UPDATE
+	// match zero rows → 412.
+	const request = page.request;
+	await signupAndLogin(page);
+	const canvas = await (
+		await request.post('/api/canvas', { data: { name: `CAS ${Date.now()}` } })
+	).json();
+
+	const initial = await request.get(`/api/canvas/${canvas.id}`);
+	const sharedEtag = initial.headers()['etag'];
+
+	// Issue two PATCHes with the SAME If-Match concurrently. The DB
+	// applies them in some order; whichever the row commits first
+	// changes updated_at. The other's WHERE no longer matches and
+	// returns zero rows → 412.
+	const [a, b] = await Promise.all([
+		request.patch(`/api/canvas/${canvas.id}`, {
+			headers: { 'If-Match': sharedEtag, 'Content-Type': 'application/json' },
+			data: { name: 'A wins' }
+		}),
+		request.patch(`/api/canvas/${canvas.id}`, {
+			headers: { 'If-Match': sharedEtag, 'Content-Type': 'application/json' },
+			data: { name: 'B wins' }
+		})
+	]);
+
+	const statuses = [a.status(), b.status()].sort();
+	expect(statuses).toEqual([200, 412]);
+});
+
 test('GET /api/canvas/:id emits ETag header', async ({ page }) => {
 	const request = page.request;
 	await signupAndLogin(page);
