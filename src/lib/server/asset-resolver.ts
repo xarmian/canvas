@@ -53,6 +53,12 @@ export const ASSET_URL_PROTOCOL = 'asset://';
  * canonical form (any version, any variant). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Cap on simultaneous storage reads when preloading owned-asset
+ * buffers. Mirrors the renderer's image-fetch ceiling so a canvas with
+ * many unique `asset://` refs can't fan out to a few-dozen-deep parallel
+ * I/O on every cache miss. */
+const MAX_CONCURRENT_STORAGE_READS = 6;
+
 /** Image layers gain a `fallbackSrc` field in TASK-86. Until that lands the
  * resolver still walks it conditionally so the two tasks compose cleanly
  * without a follow-up rev. */
@@ -139,22 +145,28 @@ export async function resolveAssetReferences(
 	const preloaded = new Map<string, Buffer>();
 
 	// Load each owned asset's bytes directly from storage and key the
-	// preloaded map by the resolved URL. Concurrent across rows. A
-	// storage read failure (race with delete, transient I/O) leaves the
-	// URL unpreloaded — the renderer's HTTP path is the fallback, and if
-	// that fails too the layer gets the placeholder.
-	await Promise.all(
-		rows.map(async (row) => {
-			const url = storage.getUrl(row.storageKey);
-			idToUrl.set(row.id, url);
-			try {
-				const buf = await storage.read(row.storageKey);
-				preloaded.set(url, buf);
-			} catch {
-				// fall through to renderer's HTTP fetch path
-			}
-		})
-	);
+	// preloaded map by the resolved URL. Bounded concurrency mirrors
+	// the renderer's image-fetch ceiling — a canvas with many unique
+	// `asset://` refs would otherwise launch all reads at once on a
+	// cache miss. A storage read failure (race with delete, transient
+	// I/O) leaves the URL unpreloaded — the renderer's HTTP path is
+	// the fallback, and if that fails too the layer gets the
+	// placeholder.
+	for (let i = 0; i < rows.length; i += MAX_CONCURRENT_STORAGE_READS) {
+		const chunk = rows.slice(i, i + MAX_CONCURRENT_STORAGE_READS);
+		await Promise.all(
+			chunk.map(async (row) => {
+				const url = storage.getUrl(row.storageKey);
+				idToUrl.set(row.id, url);
+				try {
+					const buf = await storage.read(row.storageKey);
+					preloaded.set(url, buf);
+				} catch {
+					// fall through to renderer's HTTP fetch path
+				}
+			})
+		);
+	}
 
 	// Rewrite in place. Unresolved refs (rejected by ownership filter or
 	// missing) keep their original `asset://` string; the renderer's
