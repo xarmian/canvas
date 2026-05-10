@@ -44,7 +44,18 @@
 
 @import 'tailwindcss';
 
-@theme {
+/*
+ * `@theme static` forces every variable below to be emitted as a CSS
+ * custom property at `:root`, regardless of whether the matching
+ * Tailwind utility (e.g. `bg-primary`, `text-text-muted`) appears in
+ * the template scan. Without `static`, Tailwind 4 tree-shakes unused
+ * tokens — fine for utility-only consumers, but it would break the
+ * `var(--color-...)` migration path documented above (Codex round 1
+ * P2): per-component `<style>` blocks can't be statically analyzed
+ * by Tailwind, so any token they reference would be missing from the
+ * generated stylesheet.
+ */
+@theme static {
 	/* Colors — semantic */
 	--color-bg: #ffffff;
 	--color-surface: #f8fafc;
