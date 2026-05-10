@@ -31,9 +31,10 @@ test('full happy path — signup to share URL, bot meta, image render', async ({
 	// 1. Signup → dashboard.
 	await signupAndLogin(page);
 
-	// 2. Dashboard empty state should be the marketing pitch + 'Try an example'
-	// CTA shipped in TASK-33. We use the New Canvas path here (the "start from
-	// scratch" branch); TASK-48 covers the empty-state copy regression.
+	// 2. Dashboard chrome's "New Canvas" link is always visible regardless of
+	// empty-state shape. This test exercises the "start from scratch" branch;
+	// the LP-card empty-state CTA itself is covered in regressions.test.ts
+	// (TASK-100 reshaped the empty-state copy).
 	const newCanvasLink = page.getByRole('link', { name: 'New Canvas' });
 	await expect(newCanvasLink).toBeVisible();
 

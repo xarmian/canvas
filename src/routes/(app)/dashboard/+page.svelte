@@ -2,8 +2,18 @@
 	import { goto } from '$app/navigation';
 	import { ConfirmDialog } from '$lib/components/ui';
 	import { toast } from '$lib/stores/toast.svelte';
-	import { STARTER_CANVAS } from '$lib/templates/starter';
+	import { getTemplate } from '$lib/templates/gallery';
 	import EditOrganizationModal from '$lib/components/dashboard/EditOrganizationModal.svelte';
+
+	/**
+	 * Sample URL displayed on the empty-state dashboard (TASK-100). Stays
+	 * in lockstep with the LP-card template's bindings so the URL the
+	 * user sees is the same one their newly-created canvas will accept.
+	 * Uses the public landing's reserved `crypto-lp-card` slug — that
+	 * canvas is admin-seeded (HT TASK-118) and is the canonical demo
+	 * URL we want first-time users to recognize when they tweet.
+	 */
+	const SAMPLE_LP_URL = '/c/crypto-lp-card?tokenA=ETH&tokenB=USDC&gainPercent=0.125&boosted=true';
 
 	let { data } = $props();
 
@@ -75,23 +85,39 @@
 		tags: string[];
 	} | null>(null);
 
-	async function tryExample() {
+	/**
+	 * Empty-state primary CTA (TASK-100). Creates a new canvas seeded
+	 * from the LP-card gallery template, then drops the user into the
+	 * editor. The reserved `crypto-lp-card` slug stays system-owned
+	 * (TASK-99 / HT TASK-118), so the user's auto-derived slug becomes
+	 * `crypto-lp-card-2` (or higher) — they own that variant, not the
+	 * landing-page demo URL.
+	 */
+	async function startWithLpCard() {
 		if (creatingExample) return;
+		const lpCard = getTemplate('crypto-lp-card');
+		if (!lpCard) {
+			// Belt-and-braces — getTemplate returns undefined only if the id
+			// is missing from the gallery, which would be a build-time
+			// regression. Surface a toast rather than silently no-oping.
+			toast.error('LP-card template is unavailable. Try "Browse all templates" instead.');
+			return;
+		}
 		creatingExample = true;
 		try {
 			const res = await fetch('/api/canvas', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(STARTER_CANVAS)
+				body: JSON.stringify(lpCard.canvas)
 			});
 			if (!res.ok) {
-				toast.error('Could not create example canvas. Try again or start from scratch.');
+				toast.error('Could not start the LP card. Try again or start from scratch.');
 				return;
 			}
 			const canvas = (await res.json()) as { id: string };
 			goto(`/canvas/${canvas.id}/edit`);
 		} catch {
-			toast.error('Could not create example canvas. Check your connection and try again.');
+			toast.error('Could not start the LP card. Check your connection and try again.');
 		} finally {
 			creatingExample = false;
 		}
@@ -210,32 +236,32 @@
 	</header>
 
 	{#if canvases.length === 0}
-		<div class="empty">
-			<h2 class="empty-title">Design once, share anywhere</h2>
+		<div class="empty" data-testid="empty-state">
+			<h2 class="empty-title">Your first dynamic image is one click away.</h2>
 			<p class="empty-lede">
-				Canvas lets you design a template visually, then generate infinite variants by passing URL
-				parameters. Great for OG images, social cards, and any dynamic preview you share.
+				Design a card once, then change the URL to change the image. Start with the LP card and
+				you'll see how every value in the URL drives a piece of the render.
 			</p>
-			<ol class="empty-steps">
-				<li>Design a template with text and images</li>
-				<li>Bind any property to a <code>?name=value</code> URL parameter</li>
-				<li>Publish, copy the URL, and share</li>
-			</ol>
 			<div class="empty-actions">
-				<a href="/templates" class="btn btn-primary">Browse templates</a>
-				<a href="/new" class="btn btn-secondary">Start from scratch</a>
 				<button
 					type="button"
-					class="btn btn-secondary"
+					class="btn btn-primary"
 					disabled={creatingExample}
-					onclick={tryExample}
+					onclick={startWithLpCard}
+					data-testid="start-with-lp-card"
 				>
-					{creatingExample ? 'Loading example…' : 'Try an example'}
+					{creatingExample ? 'Starting…' : 'Start with the LP card'}
 				</button>
+				<a href="/templates" class="btn btn-secondary" data-testid="empty-browse-templates"
+					>Browse all templates</a
+				>
+				<a href="/new" class="btn btn-tertiary" data-testid="empty-start-blank">Start blank</a>
 			</div>
+			<p class="empty-sample-url-label">Sample URL the LP card answers to:</p>
+			<code class="empty-sample-url" data-testid="empty-sample-url">{SAMPLE_LP_URL}</code>
 			<p class="empty-hint">
-				Templates are ready-to-edit starters for OG cards, podcast covers, blog heroes, and more —
-				each one is fully parameterized so you can see the dynamic-image story immediately.
+				Each template ships with sensible defaults and named parameters — change one, the image
+				changes. No code, no rebuild.
 			</p>
 		</div>
 	{:else}
@@ -609,38 +635,51 @@
 		color: #475569;
 	}
 
-	.empty-steps {
-		margin: 0 auto 1.5rem;
-		padding: 0.75rem 1rem 0.75rem 2.5rem;
-		text-align: left;
-		background: #f8fafc;
-		border: 1px solid #e2e8f0;
-		border-radius: 8px;
-		font-size: 0.9rem;
-		color: #334155;
-		max-width: 420px;
-	}
-
-	.empty-steps li {
-		margin: 0.2rem 0;
-		line-height: 1.5;
-	}
-
-	.empty-steps code {
-		background: #e2e8f0;
-		padding: 0.05rem 0.35rem;
-		border-radius: 3px;
-		font-size: 0.85em;
-	}
-
 	.empty-actions {
 		display: flex;
 		gap: 0.5rem;
 		justify-content: center;
 		flex-wrap: wrap;
-		margin-bottom: 0.75rem;
+		margin-bottom: 1rem;
 	}
 
+	.empty-sample-url-label {
+		margin: 0 0 0.3rem;
+		font-size: 0.75rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		font-weight: 600;
+		color: #64748b;
+	}
+
+	.empty-sample-url {
+		display: inline-block;
+		max-width: 100%;
+		margin: 0 auto 1rem;
+		padding: 0.5rem 0.7rem;
+		background: #f1f5f9;
+		border: 1px solid #e2e8f0;
+		border-radius: 6px;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.78rem;
+		color: #0f172a;
+		word-break: break-all;
+		text-align: left;
+	}
+
+	.btn-tertiary {
+		background: none;
+		color: #475569;
+		border: 1px solid transparent;
+		padding: 0.5rem 1rem;
+	}
+
+	.btn-tertiary:hover {
+		background: #f1f5f9;
+		border-color: #e2e8f0;
+	}
+
+	.btn-primary:disabled,
 	.btn-secondary:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;

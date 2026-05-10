@@ -6,7 +6,7 @@
  *   1. No window.prompt / confirm / alert called during any flow
  *   2. Mobile-banner appears below 1024px on the editor route
  *   3. Disabled toolbar buttons have cursor:not-allowed and softer color
- *   4. Dashboard empty state contains the product pitch + 'Try an example'
+ *   4. Dashboard empty state offers the LP-card CTA + sample URL (TASK-100)
  *   5. All icon-only toolbar buttons have a non-empty aria-label
  */
 import { test, expect } from '@playwright/test';
@@ -81,16 +81,22 @@ test.describe('v0.2 UX regressions', () => {
 		});
 	});
 
-	test('dashboard empty state pitches the product + offers a starter template', async ({
-		page
-	}) => {
+	test('dashboard empty state offers the LP-card CTA + sample URL', async ({ page }) => {
 		await signupAndLogin(page);
-		// Brand-new user → empty state.
-		await expect(page.getByRole('heading', { name: 'Design once, share anywhere' })).toBeVisible();
-		// The 2-3 sentence pitch should mention the parameter mechanic.
-		await expect(page.getByText(/URL parameters?/i)).toBeVisible();
-		// 'Try an example' CTA from TASK-33.
-		await expect(page.getByRole('button', { name: /Try an example/ })).toBeVisible();
+		// Brand-new user → empty state. The headline + CTAs come from TASK-100;
+		// the TASK-33 "Try an example" wording was retired alongside the pitch
+		// paragraph.
+		await expect(
+			page.getByRole('heading', { name: /Your first dynamic image is one click away/ })
+		).toBeVisible();
+		// Primary CTA: Start with the LP card (creates a canvas from the
+		// crypto-lp-card gallery template and lands the user in the editor).
+		await expect(page.getByTestId('start-with-lp-card')).toBeVisible();
+		// Sample URL display — the value is real (the public landing demo
+		// answers to it once HT TASK-118 seeds the canvas) and is exposed
+		// via testid so we can assert without coupling to mono-spaced
+		// formatting whitespace.
+		await expect(page.getByTestId('empty-sample-url')).toContainText('/c/crypto-lp-card');
 	});
 
 	test('disabled toolbar buttons get cursor:not-allowed and dimmed contrast', async ({ page }) => {
