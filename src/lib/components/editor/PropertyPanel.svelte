@@ -325,7 +325,18 @@
 	/** Toggle the inline bind editor for `propKey`. If the property is not
 	 *  yet bound, creates a stub binding (`{ param: propKey, default: '' }`)
 	 *  via the existing `toggleBinding` helper so the renderer + preview
-	 *  pick it up immediately and the user can rename in-place. */
+	 *  pick it up immediately and the user can rename in-place.
+	 *
+	 *  For `width` / `height` bindings we additionally normalize the
+	 *  layer's `scaleX` / `scaleY` to 1 — Fabric stores both intrinsic
+	 *  dimensions AND scale, and the renderer's `mergeParams` only
+	 *  rewrites the intrinsic value. Without this normalization, a layer
+	 *  resized via the corner handles (scaleX≠1) would render at
+	 *  `paramValue × scaleX` instead of `paramValue`, surprising the
+	 *  user who set a default of "200" and saw a 400px-wide layer. The
+	 *  normalization preserves the current displayed size by stamping
+	 *  it onto the intrinsic field via `setDimension`, mirroring what
+	 *  the manual W/H input already does. */
 	function openBindEditor(propKey: string) {
 		if (bindEditingProp === propKey) {
 			bindEditingProp = null;
@@ -333,6 +344,11 @@
 		}
 		if (!editorState.selectedObject) return;
 		if (!paramBindings[propKey]) {
+			if (propKey === 'width') {
+				setDimension('width', Math.round(objWidth));
+			} else if (propKey === 'height') {
+				setDimension('height', Math.round(objHeight));
+			}
 			toggleBinding(propKey);
 		}
 		bindEditingProp = propKey;
@@ -816,6 +832,34 @@
 							<option value="right">Right</option>
 						</select>
 					</div>
+				</section>
+			{/if}
+
+			<!-- Style section (TASK-104) — fallback fill control for layers
+				without their own type-specific section (Rect, unknown shapes).
+				Text and Badge expose Color/Background in their own section, so
+				skip this for those types to avoid a duplicate field row.
+				Image layers don't draw `fill`, so omit too. Without this
+				section, starter templates like `crypto-lp-card` (which bind
+				`Rect.fill` to a URL param) would have NO inline bind affordance
+				on the rect layer's fill, and clicking the corresponding entry
+				in the Bound Parameters summary would no-op. -->
+			{#if !isText && !isBadge && !isImage}
+				<section class="section" data-testid="property-section-style">
+					<h4 class="section-title">Style</h4>
+
+					<div class="field-row bind-row">
+						<label class="field-label" for="prop-style-fill">Fill</label>
+						<input
+							id="prop-style-fill"
+							type="color"
+							class="field-color"
+							value={fill}
+							oninput={(e) => setProp('fill', e.currentTarget.value)}
+						/>
+						{@render bindBtn('fill')}
+					</div>
+					{@render bindEditor('fill')}
 				</section>
 			{/if}
 
