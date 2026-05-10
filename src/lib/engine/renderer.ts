@@ -12,6 +12,7 @@ import { loadRemoteImage, loadImagesParallel } from './images.js';
 import { initDefaultFonts } from './fonts.js';
 import { applyFormat } from './formatters.js';
 import { applyConditionalStyles } from './conditionals.js';
+import { coerceBoolean } from './coerce.js';
 
 /** Properties that should remain numeric when bound to URL params */
 const NUMERIC_PROPS = new Set([
@@ -31,16 +32,6 @@ const NUMERIC_PROPS = new Set([
  * first member; future flags (e.g. drop-shadow on/off) should be added
  * here so the same lenient string→bool parsing applies. */
 const BOOLEAN_PROPS = new Set(['visible']);
-
-/** Lenient boolean coercion: 'true'/'1'/'yes'/'on' → true, 'false'/'0'/
- * 'no'/'off'/'' → false, anything else → undefined (so binding default
- * is preserved). */
-function coerceBoolean(value: string): boolean | undefined {
-	const v = value.trim().toLowerCase();
-	if (v === 'true' || v === '1' || v === 'yes' || v === 'on') return true;
-	if (v === 'false' || v === '0' || v === 'no' || v === 'off' || v === '') return false;
-	return undefined;
-}
 
 /**
  * Coerces a string value to the appropriate type for a given property.

@@ -46,10 +46,19 @@ export type ParamBindings = Record<string, ParamBinding>;
  * a case-insensitive substring check. */
 export type ConditionalOp = '==' | '!=' | '<' | '<=' | '>' | '>=' | 'contains';
 
-/** Properties that can be overridden by a conditional rule. Keep this
- * intentionally narrow for v0.3 — fills + opacity cover the
- * red-on-loss / green-on-gain pattern. */
-export type ConditionalProperty = 'fill' | 'opacity';
+/** Properties that can be overridden by a conditional rule.
+ *
+ * - `fill` / `opacity` (TASK-50): the original red-on-loss / green-on-gain
+ *   pattern.
+ * - `visible` (TASK-85): boolean show/hide. Lets a rule hide a layer (a
+ *   warning pill, a "boosted" star) based on a URL param's value, without
+ *   the user having to bind `visible` directly to a separate boolean param.
+ *
+ * Precedence: when a property is BOTH bound to a URL param AND targeted by
+ * a conditional rule, the conditional wins (it runs after parameter
+ * substitution in `render()`). This is intentional — it lets users layer
+ * "default from URL param, overridden by rule" semantics. */
+export type ConditionalProperty = 'fill' | 'opacity' | 'visible';
 
 /**
  * One conditional-styling rule on a layer. When `when.param` resolves to
