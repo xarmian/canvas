@@ -20,6 +20,33 @@
  * fonts. User fonts can still be applied after seeding.
  */
 
+/** Bindable property → URL-param mapping with optional pipe formatter
+ *  (signed-percent, currency, compact, crypto-price, …). The gallery
+ *  shape mirrors the runtime ParamBinding type — defaults stay untyped
+ *  here so a binding can target any property regardless of its concrete
+ *  type.
+ *
+ *  `default` is optional: omit it (or pass undefined) and an unsupplied
+ *  URL param leaves the layer's authored value in place. With a string
+ *  default like `''`, the runtime `??` fallback writes that value into
+ *  the property even when the user didn't pass anything — useful for
+ *  text bindings, harmful for image src bindings where we want the
+ *  authored URL / data-URL fallback to remain unless the user
+ *  explicitly opts in. */
+export interface TemplateParamBinding {
+	param: string;
+	default?: unknown;
+	format?: string;
+}
+
+/** Conditional style rule (TASK-50 / TASK-85). Same shape as the engine's
+ *  ConditionalRule — duplicated here so templates can be authored without
+ *  pulling the engine types into the gallery file. */
+export interface TemplateConditionalRule {
+	when: { param: string; op: '==' | '!=' | '<' | '<=' | '>' | '>='; value: string };
+	then: { property: 'fill' | 'opacity' | 'visible'; value: string };
+}
+
 export interface TemplateRect {
 	type: 'Rect';
 	left: number;
@@ -31,7 +58,8 @@ export interface TemplateRect {
 	ry?: number;
 	selectable?: boolean;
 	evented?: boolean;
-	paramBindings?: Record<string, { param: string; default: unknown }>;
+	paramBindings?: Record<string, TemplateParamBinding>;
+	conditionalStyles?: TemplateConditionalRule[];
 }
 
 export interface TemplateText {
@@ -47,10 +75,49 @@ export interface TemplateText {
 	textAlign?: 'left' | 'center' | 'right';
 	selectable?: boolean;
 	evented?: boolean;
-	paramBindings?: Record<string, { param: string; default: unknown }>;
+	paramBindings?: Record<string, TemplateParamBinding>;
+	conditionalStyles?: TemplateConditionalRule[];
 }
 
-export type TemplateObject = TemplateRect | TemplateText;
+/** Image layer with optional fallbackSrc (TASK-86). */
+export interface TemplateImage {
+	type: 'Image';
+	left: number;
+	top: number;
+	width: number;
+	height: number;
+	src: string;
+	fallbackSrc?: string;
+	selectable?: boolean;
+	evented?: boolean;
+	paramBindings?: Record<string, TemplateParamBinding>;
+	conditionalStyles?: TemplateConditionalRule[];
+}
+
+/** Badge / pill primitive (TASK-87). Auto-sized at render time;
+ *  width/height in templateJson are advisory. */
+export interface TemplateBadge {
+	type: 'Badge';
+	left: number;
+	top: number;
+	label: string;
+	fill: string;
+	fg?: string;
+	padding?: number;
+	radius?: number;
+	iconImage?: string;
+	iconPosition?: 'left' | 'right';
+	fontFamily?: string;
+	fontSize?: number;
+	fontWeight?: number;
+	visible?: boolean;
+	selectable?: boolean;
+	evented?: boolean;
+	paramBindings?: Record<string, TemplateParamBinding>;
+	conditionalStyles?: TemplateConditionalRule[];
+}
+
+export type TemplateObject = TemplateRect | TemplateText | TemplateImage | TemplateBadge;
 
 export interface TemplateDefinition {
 	/** URL-safe slug — used in the route as a key but not a URL. */
@@ -60,7 +127,7 @@ export interface TemplateDefinition {
 	/** One-sentence description shown under the name. */
 	description: string;
 	/** Coarse grouping for visual sorting in the gallery. */
-	category: 'social' | 'blog' | 'video' | 'commerce' | 'event' | 'generic';
+	category: 'social' | 'blog' | 'video' | 'commerce' | 'event' | 'generic' | 'crypto-finance';
 	/** Full POST body for /api/canvas. */
 	canvas: {
 		name: string;
@@ -587,7 +654,373 @@ export const TEMPLATES: TemplateDefinition[] = [
 				]
 			}
 		}
-	}
+	},
+	(() => {
+		// Fallback "generic token" SVG used when a tokenA/B logo URL fails
+		// to load. Embedded as a data URL so the template renders the
+		// fallback feature out of the box without depending on a CDN that
+		// might 404 over time. Raw `#` colors here — encodeURIComponent
+		// percent-encodes them once to produce `%23...`. Pre-encoding
+		// would double-encode and the canvas renderer would then see
+		// literal `%23...` strings as fill values.
+		const GENERIC_TOKEN_FALLBACK =
+			'data:image/svg+xml;utf8,' +
+			encodeURIComponent(
+				'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#64748b"/><text x="32" y="42" font-size="32" font-family="sans-serif" font-weight="700" text-anchor="middle" fill="#ffffff">?</text></svg>'
+			);
+		// LOSS_RED + GAIN_GREEN are the conditional fill targets for the
+		// gain/percent + P/L texts; reused by the range badge so the
+		// in_range / edge / out_of_range pill colors stay coordinated.
+		const GAIN_GREEN = '#22c55e';
+		const LOSS_RED = '#ef4444';
+		const RANGE_GREEN = '#10b981';
+		const RANGE_YELLOW = '#f59e0b';
+		const RANGE_RED = '#ef4444';
+
+		// Sample URL exercising every parameter:
+		// /c/crypto-lp-card?tokenA=USDC&tokenB=ETH&gainPercent=0.125&pl=125.30
+		//   &entry=0.10&mark=0.22&volume=1234567&range=in_range&rangeLabel=In+Range
+		//   &boosted=true&timeframe=24h
+		// `gainPercent` is fractional (0.125 → "+12.50%") because the
+		// signed-percent formatter wraps Intl percent which multiplies by
+		// 100. Flip gainPercent < 0 (e.g. -0.075) → red gain text + red
+		// P/L. Set range=edge or out_of_range → yellow / red pill. Omit
+		// `boosted` (or set it to anything other than `true`) → star badge
+		// hidden.
+		const lpCardTemplate: TemplateDefinition = {
+			id: 'crypto-lp-card',
+			name: 'Crypto LP position',
+			description:
+				'Liquidity-pool position card with token logos, gain/loss color, in/edge/out-of-range pill, and optional boosted star.',
+			category: 'crypto-finance',
+			canvas: {
+				name: 'Crypto LP position',
+				width: 1200,
+				height: 630,
+				backgroundType: 'color',
+				backgroundValue: '#0f172a',
+				templateJson: {
+					version: '1.0',
+					objects: [
+						// Top accent stripe
+						{
+							type: 'Rect',
+							left: 0,
+							top: 0,
+							width: 1200,
+							height: 6,
+							fill: '#14b8a6'
+						},
+						// Token A logo (image) — `src` defaults to the embedded
+						// generic-token fallback so the unbound canvas renders a
+						// recognizable placeholder instead of nothing (the
+						// renderer skips drawing entirely when src is empty).
+						// fallbackSrc kicks in if the user-provided URL fails
+						// (TASK-86). The src binding intentionally omits its
+						// default so an unsupplied ?tokenALogoUrl leaves the
+						// authored data URL in place; only an explicit param
+						// value overrides.
+						{
+							type: 'Image',
+							left: 60,
+							top: 50,
+							width: 80,
+							height: 80,
+							src: GENERIC_TOKEN_FALLBACK,
+							fallbackSrc: GENERIC_TOKEN_FALLBACK,
+							paramBindings: {
+								src: { param: 'tokenALogoUrl' }
+							}
+						},
+						// Token B logo (overlapping for the "pair" effect)
+						{
+							type: 'Image',
+							left: 130,
+							top: 50,
+							width: 80,
+							height: 80,
+							src: GENERIC_TOKEN_FALLBACK,
+							fallbackSrc: GENERIC_TOKEN_FALLBACK,
+							paramBindings: {
+								src: { param: 'tokenBLogoUrl' }
+							}
+						},
+						// Token-pair label — split into three layers so each side
+						// is independently bound to ?tokenA / ?tokenB. Without a
+						// string-composition formatter we can't merge them into a
+						// single bound text, so the layout uses right-alignment
+						// on the left side + left-alignment on the right side
+						// with the separator pinned in between.
+						{
+							type: 'Textbox',
+							left: 240,
+							top: 60,
+							width: 200,
+							text: 'USDC',
+							fontFamily: 'Inter',
+							fontSize: 40,
+							fontWeight: 700,
+							fill: '#ffffff',
+							textAlign: 'right',
+							paramBindings: {
+								text: { param: 'tokenA', default: 'USDC' }
+							}
+						},
+						{
+							type: 'Textbox',
+							left: 450,
+							top: 60,
+							width: 30,
+							text: '/',
+							fontFamily: 'Inter',
+							fontSize: 40,
+							fontWeight: 400,
+							fill: '#64748b',
+							textAlign: 'center'
+						},
+						{
+							type: 'Textbox',
+							left: 490,
+							top: 60,
+							width: 200,
+							text: 'ETH',
+							fontFamily: 'Inter',
+							fontSize: 40,
+							fontWeight: 700,
+							fill: '#ffffff',
+							textAlign: 'left',
+							paramBindings: {
+								text: { param: 'tokenB', default: 'ETH' }
+							}
+						},
+						// Timeframe label (e.g., 24h, 7d)
+						{
+							type: 'Textbox',
+							left: 240,
+							top: 110,
+							width: 400,
+							text: '24h',
+							fontFamily: 'Inter',
+							fontSize: 22,
+							fontWeight: 500,
+							fill: '#94a3b8',
+							textAlign: 'left',
+							paramBindings: {
+								text: { param: 'timeframe', default: '24h' }
+							}
+						},
+						// Gain percent (signed-percent formatter, conditional fill).
+						// The formatter wraps Intl.NumberFormat({style:'percent'})
+						// which multiplies the input by 100 — so 0.125 renders
+						// as "+12.50%". The conditional rule fires on the raw
+						// param value (also fractional), keeping the < 0
+						// comparison correct in either form.
+						{
+							type: 'Textbox',
+							left: 60,
+							top: 220,
+							width: 600,
+							text: '+12.50%',
+							fontFamily: 'Inter',
+							fontSize: 96,
+							fontWeight: 700,
+							fill: GAIN_GREEN,
+							textAlign: 'left',
+							paramBindings: {
+								text: { param: 'gainPercent', default: '0.125', format: 'signed-percent:2' }
+							},
+							conditionalStyles: [
+								{
+									when: { param: 'gainPercent', op: '<', value: '0' },
+									then: { property: 'fill', value: LOSS_RED }
+								}
+							]
+						},
+						// P/L dollar (currency formatter, conditional fill)
+						{
+							type: 'Textbox',
+							left: 60,
+							top: 330,
+							width: 600,
+							text: '$125.30',
+							fontFamily: 'Inter',
+							fontSize: 36,
+							fontWeight: 600,
+							fill: GAIN_GREEN,
+							textAlign: 'left',
+							paramBindings: {
+								text: { param: 'pl', default: '125.30', format: 'currency:USD' }
+							},
+							conditionalStyles: [
+								{
+									when: { param: 'gainPercent', op: '<', value: '0' },
+									then: { property: 'fill', value: LOSS_RED }
+								}
+							]
+						},
+						// Static "Entry" label
+						{
+							type: 'Textbox',
+							left: 60,
+							top: 430,
+							width: 200,
+							text: 'Entry',
+							fontFamily: 'Inter',
+							fontSize: 18,
+							fontWeight: 500,
+							fill: '#94a3b8',
+							textAlign: 'left'
+						},
+						// Entry price value (crypto-price formatter)
+						{
+							type: 'Textbox',
+							left: 60,
+							top: 460,
+							width: 280,
+							text: '$0.10',
+							fontFamily: 'Inter',
+							fontSize: 32,
+							fontWeight: 600,
+							fill: '#ffffff',
+							textAlign: 'left',
+							paramBindings: {
+								text: { param: 'entry', default: '0.10', format: 'crypto-price' }
+							}
+						},
+						// Static "Mark" label
+						{
+							type: 'Textbox',
+							left: 360,
+							top: 430,
+							width: 200,
+							text: 'Mark',
+							fontFamily: 'Inter',
+							fontSize: 18,
+							fontWeight: 500,
+							fill: '#94a3b8',
+							textAlign: 'left'
+						},
+						// Mark price value (crypto-price formatter)
+						{
+							type: 'Textbox',
+							left: 360,
+							top: 460,
+							width: 280,
+							text: '$0.22',
+							fontFamily: 'Inter',
+							fontSize: 32,
+							fontWeight: 600,
+							fill: '#ffffff',
+							textAlign: 'left',
+							paramBindings: {
+								text: { param: 'mark', default: '0.22', format: 'crypto-price' }
+							}
+						},
+						// Static "Volume" label
+						{
+							type: 'Textbox',
+							left: 660,
+							top: 430,
+							width: 200,
+							text: 'Volume',
+							fontFamily: 'Inter',
+							fontSize: 18,
+							fontWeight: 500,
+							fill: '#94a3b8',
+							textAlign: 'left'
+						},
+						// Volume value (compact formatter — exercises the third number formatter)
+						{
+							type: 'Textbox',
+							left: 660,
+							top: 460,
+							width: 280,
+							text: '$1.2M',
+							fontFamily: 'Inter',
+							fontSize: 32,
+							fontWeight: 600,
+							fill: '#ffffff',
+							textAlign: 'left',
+							paramBindings: {
+								text: { param: 'volume', default: '1234567', format: 'compact:1' }
+							}
+						},
+						// Range badge (in_range / edge / out_of_range) — fill swaps via
+						// conditional rules; default is in_range (green).
+						{
+							type: 'Badge',
+							left: 940,
+							top: 50,
+							label: 'In Range',
+							fill: RANGE_GREEN,
+							fg: '#ffffff',
+							padding: 12,
+							fontFamily: 'Inter',
+							fontSize: 20,
+							fontWeight: 600,
+							paramBindings: {
+								label: { param: 'rangeLabel', default: 'In Range' }
+							},
+							conditionalStyles: [
+								{
+									when: { param: 'range', op: '==', value: 'edge' },
+									then: { property: 'fill', value: RANGE_YELLOW }
+								},
+								{
+									when: { param: 'range', op: '==', value: 'out_of_range' },
+									then: { property: 'fill', value: RANGE_RED }
+								}
+							]
+						},
+						// Boosted-star badge — visible only when ?boosted=true. The
+						// layer defaults to hidden so an URL with `boosted`
+						// omitted keeps the star off; the conditional flips it
+						// visible only on an explicit `boosted == true`.
+						// Using "show on positive match" rather than "hide on
+						// negative match" because conditionals don't fire when
+						// the param is missing — applyConditionalStyles skips
+						// rules whose `when.param` resolved to undefined.
+						{
+							type: 'Badge',
+							left: 940,
+							top: 110,
+							label: '★ Boosted',
+							fill: '#7c3aed',
+							fg: '#ffffff',
+							padding: 12,
+							fontFamily: 'Inter',
+							fontSize: 18,
+							fontWeight: 600,
+							visible: false,
+							conditionalStyles: [
+								{
+									when: { param: 'boosted', op: '==', value: 'true' },
+									then: { property: 'visible', value: 'true' }
+								}
+							]
+						},
+						// Optional platform-logo image (asset:// or remote URL).
+						// `src` left blank by default — drawObject skips the
+						// layer when src is empty, so an unbound canvas
+						// renders nothing in this slot (the user opts in by
+						// supplying ?platformLogoUrl).
+						{
+							type: 'Image',
+							left: 1080,
+							top: 540,
+							width: 60,
+							height: 60,
+							src: '',
+							paramBindings: {
+								src: { param: 'platformLogoUrl' }
+							}
+						}
+					]
+				}
+			}
+		};
+		return lpCardTemplate;
+	})()
 ];
 
 /** Look up a template by id. Returns undefined for unknown ids; callers

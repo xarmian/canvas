@@ -16,10 +16,13 @@ test.describe('Template gallery', () => {
 		await page.waitForURL('**/templates');
 		await expect(page.getByRole('heading', { name: 'Templates' })).toBeVisible();
 
-		// At least 8 cards should render — the curated list ships 9 today,
-		// a lower bound keeps the test resilient to additions.
+		// The curated list ships 10 today (TASK-90 added crypto-lp-card on
+		// top of the original 9). Asserted exact rather than a lower bound
+		// so accidental drops are caught — additions are a deliberate
+		// gallery edit and updating this number alongside is the right
+		// friction.
 		const cards = page.getByTestId('template-card');
-		await expect(cards).toHaveCount(9);
+		await expect(cards).toHaveCount(10);
 
 		// Pick the OG card by its data-template-id and click "Use this
 		// template". The editor should open with the template's name as

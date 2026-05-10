@@ -135,10 +135,55 @@ async function isUrlSafe(url: string): Promise<boolean> {
 }
 
 /**
+ * Decodes a `data:` image URL into a Buffer the renderer can pass into
+ * `Image.src`. Returns null when the data URL is malformed or exceeds
+ * MAX_IMAGE_BYTES.
+ *
+ * Why bypass `loadRemoteImage`'s fetch path: data URLs make no network
+ * call, so they don't pose an SSRF risk. The standard SSRF guard
+ * (`isUrlSafe`) rejects every non-http(s) scheme, which would otherwise
+ * make legitimate inline images (template gallery placeholders, small
+ * SVG glyphs in templates) render as the gray placeholder. We still
+ * enforce the size cap so a hand-crafted JSON with a 100 MB inline PNG
+ * can't bloat process memory.
+ */
+function decodeDataImageUrl(url: string): Buffer | null {
+	// RFC 2397: data:[<mediatype>],<data> where <mediatype> can carry an
+	// arbitrary number of `;param=value` segments AND optionally end in
+	// `;base64`. Splitting on the FIRST comma is more tolerant than a
+	// fixed regex — handles `data:image/svg+xml;utf8,...`,
+	// `data:image/png;base64,...`, `data:image/svg+xml;charset=utf-8,...`
+	// and bare `data:,<text>` alike.
+	if (!url.startsWith('data:')) return null;
+	const commaIdx = url.indexOf(',');
+	if (commaIdx === -1) return null;
+	const prefix = url.slice(5, commaIdx); // strip 'data:'
+	const payload = url.slice(commaIdx + 1);
+	const params = prefix.split(';');
+	const mime = params.shift() ?? '';
+	if (mime && !mime.startsWith('image/')) return null;
+	const isBase64 = params.some((p) => p.toLowerCase() === 'base64');
+	try {
+		const buf = isBase64
+			? Buffer.from(payload, 'base64')
+			: Buffer.from(decodeURIComponent(payload), 'utf-8');
+		if (buf.byteLength === 0) return null;
+		if (buf.byteLength > MAX_IMAGE_BYTES) return null;
+		return buf;
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Loads a remote image by URL with timeout and caching.
  * Returns null on failure (timeout, 404, network error, or unsafe URL).
  *
- * SSRF defense layers:
+ * `data:image/*` URLs short-circuit the network path: they're decoded
+ * inline (size-capped) and returned directly. No SSRF risk because no
+ * network call is made.
+ *
+ * SSRF defense layers (for http(s) URLs):
  * 1. DNS resolution of all A+AAAA records with private IP validation
  * 2. Redirect following disabled (redirect: 'error')
  * 3. Timeout bounding all operations including DNS
@@ -150,6 +195,17 @@ export async function loadRemoteImage(
 	url: string,
 	timeoutMs: number = 3000
 ): Promise<Image | null> {
+	// Inline data URLs — decoded synchronously, no network. Returned
+	// before the SSRF / fetch path because that path would reject the
+	// non-http(s) scheme.
+	if (url.startsWith('data:')) {
+		const buf = decodeDataImageUrl(url);
+		if (!buf) return null;
+		const img = new Image();
+		img.src = buf;
+		return img;
+	}
+
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 
