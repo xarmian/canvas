@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button, Input } from '$lib/components/ui';
 	import { toast } from '$lib/stores/toast.svelte';
 
 	export interface CanvasSettingsPatch {
@@ -204,12 +204,14 @@
 		<div class="dim-row">
 			<label class="dim-field">
 				<span>Width</span>
-				<input
+				<Input
 					type="number"
-					min="16"
-					max="4096"
-					step="1"
-					value={width}
+					size="sm"
+					min={16}
+					max={4096}
+					step={1}
+					value={String(width)}
+					class="dim-input"
 					onchange={(e) => {
 						width = Number(e.currentTarget.value);
 						if (!isCustom) {
@@ -221,12 +223,14 @@
 			</label>
 			<label class="dim-field">
 				<span>Height</span>
-				<input
+				<Input
 					type="number"
-					min="16"
-					max="4096"
-					step="1"
-					value={height}
+					size="sm"
+					min={16}
+					max={4096}
+					step={1}
+					value={String(height)}
+					class="dim-input"
 					onchange={(e) => {
 						height = Number(e.currentTarget.value);
 						if (!isCustom) {
@@ -242,17 +246,19 @@
 	<div class="field-group">
 		<span class="section-label">Background color</span>
 		<div class="bg-row">
-			<input
+			<Input
 				type="color"
 				value={backgroundColor}
 				oninput={(e) => (backgroundColor = e.currentTarget.value)}
+				aria-label="Background color"
 			/>
-			<input
+			<Input
 				type="text"
-				class="bg-hex"
+				size="sm"
 				value={backgroundColor}
 				oninput={(e) => (backgroundColor = e.currentTarget.value)}
 				aria-label="Background color hex"
+				class="bg-hex"
 			/>
 		</div>
 	</div>
@@ -265,12 +271,10 @@
 	{/if}
 
 	{#snippet footer()}
-		<button type="button" class="btn btn-cancel" disabled={saving} onclick={onClose}>
-			Cancel
-		</button>
-		<button type="button" class="btn btn-primary" disabled={saving || !isChanged} onclick={apply}>
+		<Button variant="secondary" disabled={saving} onclick={onClose}>Cancel</Button>
+		<Button variant="primary" loading={saving} disabled={!isChanged} onclick={apply}>
 			{saving ? 'Applying…' : 'Apply'}
-		</button>
+		</Button>
 	{/snippet}
 </Modal>
 
@@ -355,13 +359,15 @@
 		width: 3rem;
 	}
 
-	.dim-field input {
+	/*
+	 * Width/height number inputs come from the Input primitive at
+	 * `size="sm"`. The wrapping `.dim-field` already sizes them; the
+	 * primitive needs `flex: 1` + zero min-width so it can shrink to
+	 * fit the row alongside the "px" unit label.
+	 */
+	.dim-field :global(.dim-input) {
 		flex: 1;
 		min-width: 0;
-		padding: 0.35rem 0.5rem;
-		border: 1px solid #d1d5db;
-		border-radius: 4px;
-		font-size: 0.85rem;
 	}
 
 	.dim-field .unit {
@@ -375,22 +381,15 @@
 		align-items: center;
 	}
 
-	.bg-row input[type='color'] {
-		width: 2.5rem;
-		height: 2rem;
-		padding: 2px;
-		border: 1px solid #d1d5db;
-		border-radius: 4px;
-		cursor: pointer;
-	}
-
-	.bg-hex {
+	/*
+	 * The hex input next to the color swatch wants a monospace +
+	 * flex-fill treatment. The Input primitive provides the border /
+	 * padding / radius from `size="sm"`; the per-instance class
+	 * supplies the typography.
+	 */
+	.bg-row :global(.bg-hex) {
 		flex: 1;
-		padding: 0.35rem 0.5rem;
-		border: 1px solid #d1d5db;
-		border-radius: 4px;
 		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-		font-size: 0.8125rem;
 	}
 
 	.warn {
@@ -402,38 +401,5 @@
 		font-size: 0.8125rem;
 		color: #92400e;
 		line-height: 1.45;
-	}
-
-	.btn {
-		padding: 0.45rem 1rem;
-		border-radius: 5px;
-		font-size: 0.85rem;
-		font-weight: 500;
-		border: 1px solid transparent;
-		cursor: pointer;
-	}
-
-	.btn:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
-	.btn-cancel {
-		background: #fff;
-		color: #374151;
-		border-color: #d1d5db;
-	}
-
-	.btn-cancel:hover:not(:disabled) {
-		background: #f3f4f6;
-	}
-
-	.btn-primary {
-		background: #2563eb;
-		color: #fff;
-	}
-
-	.btn-primary:hover:not(:disabled) {
-		background: #1d4ed8;
 	}
 </style>

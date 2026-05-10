@@ -11,7 +11,8 @@
 	 * means a future bulk-edit toolbar can reuse this modal with a
 	 * different save handler.
 	 */
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button, Input } from '$lib/components/ui';
+	import { X } from '@lucide/svelte';
 
 	interface Props {
 		open: boolean;
@@ -99,9 +100,10 @@
 			sidebar; tags are searchable and clickable.
 		</p>
 
-		<label class="field">
-			<span class="label">Folder</span>
-			<input
+		<div class="field">
+			<label for="org-folder-input" class="label">Folder</label>
+			<Input
+				id="org-folder-input"
 				type="text"
 				list="known-folders"
 				bind:value={folderInput}
@@ -113,7 +115,7 @@
 					<option value={folder}></option>
 				{/each}
 			</datalist>
-		</label>
+		</div>
 
 		<div class="field">
 			<span class="label">Tags</span>
@@ -121,29 +123,46 @@
 				{#each tags as tag (tag)}
 					<span class="chip">
 						<span>#{tag}</span>
-						<button type="button" aria-label="Remove tag {tag}" onclick={() => removeTag(tag)}
-							>×</button
+						<!--
+							Tag-remove "×" stays inline. The Button primitive
+							doesn't yet have an icon-only ultra-compact size
+							that fits inside a 1.5rem-tall chip — using it
+							would inflate the chip height. Tracked for the
+							icon-button enhancement.
+						-->
+						<button
+							type="button"
+							class="chip-remove"
+							aria-label="Remove tag {tag}"
+							onclick={() => removeTag(tag)}
 						>
+							<X size={12} aria-hidden="true" />
+						</button>
 					</span>
 				{/each}
-				<input
+				<!--
+					Borderless tag input nested inside `.tag-input` (the
+					chip container provides the visible border). `class`
+					opts into a `:global` override that strips the
+					primitive's border + padding so it blends in.
+				-->
+				<Input
 					type="text"
 					bind:value={tagInput}
 					onkeydown={handleTagKey}
 					placeholder={tags.length === 0 ? 'Type a tag and press Enter' : ''}
 					data-testid="org-tag-input"
+					class="chip-input"
 				/>
 			</div>
 			<p class="hint">Press Enter or comma to add a tag. Backspace removes the last chip.</p>
 		</div>
 
 		<div class="actions">
-			<button type="button" class="btn btn-secondary" onclick={onClose} disabled={saving}>
-				Cancel
-			</button>
-			<button type="submit" class="btn btn-primary" disabled={saving} data-testid="org-save">
+			<Button variant="secondary" onclick={onClose} disabled={saving}>Cancel</Button>
+			<Button variant="primary" type="submit" loading={saving} data-testid="org-save">
 				{saving ? 'Saving…' : 'Save'}
-			</button>
+			</Button>
 		</div>
 	</form>
 </Modal>
@@ -169,14 +188,6 @@
 		margin-bottom: 0.4rem;
 	}
 
-	.field input[type='text'] {
-		width: 100%;
-		padding: 0.5rem 0.65rem;
-		border: 1px solid #d1d5db;
-		border-radius: 6px;
-		font-size: 0.9rem;
-	}
-
 	.tag-input {
 		display: flex;
 		flex-wrap: wrap;
@@ -187,13 +198,21 @@
 		background: #fff;
 	}
 
-	.tag-input input {
+	/*
+	 * The tag input is the bare-input variant of the Input primitive,
+	 * sitting inside the visible `.tag-input` border. Strip the
+	 * primitive's own border + padding so it blends into the chip row.
+	 */
+	.tag-input :global(.chip-input) {
 		flex: 1;
 		min-width: 8ch;
 		border: none;
-		outline: none;
-		font-size: 0.9rem;
 		padding: 0.15rem 0.25rem;
+		background: transparent;
+	}
+
+	.tag-input :global(.chip-input:focus-visible) {
+		outline: none;
 	}
 
 	.chip {
@@ -207,14 +226,22 @@
 		font-size: 0.8rem;
 	}
 
-	.chip button {
+	.chip-remove {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		background: none;
 		border: none;
 		color: inherit;
-		font-size: 1rem;
 		line-height: 1;
 		cursor: pointer;
 		padding: 0;
+		border-radius: 999px;
+	}
+
+	.chip-remove:focus-visible {
+		outline: 2px solid #2563eb;
+		outline-offset: 1px;
 	}
 
 	.hint {
@@ -228,29 +255,5 @@
 		gap: 0.5rem;
 		justify-content: flex-end;
 		margin-top: 1.25rem;
-	}
-
-	.btn {
-		padding: 0.5rem 1rem;
-		border-radius: 6px;
-		font-size: 0.875rem;
-		border: none;
-		cursor: pointer;
-	}
-
-	.btn-primary {
-		background: #111;
-		color: #fff;
-	}
-
-	.btn-secondary {
-		background: #fff;
-		color: #111;
-		border: 1px solid #d1d5db;
-	}
-
-	.btn:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
 	}
 </style>
