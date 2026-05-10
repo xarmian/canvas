@@ -154,10 +154,16 @@ export function applyFormat(value: string, format: string | undefined | null): s
 		case 'compact': {
 			const num = safeNumber(value);
 			if (num === null) return value;
+			// `digits` is a CEILING for the shrunk-value precision, not a
+			// floor — the unshrinkable case (e.g. 999) should render as
+			// "999", not "999.0". Fixing this required setting
+			// minimumFractionDigits to 0 instead of mirroring digits the
+			// way percent / signed-percent / number do, where mandatory
+			// trailing zeros are usually desirable.
 			const digits = digitsArg(parsed.arg, 1);
 			return new Intl.NumberFormat('en-US', {
 				notation: 'compact',
-				minimumFractionDigits: digits,
+				minimumFractionDigits: 0,
 				maximumFractionDigits: digits
 			}).format(num);
 		}

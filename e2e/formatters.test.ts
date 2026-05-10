@@ -131,8 +131,9 @@ test.describe('Pipe formatters', () => {
 		expect(defaultRender.status()).toBe(200);
 		expect((await defaultRender.body()).length).toBeGreaterThan(100);
 
-		// 6 sig digits: ?price=0.000123 → "$0.00012300" — extra trailing
-		// zero, so different rendered bytes than the default-precision render.
+		// 6 sig digits: ?price=0.000123 → "$0.000123000" (Intl pads to the
+		// requested significant-digit count). Different rendered bytes
+		// than the default 4-sig-digit "$0.0001230".
 		await page.getByLabel('Format').selectOption('crypto-price:6');
 		await page.getByRole('button', { name: 'Save' }).click();
 		await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 10_000 });
