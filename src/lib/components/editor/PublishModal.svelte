@@ -62,6 +62,21 @@
 	let paramRows = $state<ParamRow[]>([]);
 	let paramRowsLoaded = $state(false);
 
+	// --- Sharing & redirect (TASK-95) ---
+	// OG title / description / redirect URL are first-class shareable
+	// metadata — the schema and PATCH endpoint already accept them, but
+	// before TASK-95 there was no UI to edit them. Loaded lazily when
+	// the modal opens for a published canvas. Edits persist on blur via
+	// the existing PATCH so we keep the auto-save discipline of the
+	// param-flags rows.
+	interface SharingState {
+		ogTitle: string;
+		ogDescription: string;
+		redirectUrl: string;
+	}
+	let sharing = $state<SharingState>({ ogTitle: '', ogDescription: '', redirectUrl: '' });
+	let sharingLoaded = $state(false);
+
 	$effect(() => {
 		if (open && published && !paramRowsLoaded) {
 			void loadParamSchema();
@@ -69,11 +84,16 @@
 		if (open && published && versionToken === null) {
 			void loadVersionToken();
 		}
+		if (open && published && !sharingLoaded) {
+			void loadSharing();
+		}
 		if (!open) {
 			// Reset so reopening for a different canvas refetches.
 			paramRowsLoaded = false;
 			paramRows = [];
 			versionToken = null;
+			sharingLoaded = false;
+			sharing = { ogTitle: '', ogDescription: '', redirectUrl: '' };
 		}
 	});
 
@@ -109,6 +129,53 @@
 		} catch {
 			// Silent — schema row is best-effort metadata, not critical to
 			// the publish flow itself. The user can retry by reopening.
+		}
+	}
+
+	async function loadSharing(): Promise<void> {
+		try {
+			const res = await fetch(`/api/canvas/${canvasId}`);
+			if (!res.ok) return;
+			const data = (await res.json()) as {
+				ogTitle: string | null;
+				ogDescription: string | null;
+				redirectUrl: string | null;
+			};
+			sharing = {
+				ogTitle: data.ogTitle ?? '',
+				ogDescription: data.ogDescription ?? '',
+				redirectUrl: data.redirectUrl ?? ''
+			};
+			sharingLoaded = true;
+		} catch {
+			// Non-blocking — the user can edit and save manually.
+		}
+	}
+
+	/**
+	 * Persist a single sharing field on blur. Trims the value, sends the
+	 * trimmed version (so trailing whitespace doesn't slip into a public
+	 * og:title), and treats an empty string as "clear this field" — the
+	 * server PATCH stores empty/null which makes the share-page fall
+	 * back to the canvas name / a generic description / no redirect.
+	 *
+	 * Optimistic in-memory update first so the field doesn't snap back
+	 * if the request is in flight when the user clicks elsewhere.
+	 */
+	async function persistSharingField<K extends keyof SharingState>(
+		key: K,
+		value: SharingState[K]
+	): Promise<void> {
+		const trimmed = value.trim();
+		sharing = { ...sharing, [key]: trimmed };
+		try {
+			await fetch(`/api/canvas/${canvasId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ [key]: trimmed })
+			});
+		} catch {
+			toast.error(`Couldn't save ${key}.`);
 		}
 	}
 
@@ -316,6 +383,61 @@
 				<code>?title=Hello</code>.
 			</p>
 		</div>
+
+		<section class="sharing-section" data-testid="sharing-section">
+			<h3 class="sharing-title">Sharing &amp; redirect</h3>
+			<p class="sharing-hint">
+				Customize what social-media unfurls show, and where humans land after clicking the share
+				URL. Leave blank to use the canvas name / no redirect.
+			</p>
+
+			<div class="field">
+				<label for="publish-og-title">OG title</label>
+				<input
+					id="publish-og-title"
+					type="text"
+					data-testid="og-title-input"
+					placeholder="Defaults to canvas name"
+					value={sharing.ogTitle}
+					oninput={(e) => (sharing = { ...sharing, ogTitle: e.currentTarget.value })}
+					onblur={(e) => persistSharingField('ogTitle', e.currentTarget.value)}
+				/>
+				<p class="help">
+					Shown as the title in Twitter / Facebook / LinkedIn cards. Supports
+					<code>{'{{param}}'}</code> substitution.
+				</p>
+			</div>
+
+			<div class="field">
+				<label for="publish-og-description">OG description</label>
+				<textarea
+					id="publish-og-description"
+					data-testid="og-description-input"
+					rows="2"
+					placeholder="One- or two-sentence summary that appears under the title"
+					value={sharing.ogDescription}
+					oninput={(e) => (sharing = { ...sharing, ogDescription: e.currentTarget.value })}
+					onblur={(e) => persistSharingField('ogDescription', e.currentTarget.value)}
+				></textarea>
+			</div>
+
+			<div class="field">
+				<label for="publish-redirect-url">Redirect URL</label>
+				<input
+					id="publish-redirect-url"
+					type="text"
+					data-testid="redirect-url-input"
+					placeholder="https://your-site.example.com/landing?utm_source={'{{utm}}'}"
+					value={sharing.redirectUrl}
+					oninput={(e) => (sharing = { ...sharing, redirectUrl: e.currentTarget.value })}
+					onblur={(e) => persistSharingField('redirectUrl', e.currentTarget.value)}
+				/>
+				<p class="help">
+					Humans get a 302 to this URL. Bots see the OG card. Use
+					<code>{'{{paramName}}'}</code> to substitute query parameters into the redirect.
+				</p>
+			</div>
+		</section>
 
 		<section class="embed-section" data-testid="embed-section">
 			<header class="embed-header">
@@ -628,6 +750,44 @@
 
 	.btn-link:hover {
 		text-decoration: underline;
+	}
+
+	.sharing-section {
+		margin-top: 1.25rem;
+		padding-top: 1rem;
+		border-top: 1px solid #eee;
+	}
+
+	.sharing-title {
+		margin: 0 0 0.4rem;
+		font-size: 0.95rem;
+		font-weight: 600;
+		color: #111;
+	}
+
+	.sharing-hint {
+		margin: 0 0 0.85rem;
+		font-size: 0.8125rem;
+		color: #4b5563;
+		line-height: 1.5;
+	}
+
+	.sharing-section .field input[type='text'],
+	.sharing-section .field textarea {
+		width: 100%;
+		padding: 0.45rem 0.6rem;
+		border: 1px solid #d1d5db;
+		border-radius: 5px;
+		font-family: inherit;
+		font-size: 0.85rem;
+		background: #fff;
+		color: #111;
+	}
+
+	.sharing-section .field textarea {
+		resize: vertical;
+		min-height: 2.5rem;
+		font-family: inherit;
 	}
 
 	.embed-section {
