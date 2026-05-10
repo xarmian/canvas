@@ -46,13 +46,22 @@ import { getLiveUserFontDescriptors } from './user-fonts';
 const TOKEN_HEX_CHARS = 12;
 
 /** Build the 12-hex-char content-version token for a canvas. The
- *  inputs ARE the contract — see the file-header doc. */
+ *  inputs ARE the contract — see the file-header doc.
+ *
+ *  `assetSetVersion` (TASK-117) makes the token sensitive to
+ *  asset-row mutations even when the canvas's templateJson is
+ *  unchanged. Without it, social-CDN immutable caches would keep
+ *  serving the resolved render of a now-deleted asset until the
+ *  user edited the canvas. Empty string is a valid input — that's
+ *  the "canvas has no asset:// refs" state, distinct from
+ *  "fingerprint not yet computed". */
 export function buildContentVersionToken(
 	canvasUpdatedAtMs: string,
-	fontSetVersion: string
+	fontSetVersion: string,
+	assetSetVersion = ''
 ): string {
 	return createHash('sha256')
-		.update(`${canvasUpdatedAtMs}|${fontSetVersion}`)
+		.update(`${canvasUpdatedAtMs}|${fontSetVersion}|${assetSetVersion}`)
 		.digest('hex')
 		.slice(0, TOKEN_HEX_CHARS);
 }
@@ -68,6 +77,19 @@ export function fontSetVersionFromDescriptors(descriptors: Array<{ id: string }>
 		.join('|');
 }
 
+/** Build the asset-set fingerprint from a list of `(id, storageKey)`
+ *  entries. Folded into the render cache key so deleting / replacing
+ *  an asset that a published canvas references invalidates the
+ *  canvas's cached renders without requiring a canvas edit
+ *  (TASK-117). Empty string when the canvas has no `asset://` refs
+ *  OR all referenced ids have been deleted. */
+export function assetSetVersionFromEntries(
+	entries: Array<{ id: string; storageKey: string }>
+): string {
+	if (entries.length === 0) return '';
+	return entries.map((e) => `${e.id}:${e.storageKey}`).join('|');
+}
+
 /** Build the user font-set fingerprint that feeds the content-version
  *  token. Sorted asset IDs joined with `|`; empty string when the user
  *  has zero fonts registered. */
@@ -80,11 +102,32 @@ export async function buildFontSetVersion(userId: string): Promise<string> {
  *  Used by the share-page server load to embed `_v=<token>` in the
  *  og:image URL. The render route derives the same token directly
  *  (it already needs the font descriptors for cache-key purposes —
- *  see `[file]/+server.ts`). */
+ *  see `[file]/+server.ts`).
+ *
+ *  `templateJson` is read for `asset://` references; the resolved
+ *  `(id, storage_key)` rows feed the asset-set fingerprint so a
+ *  delete/replace on a referenced asset rolls the token (TASK-117).
+ *  Pass `null` if the caller doesn't have the templateJson handy —
+ *  the asset fingerprint will be empty, equivalent to the v0.5
+ *  pre-TASK-117 behavior. */
 export async function resolveContentVersion(
 	canvasUpdatedAt: Date,
-	userId: string
+	userId: string,
+	templateJson: import('$lib/engine/types').FabricCanvasJson | null = null
 ): Promise<string> {
 	const fontSetVersion = await buildFontSetVersion(userId);
-	return buildContentVersionToken(canvasUpdatedAt.getTime().toString(), fontSetVersion);
+	let assetSetVersion = '';
+	if (templateJson) {
+		const { collectAssetReferences, loadAssetFingerprint } = await import('./asset-resolver');
+		const ids = collectAssetReferences(templateJson);
+		if (ids.length > 0) {
+			const entries = await loadAssetFingerprint(ids, userId);
+			assetSetVersion = assetSetVersionFromEntries(entries);
+		}
+	}
+	return buildContentVersionToken(
+		canvasUpdatedAt.getTime().toString(),
+		fontSetVersion,
+		assetSetVersion
+	);
 }

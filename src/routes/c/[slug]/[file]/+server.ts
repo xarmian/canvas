@@ -10,10 +10,15 @@ import { validateParams } from '$lib/server/canvas-params';
 import { getDefaultRenderCache } from '$lib/server/render-cache';
 import { ensureUserFontsRegistered, getLiveUserFontDescriptors } from '$lib/server/user-fonts';
 import {
+	assetSetVersionFromEntries,
 	buildContentVersionToken,
 	fontSetVersionFromDescriptors
 } from '$lib/server/content-version';
-import { resolveAssetReferences } from '$lib/server/asset-resolver';
+import {
+	collectAssetReferences,
+	loadAssetFingerprint,
+	resolveAssetReferences
+} from '$lib/server/asset-resolver';
 import {
 	acquireRenderSlot,
 	checkRateLimit,
@@ -67,7 +72,8 @@ function sanitizeFontFamilies(json: FabricCanvasJson, liveFamilies: Set<string>)
 }
 
 /** Build a cache key from slug + content version + params + format +
- * the canvas owner's font-library fingerprint.
+ * the canvas owner's font-library fingerprint + the canvas's
+ * asset-reference fingerprint.
  *
  * Why fontSetVersion is part of the key: GlobalFonts has no unregister
  * API, so a deleted font keeps rendering from the in-process registry
@@ -79,6 +85,18 @@ function sanitizeFontFamilies(json: FabricCanvasJson, liveFamilies: Set<string>)
  * sorted family list joined with '|'; small enough to not bloat the
  * key, and deterministic.
  *
+ * Why assetSetVersion is part of the key (TASK-117): a canvas can
+ * reference assets by `asset://{id}` URLs. Deleting or replacing
+ * a referenced asset doesn't bump `canvas.updatedAt`, so without
+ * this fingerprint the cache would keep serving the resolved
+ * render of the now-missing asset. Including the live `(id,
+ * storage_key)` entries for currently-referenced assets means a
+ * delete drops the entry from the fingerprint and busts the
+ * cache; a re-upload (new asset id) leaves the fingerprint
+ * stable for the canvas's still-old reference (which now
+ * resolves to the placeholder). Either way the next render is
+ * fresh and reflects current state.
+ *
  * Param serialization uses JSON so a key/value containing literal `&`
  * or `=` (e.g. `?q=1%26x=2`) can't collide with a different request
  * whose decoded params happen to look identical when joined with `&`. */
@@ -88,13 +106,14 @@ function cacheKey(
 	params: Record<string, string>,
 	format: string,
 	fontSetVersion: string,
+	assetSetVersion: string,
 	dpr: number
 ): string {
 	const sortedEntries = Object.entries(params).sort(([a], [b]) => a.localeCompare(b));
 	const serializedParams = JSON.stringify(sortedEntries);
 	// dpr is part of the key — `?dpr=2` and `?dpr=3` produce different
 	// pixel data and must NOT collide with the dpr=1 cache entry.
-	return `${slug}:${version}:${format}:fonts=${fontSetVersion}:dpr=${dpr}:${serializedParams}`;
+	return `${slug}:${version}:${format}:fonts=${fontSetVersion}:assets=${assetSetVersion}:dpr=${dpr}:${serializedParams}`;
 }
 
 /**
@@ -247,6 +266,22 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 	const liveFamilies = new Set(liveDescriptors.map((d) => d.family));
 	const fontSetVersion = fontSetVersionFromDescriptors(liveDescriptors);
 
+	// Asset-reference fingerprint (TASK-117). Walk the templateJson
+	// for `asset://` ids and look up their current `(id, storage_key)`
+	// rows owner-scoped. A delete drops entries from the fingerprint;
+	// a replace yields a new storage_key. Either way, the cache key
+	// changes and the next render is fresh — without requiring a
+	// canvas edit. Empty fingerprint when the canvas has no
+	// `asset://` refs (skips the DB roundtrip entirely).
+	const referencedAssetIds = collectAssetReferences(
+		canvas.templateJson as unknown as FabricCanvasJson | null
+	);
+	const assetEntries =
+		referencedAssetIds.length > 0
+			? await loadAssetFingerprint(referencedAssetIds, canvas.userId)
+			: [];
+	const assetSetVersion = assetSetVersionFromEntries(assetEntries);
+
 	// Cache key uses the resolved params (post-default), so two requests
 	// that differ only by relying-on-default vs explicit value hit the
 	// same cache entry — and a now-required param that was previously
@@ -258,11 +293,23 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 	// the cache. updatedAt is auto-refreshed on every PATCH via Drizzle
 	// $onUpdate.
 	const version = canvas.updatedAt.toISOString();
-	const key = cacheKey(params.slug, version, queryParams, formatInfo.format, fontSetVersion, dpr);
+	const key = cacheKey(
+		params.slug,
+		version,
+		queryParams,
+		formatInfo.format,
+		fontSetVersion,
+		assetSetVersion,
+		dpr
+	);
 	const etag = buildEtag(key);
 	const updatedAtMs = canvas.updatedAt.getTime().toString();
 	const lastModified = canvas.updatedAt.toUTCString();
-	const versionToken = buildContentVersionToken(updatedAtMs, fontSetVersion);
+	// Mix the asset-set fingerprint into `_v` (TASK-117) so a stale
+	// `_v` from an embed-code snippet stops matching the immutable-
+	// cache opt-in once a referenced asset is mutated. Otherwise a
+	// 1-year CDN cache would keep serving the pre-mutation render.
+	const versionToken = buildContentVersionToken(updatedAtMs, fontSetVersion, assetSetVersion);
 	const cacheControl = pickCacheControl(requestedVersion, versionToken);
 
 	// Conditional GET: 304 short-circuits before we touch storage / cache.
