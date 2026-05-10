@@ -76,6 +76,11 @@
 	}
 	let sharing = $state<SharingState>({ ogTitle: '', ogDescription: '', redirectUrl: '' });
 	let sharingLoaded = $state(false);
+	// In-flight guard so the same $effect re-running (e.g. when
+	// paramRowsLoaded or versionToken later changes) doesn't kick off
+	// a second concurrent GET that could land after the user has
+	// started typing and overwrite their input. Codex round 2 P2.
+	let sharingPending = $state(false);
 
 	$effect(() => {
 		if (open && published && !paramRowsLoaded) {
@@ -84,7 +89,7 @@
 		if (open && published && versionToken === null) {
 			void loadVersionToken();
 		}
-		if (open && published && !sharingLoaded) {
+		if (open && published && !sharingLoaded && !sharingPending) {
 			void loadSharing();
 		}
 		if (!open) {
@@ -93,6 +98,7 @@
 			paramRows = [];
 			versionToken = null;
 			sharingLoaded = false;
+			sharingPending = false;
 			sharing = { ogTitle: '', ogDescription: '', redirectUrl: '' };
 		}
 	});
@@ -133,22 +139,28 @@
 	}
 
 	async function loadSharing(): Promise<void> {
+		sharingPending = true;
 		try {
 			const res = await fetch(`/api/canvas/${canvasId}`);
-			if (!res.ok) return;
-			const data = (await res.json()) as {
-				ogTitle: string | null;
-				ogDescription: string | null;
-				redirectUrl: string | null;
-			};
-			sharing = {
-				ogTitle: data.ogTitle ?? '',
-				ogDescription: data.ogDescription ?? '',
-				redirectUrl: data.redirectUrl ?? ''
-			};
+			if (res.ok) {
+				const data = (await res.json()) as {
+					ogTitle: string | null;
+					ogDescription: string | null;
+					redirectUrl: string | null;
+				};
+				sharing = {
+					ogTitle: data.ogTitle ?? '',
+					ogDescription: data.ogDescription ?? '',
+					redirectUrl: data.redirectUrl ?? ''
+				};
+			}
+			// Even on a non-OK / network error, flip the loaded flag so
+			// the inputs unlock and the user can edit manually. Codex
+			// round 2 P3 — without this, a transient 5xx during open
+			// would leave the fields permanently disabled.
+		} finally {
 			sharingLoaded = true;
-		} catch {
-			// Non-blocking — the user can edit and save manually.
+			sharingPending = false;
 		}
 	}
 
