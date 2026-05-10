@@ -402,13 +402,23 @@
 		// 409 error/suggestion before the user could interact with
 		// it (Codex round 3 P3 — Tab from input to suggestion button).
 		if (candidate === slugLastFailed) return;
-		// Defensive guard (Codex round 7 P2): the input is also
-		// disabled until canvasVersion loads, but if a caller invokes
-		// commitSlugRename programmatically we still don't want to
-		// PATCH without an If-Match — that would bypass the optimistic
-		// concurrency entirely. Bail; the user can retry once the
-		// modal finishes loading.
-		if (!canvasVersion) return;
+		// Optimistic concurrency: every slug rename ships with an
+		// `If-Match` header. The version is captured by `loadSharing`
+		// on modal open, but if that GET hasn't completed yet (or
+		// failed transiently — Codex round 8 P2), we lazy-fetch
+		// before submitting so a fast typist's first commit still
+		// gets concurrency protection. Failure to obtain a version
+		// surfaces inline; the user can edit + retry.
+		let ifMatchVersion = canvasVersion;
+		if (!ifMatchVersion) {
+			ifMatchVersion = await fetchCanvasVersion(canvasId, new AbortController());
+			if (ifMatchVersion === null) {
+				slugServerError = "Couldn't read canvas version. Please try again.";
+				slugLastFailed = candidate;
+				return;
+			}
+			canvasVersion = ifMatchVersion;
+		}
 		// Snapshot canvasId + generation at request start. The editor
 		// route reuses this component across canvas-id navigations, and
 		// the modal can close mid-flight — both produce stale completions
@@ -440,7 +450,7 @@
 		slugServerError = null;
 		slugSuggestion = null;
 		try {
-			let res = await sendSlugPatch(requestCanvasId, candidate, canvasVersion, controller);
+			let res = await sendSlugPatch(requestCanvasId, candidate, ifMatchVersion, controller);
 			// Optimistic-concurrency retry (TASK-98 / Codex round 6):
 			// on 412 the server's seen a write since our last read.
 			// Refetch to get the fresh version and retry once. The
@@ -789,9 +799,8 @@
 					id="publish-slug"
 					type="text"
 					data-testid="slug-input"
-					placeholder={canvasVersion ? '' : 'Loading…'}
 					value={slugDraft}
-					disabled={slugBusy || !canvasVersion}
+					disabled={slugBusy}
 					oninput={(e) => {
 						slugDraft = e.currentTarget.value;
 						slugServerError = null;

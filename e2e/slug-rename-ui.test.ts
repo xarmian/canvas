@@ -315,31 +315,47 @@ test('slug rename: closing modal with invalid draft resets state on reopen (Code
 	await expect(page.getByTestId('slug-server-error')).toBeHidden();
 });
 
-test('slug rename: input is disabled until canvasVersion loads (Codex round 7 P2)', async ({
+test('slug rename: lazy-fetches version when canvasVersion not yet captured (Codex round 8 P2)', async ({
 	page
 }) => {
+	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Slug gate', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Lazy version', preset: 'OG Image' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
-	// Throttle the loadSharing GET so we can observe the disabled
-	// state. Without the gate, the slug input would be enabled
-	// immediately and a fast typist could submit a rename without
-	// If-Match — bypassing optimistic concurrency entirely.
+	// The slug input is no longer disabled while loadSharing is in
+	// flight — commitSlugRename lazy-fetches the ETag if it doesn't
+	// have one yet, so a transient GET failure (or a race with a
+	// fast typist) doesn't permanently break the slug field. Hang
+	// the first GET (loadSharing) so the lazy-fetch path is the
+	// one that actually obtains the version for the rename.
+	let getsObserved = 0;
 	await page.route(`**/api/canvas/${canvas.id}`, async (route) => {
 		if (route.request().method() === 'GET') {
-			await new Promise((r) => setTimeout(r, 1000));
+			getsObserved++;
+			if (getsObserved === 1) {
+				await new Promise((r) => setTimeout(r, 2500));
+			}
 		}
 		await route.continue();
 	});
 	await publish(page);
 
+	// Type immediately — input is enabled even though loadSharing
+	// is still in flight.
 	const slugInput = page.getByTestId('slug-input');
-	// While loadSharing is in flight, the input is disabled.
-	await expect(slugInput).toBeDisabled();
-	// Once the GET completes (and canvasVersion is captured), the
-	// input becomes enabled.
-	await expect(slugInput).toBeEnabled({ timeout: 5_000 });
+	await expect(slugInput).toBeEnabled();
+	const newSlug = `lazy-${Date.now()}`;
+	await slugInput.fill(newSlug);
+	await slugInput.press('Enter');
+
+	// commit lazy-fetched a version, applied If-Match, succeeded.
+	// Server confirms.
+	await expect(async () => {
+		const r = await request.get(`/api/canvas/${canvas.id}`);
+		const body = (await r.json()) as { slug: string };
+		expect(body.slug).toBe(newSlug);
+	}).toPass({ timeout: 8_000 });
 	await page.unroute(`**/api/canvas/${canvas.id}`);
 });
 
