@@ -55,6 +55,17 @@
 	 *  second response could overwrite the first's freshly-edited rows
 	 *  if it took longer to return. */
 	let schemaPending = $state(false);
+	/** Monotonic generation token — incremented at every loadSchema()
+	 *  start and stored in `schemaPendingGen`. The finally block only
+	 *  clears `schemaPending` when its captured generation still matches
+	 *  the current one; a stale completion that lost the race is
+	 *  treated as if it never happened. Without this, canvas A's late
+	 *  finally would clear `schemaPending=false` while canvas B's
+	 *  newer request was still in flight, letting the $effect kick off
+	 *  a duplicate B fetch whose response would clobber any optimistic
+	 *  type/required edit the user had made between requests.
+	 *  Codex round 3 P2. */
+	let schemaPendingGen = 0;
 	/** The canvasId the cached `schemaRows` belong to. Compared against
 	 *  the current `canvasId` prop on every $effect run so a parent-
 	 *  level canvas switch (the editor route reuses this component
@@ -197,27 +208,34 @@
 			schemaLoaded = false;
 			schemaRows = [];
 			schemaCanvasId = null;
-			// Also clear the in-flight flag so a navigation that closes
-			// the modal mid-fetch doesn't strand `schemaPending=true` —
-			// otherwise the next open would skip the load (the effect's
-			// guard checks !schemaPending) and the panel would render
-			// type/required cells permanently disabled. Codex round 2 P2.
+			// Bump the generation so any in-flight load is treated as
+			// stale on completion (its finally block won't touch
+			// schemaPending or schemaLoaded). Then clear schemaPending
+			// directly so the next open isn't blocked by the !pending
+			// gate. Codex round 2 P2 + round 3 P2.
+			schemaPendingGen++;
 			schemaPending = false;
 		}
 	});
 
 	async function loadSchema(): Promise<void> {
 		schemaPending = true;
+		// Bump + capture the generation token so a stale completion can't
+		// clear the pending flag for a newer in-flight request, and so
+		// a stale response can't overwrite freshly-loaded rows. Codex
+		// round 3 P2.
+		const requestGen = ++schemaPendingGen;
 		// Snapshot the canvasId at request start. By the time the response
 		// lands the parent may have switched canvases — assigning A's
 		// schemaRows on canvas B's open modal would be a stale-write bug.
 		const requestCanvasId = canvasId;
+		const isStale = () => requestGen !== schemaPendingGen || requestCanvasId !== canvasId;
 		try {
 			const res = await fetch(`/api/canvas/${canvasId}/params`);
-			if (requestCanvasId !== canvasId) return;
+			if (isStale()) return;
 			if (res.ok) {
 				const rows = (await res.json()) as SchemaRow[];
-				if (requestCanvasId !== canvasId) return;
+				if (isStale()) return;
 				schemaRows = rows;
 				schemaCanvasId = requestCanvasId;
 			}
@@ -231,14 +249,15 @@
 			// required cells in their default-disabled state. See above
 			// re. retry mechanics.
 		} finally {
-			// schemaPending is purely a debounce — clear it unconditionally
-			// when this request settles so a stale (canvas-switched)
-			// completion doesn't leave a future open hanging. The
-			// schemaLoaded gate stays canvasId-matched so we never mark
-			// "loaded" against the wrong canvas's data.
-			schemaPending = false;
-			if (requestCanvasId === canvasId) {
-				schemaLoaded = true;
+			// Only the LATEST request's generation may clear `schemaPending`
+			// or flip `schemaLoaded` — a stale completion that lost the
+			// race must remain a no-op so the still-in-flight newer
+			// request keeps the effect's guard armed. Codex round 3 P2.
+			if (requestGen === schemaPendingGen) {
+				schemaPending = false;
+				if (requestCanvasId === canvasId) {
+					schemaLoaded = true;
+				}
 			}
 		}
 	}
