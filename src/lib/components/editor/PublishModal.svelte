@@ -130,6 +130,12 @@
 			slugBusy = false;
 			slugLastFailed = null;
 			canvasVersion = null;
+			// Bump the UI session so any late completion's failure
+			// branches (which gate on `isLiveAndOpenUi`) drop their
+			// state writes. The render-gen stays untouched so the
+			// success path's `onSlugChange` still fires for a
+			// server-committed rename. Codex round 12 P2.
+			slugUiSessionGen++;
 			// Don't abort on close — the user may have submitted right
 			// before closing and expects the rename to land. The
 			// successful completion's `isLive()` check will still call
@@ -331,6 +337,13 @@
 	// input on B or repopulate an error after the modal was closed.
 	// Codex round 2 P2.
 	let slugRenameGen = 0;
+	// Separate UI-session generation. Bumps on close (and canvas
+	// change) so a late completion that lands after a close →
+	// quick-reopen doesn't write stale failure UI into the new
+	// session. We keep `slugRenameGen` un-bumped on close so the
+	// success path can still call `onSlugChange` for a server-
+	// committed rename. Codex round 12 P2.
+	let slugUiSessionGen = 0;
 	// Records the last slug value the server rejected (409 collision or
 	// 400 validation), so a subsequent blur-driven commit with the same
 	// value is a no-op rather than clearing the visible error/suggestion
@@ -369,6 +382,7 @@
 		slugBusy = false;
 		slugLastFailed = null;
 		slugRenameGen++;
+		slugUiSessionGen++;
 	});
 
 	/** Same format contract as `validateSlug` in $lib/server/slug.ts.
@@ -434,15 +448,20 @@
 		slugInFlightController = controller;
 		const requestCanvasId = canvasId;
 		const requestGen = slugRenameGen;
+		const requestUiSession = slugUiSessionGen;
 		const isLive = () => requestCanvasId === canvasId && requestGen === slugRenameGen;
 		// `isLiveAndOpen` gates UI writes (errors / suggestions /
 		// busy state) so a late completion after the modal closed
 		// doesn't repopulate stale UI state for the next open.
-		// Codex round 11 P2. The success path's `onSlugChange`
-		// still uses `isLive()` (no `open` check) so a server-
-		// committed rename always propagates to the editor mirror,
-		// even if the user closed the modal mid-flight.
-		const isLiveAndOpen = () => isLive() && open;
+		// Compares against the UI session that was active when the
+		// request started — close (or canvas swap) bumps that
+		// session, so a close → quick-reopen leaves a stale request
+		// looking at a different session and its UI writes drop.
+		// The success path's `onSlugChange` still uses `isLive()`
+		// (no UI-session check) so a server-committed rename
+		// always propagates to the editor mirror, even if the user
+		// closed the modal mid-flight. Codex round 11 P2 + round 12 P2.
+		const isLiveAndOpen = () => isLive() && open && requestUiSession === slugUiSessionGen;
 		slugBusy = true;
 		slugServerError = null;
 		slugSuggestion = null;

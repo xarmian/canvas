@@ -315,6 +315,51 @@ test('slug rename: closing modal with invalid draft resets state on reopen (Code
 	await expect(page.getByTestId('slug-server-error')).toBeHidden();
 });
 
+test('slug rename: late 409 with close-then-quick-reopen still does not surface (Codex round 12 P2)', async ({
+	page
+}) => {
+	// Close-then-quick-reopen scenario: the user closes the modal
+	// while a colliding PATCH is still in flight, then reopens
+	// before the 409 returns. `open` is true again, but the late
+	// 409 is still tied to the previous UI session and must NOT
+	// write into the fresh one.
+	await signupAndLogin(page);
+
+	const taken = `quick-${Date.now()}`;
+	await page.request.post('/api/canvas', { data: { name: taken } });
+
+	const canvas = await createCanvas(page, { name: 'Quick reopen', preset: 'OG Image' });
+	await gotoEditor(page, canvas.id);
+	await addTextLayer(page, 'placeholder');
+	await publish(page);
+
+	// Throttle the PATCH so the 409 lands AFTER close→reopen.
+	await page.route(`**/api/canvas/${canvas.id}`, async (route) => {
+		if (route.request().method() === 'PATCH') {
+			await new Promise((r) => setTimeout(r, 1500));
+		}
+		await route.continue();
+	});
+
+	const slugInput = page.getByTestId('slug-input');
+	await slugInput.fill(taken);
+	await slugInput.press('Enter');
+	// Close immediately.
+	await page.keyboard.press('Escape');
+	await expect(page.getByTestId('sharing-section')).toBeHidden();
+	// Reopen IMMEDIATELY (before the late 409 returns).
+	await page.getByTestId('toolbar-publish').click();
+	await expect(page.getByTestId('sharing-section')).toBeVisible();
+
+	// Wait for the late 409 to land.
+	await page.waitForTimeout(1800);
+
+	// The late 409 must not have repopulated the new session's UI.
+	await expect(page.getByTestId('slug-server-error')).toBeHidden();
+	await expect(page.getByTestId('slug-suggestion-apply')).toBeHidden();
+	await page.unroute(`**/api/canvas/${canvas.id}`);
+});
+
 test('slug rename: late 409 after close does not surface on reopen (Codex round 11 P2)', async ({
 	page
 }) => {
