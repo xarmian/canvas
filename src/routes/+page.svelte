@@ -15,12 +15,21 @@
 	 * Authenticated visitors are redirected to /dashboard server-side via
 	 * +page.server.ts; this component only renders for unauth visitors.
 	 *
-	 * `/c/crypto-lp-card` is the canonical demo slug. On a fresh self-host
-	 * the slug may not yet be published — the hero falls back to a generic
-	 * "preview unavailable" state via `<img onerror>` so the page still
-	 * looks intentional. Operators wire up the demo by publishing the
-	 * crypto-lp-card template (TASK-90 / e2e/lp-card.test.ts seeds it for
-	 * the test suite).
+	 * `/c/crypto-lp-card` is the canonical demo slug. The gallery template
+	 * (`src/lib/templates/gallery.ts`) is named "Crypto LP card" precisely
+	 * so that the auto-derived slug from `POST /api/canvas` lands at this
+	 * URL — operators publish via "Use this template" with no rename step.
+	 * On a fresh self-host before the template is published, `<img onerror>`
+	 * swaps the hero to a "preview unavailable" state so the page still
+	 * looks intentional.
+	 *
+	 * No public Gallery link: `/templates` is still inside the (app)
+	 * group and auth-gated, so a public-facing "Browse the gallery" link
+	 * just bounces visitors through `/login`. We surface a single
+	 * Sign-up CTA as the funnel and defer a public template gallery to
+	 * its own task (gallery + "Use this template" both need an
+	 * unauthenticated entry point that drops users at `/signup` with
+	 * intent — out of scope for the landing-page slice).
 	 */
 
 	const GITHUB_URL = 'https://github.com/xarmian/canvas';
@@ -91,7 +100,6 @@
 	<header class="topbar">
 		<a href="/" class="brand" aria-label="Canvas home">Canvas</a>
 		<nav class="topnav" aria-label="Primary">
-			<a href="/templates" class="topnav-link">Gallery</a>
 			<a href={GITHUB_URL} rel="noopener" class="topnav-link">GitHub</a>
 			<a href="/login" class="topnav-link">Log in</a>
 			<a href="/signup" class="topnav-cta">Sign up</a>
@@ -110,7 +118,7 @@
 				</p>
 				<div class="hero-ctas">
 					<a href="/signup" class="btn btn-primary" data-testid="hero-signup">Start designing</a>
-					<a href="/templates" class="btn btn-secondary">Browse the gallery</a>
+					<a href={GITHUB_URL} rel="noopener" class="btn btn-secondary">View on GitHub</a>
 				</div>
 				<p class="hero-tip">No credit card. Open source. Self-hostable.</p>
 			</div>
@@ -259,9 +267,9 @@
 		<span>Canvas is open source.</span>
 		<a href={GITHUB_URL} rel="noopener">View on GitHub</a>
 		<span aria-hidden="true">·</span>
-		<a href="/templates">Gallery</a>
-		<span aria-hidden="true">·</span>
 		<a href="/signup">Sign up</a>
+		<span aria-hidden="true">·</span>
+		<a href="/login">Log in</a>
 	</footer>
 </div>
 
