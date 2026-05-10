@@ -111,14 +111,17 @@ function collectImageUrls(objects: FabricObject[]): string[] {
  * only attempt a fallback for those layers. Single-level: if the
  * fallback also fails, drawImageObject draws the gray placeholder.
  *
- * Deduped against URLs we already fetched (or queued in `preloaded`)
- * so a fallback shared with another layer's primary doesn't trigger
- * a second fetch.
+ * Deduped against `imageMap` so a URL already fetched (e.g. another
+ * layer's primary) isn't re-fetched. Preloaded URLs (TASK-89) are NOT
+ * filtered out — they don't auto-populate `imageMap`; they only land
+ * there when explicitly passed to `loadImagesParallel`. Skipping them
+ * here would mean a primary failure on a layer with an `asset://`
+ * fallback never reaches `imageMap`, leaving `drawImageObject` to draw
+ * gray instead of the (already-resolved) fallback bytes.
  */
 function collectFallbackUrls(
 	objects: FabricObject[],
-	imageMap: Map<string, Image | null>,
-	preloaded?: Map<string, Buffer>
+	imageMap: Map<string, Image | null>
 ): string[] {
 	const seen = new Set<string>();
 	for (const obj of objects) {
@@ -129,11 +132,9 @@ function collectFallbackUrls(
 		if (!obj.src) continue;
 		const primary = imageMap.get(obj.src);
 		if (primary) continue;
-		// Already in-process via preload or already attempted via another
-		// layer's primary — both paths populate imageMap, so a follow-up
-		// fetch would be redundant.
+		// Already attempted via another layer's primary — `loadImagesParallel`
+		// would re-fetch (its dedup is per-call), so dedup here.
 		if (imageMap.has(obj.fallbackSrc)) continue;
-		if (preloaded?.has(obj.fallbackSrc)) continue;
 		seen.add(obj.fallbackSrc);
 	}
 	return [...seen];
@@ -317,7 +318,10 @@ export async function render(
 	// path render with all primaries succeeding pays zero fallback cost.
 	// On a cold cache this adds at most one extra round-trip serialized
 	// after the primary fetch; subsequent renders hit the LRU cache.
-	const fallbackUrls = collectFallbackUrls(mergedJson.objects, imageMap, options.preloadedImages);
+	// `preloadedImages` is forwarded so an owned asset:// fallback resolves
+	// from the trusted in-process bytes path — without it, `loadRemoteImage`
+	// would block the local-storage URL via the SSRF check.
+	const fallbackUrls = collectFallbackUrls(mergedJson.objects, imageMap);
 	if (fallbackUrls.length > 0) {
 		const fallbackMap = await loadImagesParallel(fallbackUrls, 3000, options.preloadedImages);
 		for (const [url, img] of fallbackMap) {
