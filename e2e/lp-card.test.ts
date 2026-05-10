@@ -129,15 +129,44 @@ test.describe('Crypto LP-card template — render permutations', () => {
 			hashes.set(label, sha256(body));
 		}
 
-		// Permutations that change visible content should yield distinct
-		// outputs from `positive`. Missing logos use a different URL but
-		// the renderer falls through to the embedded fallbackSrc, which
-		// the `positive` baseline ALSO ends up using when its data-URL
-		// blob token logos are unrelated to fallbackSrc — so we compare
-		// only the cases guaranteed to differ.
 		const positive = hashes.get('positive')!;
+
+		// Conditional-rule permutations: must produce different output from
+		// `positive` because the rule changes what gets drawn (fill color
+		// for negative, badge color for edgeRange, both texts at zero).
 		for (const label of ['negative', 'zeroGain', 'edgeRange'] as const) {
 			expect(hashes.get(label), `${label} differs from positive`).not.toBe(positive);
 		}
+
+		// Missing-logo permutations: the broken URL fails to fetch, the
+		// per-layer fallbackSrc kicks in, and the rendered image differs
+		// from `positive` (which used the explicit blue/purple data URLs).
+		// Asserting `not.toBe(positive)` proves the fallbackSrc path
+		// reached drawImageObject — without that path, the image would
+		// be identical (because the URL is the only changed param) or
+		// would render the gray placeholder (which produces yet another
+		// distinct hash). Either way: differing hash is the right gate.
+		for (const label of ['missingTokenALogo', 'missingTokenBLogo'] as const) {
+			expect(hashes.get(label), `${label} differs from positive`).not.toBe(positive);
+		}
+		// And the two missing-logo cases differ from each other because
+		// the fallback lands in different on-canvas positions (logo A vs
+		// logo B). Catches a regression where the renderer draws the
+		// fallback at a fixed coordinate regardless of which layer failed.
+		expect(
+			hashes.get('missingTokenALogo'),
+			'missing-A and missing-B fallbacks render in different positions'
+		).not.toBe(hashes.get('missingTokenBLogo'));
+
+		// Missing-param permutation: the layer's binding default ('0.125')
+		// is identical to the explicit positive-case value, so the
+		// rendered output should match `positive` byte-for-byte. This
+		// catches regressions where the binding default fall-through
+		// (or the canvas-wide defaults index used by conditional rules)
+		// silently changes between releases.
+		expect(
+			hashes.get('missingGainParam'),
+			'binding default fall-through matches explicit value'
+		).toBe(positive);
 	});
 });
