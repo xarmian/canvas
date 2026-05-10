@@ -2,12 +2,13 @@ import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { canvases } from '$lib/server/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, ne } from 'drizzle-orm';
 import {
 	syncCanvasParams,
 	applyParamUpdates,
 	type ParamSchemaUpdate
 } from '$lib/server/canvas-params';
+import { isSlugUniqueViolation, suggestAlternateSlug, validateSlug } from '$lib/server/slug';
 import type { FabricCanvasJson } from '$lib/engine';
 
 /** Helper: fetch canvas and verify ownership */
@@ -41,6 +42,46 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 	const updates: Record<string, unknown> = {};
 
 	if (body.name !== undefined) updates.name = body.name;
+	// Slug rename (TASK-92): accept a user-chosen slug. Validate format,
+	// check the global unique constraint excluding the current canvas
+	// (a no-op rename to the existing slug must succeed), and on
+	// collision return a 409 with a suggested alternative so the UI
+	// (TASK-98) can offer one-click acceptance. No back-compat redirect
+	// from the old slug — pre-launch latitude (PLAN-81).
+	let slugSubmitted = false;
+	if (body.slug !== undefined) {
+		// Trim only — case is part of the format contract; uppercase is
+		// rejected explicitly so the user notices the typo instead of
+		// having it silently rewritten.
+		const slugInput = typeof body.slug === 'string' ? body.slug.trim() : '';
+		const validation = validateSlug(slugInput);
+		if (!validation.ok) {
+			return json({ error: 'invalid_slug', message: validation.reason }, { status: 400 });
+		}
+		slugSubmitted = true;
+		if (slugInput !== canvas.slug) {
+			const [collision] = await db
+				.select({ id: canvases.id })
+				.from(canvases)
+				.where(and(eq(canvases.slug, slugInput), ne(canvases.id, canvas.id)));
+			if (collision) {
+				// Don't pass ignoreId here: a canvas currently owning `foo-2`
+				// renaming to taken `foo` should be suggested `foo-3`, not
+				// its own current slug. (No-op renames are short-circuited
+				// above this branch — `slugInput !== canvas.slug` is true.)
+				const suggestion = await suggestAlternateSlug(db, slugInput);
+				return json(
+					{
+						error: 'slug_taken',
+						message: `"${slugInput}" is already in use. Try "${suggestion}".`,
+						suggestion
+					},
+					{ status: 409 }
+				);
+			}
+			updates.slug = slugInput;
+		}
+	}
 	if (body.templateJson !== undefined) updates.templateJson = body.templateJson;
 	if (body.backgroundType !== undefined) updates.backgroundType = body.backgroundType;
 	if (body.backgroundValue !== undefined) updates.backgroundValue = body.backgroundValue;
@@ -77,7 +118,7 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 	// they aren't referenced by templateJson.
 	const paramUpdates: ParamSchemaUpdate[] = Array.isArray(body.params) ? body.params : [];
 
-	if (Object.keys(updates).length === 0 && paramUpdates.length === 0) {
+	if (Object.keys(updates).length === 0 && paramUpdates.length === 0 && !slugSubmitted) {
 		error(400, 'No fields to update');
 	}
 
@@ -96,9 +137,35 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 				? { updatedAt: new Date() }
 				: null;
 
-	const [updated] = finalUpdates
-		? await db.update(canvases).set(finalUpdates).where(eq(canvases.id, params.id)).returning()
-		: [canvas];
+	// Catch the 23505 race: another writer claimed `updates.slug` between
+	// our pre-write probe and this UPDATE. Convert to the same 409 +
+	// suggestion shape the up-front collision branch returns so clients
+	// have a single error contract for slug conflicts.
+	let updated;
+	try {
+		updated = finalUpdates
+			? (
+					await db.update(canvases).set(finalUpdates).where(eq(canvases.id, params.id)).returning()
+				)[0]
+			: canvas;
+	} catch (err) {
+		if (isSlugUniqueViolation(err) && typeof updates.slug === 'string') {
+			// See ignoreId comment above — same rationale: the conflict
+			// branch implies the requested slug differs from the canvas's
+			// own, so a suggestion that matches the canvas's current slug
+			// would be useless.
+			const suggestion = await suggestAlternateSlug(db, updates.slug);
+			return json(
+				{
+					error: 'slug_taken',
+					message: `"${updates.slug}" is already in use. Try "${suggestion}".`,
+					suggestion
+				},
+				{ status: 409 }
+			);
+		}
+		throw err;
+	}
 
 	// Re-derive canvas_params from the new templateJson (if templateJson
 	// was part of this PATCH) so bindings/conditional rules are reflected
