@@ -22,16 +22,22 @@ async function getOwnedCanvas(canvasId: string, userId: string) {
 }
 
 /** Build the optimistic-concurrency ETag for a canvas. The version is
- *  the row's `updatedAt` in milliseconds-since-epoch — Drizzle's
- *  `$onUpdate` advances it on every write, so the ETag is a strong
- *  monotonic version token. Clients pass this back via `If-Match` on
- *  PATCH; a stale value yields 412.
+ *  the row's `lock_version` integer — bumped atomically by every
+ *  PATCH inside the same UPDATE that performs the write. Clients
+ *  pass this back via `If-Match` on PATCH; a stale value yields 412.
+ *
+ *  Why `lock_version` and not `updatedAt`: JS Date is millisecond
+ *  precision. Two writes in the same millisecond would round-trip
+ *  to the same `updatedAt.getTime()`, making the ETag visibly
+ *  unchanged across two distinct row states — a stale If-Match
+ *  could pass. `lock_version` is a monotonic counter, immune to
+ *  clock granularity (Codex round 14 P2).
  *
  *  Quoted per RFC 9110 §8.8.3 (ETags are quoted-strings). The PATCH
  *  comparator strips the quotes so callers can submit either the
  *  bare digits or the quoted form. */
-function canvasEtag(canvas: { updatedAt: Date }): string {
-	return `"${canvas.updatedAt.getTime()}"`;
+function canvasEtag(canvas: { lockVersion: number }): string {
+	return `"${canvas.lockVersion}"`;
 }
 
 /** Strip `W/` weak prefix and surrounding quotes so the comparator
@@ -81,10 +87,12 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 	// committing against. The actual write below repeats the predicate
 	// in the SQL `WHERE` so two concurrent PATCHes that both pass this
 	// gate can't both commit (Codex round 7 P1) — Postgres serializes
-	// the UPDATEs and only one matches on `updated_at`.
-	let expectedUpdatedAt: Date | null = null;
+	// the UPDATEs and only one matches on `lock_version`. Sub-ms
+	// races are fully covered because `lock_version` is a monotonic
+	// integer, not a wall-clock timestamp (Codex round 14 P2).
+	let expectedLockVersion: number | null = null;
 	if (ifMatch !== null) {
-		const currentVersion = String(canvas.updatedAt.getTime());
+		const currentVersion = String(canvas.lockVersion);
 		const provided = normalizeIfMatch(ifMatch);
 		if (provided !== '*' && provided !== currentVersion) {
 			return json(
@@ -101,10 +109,10 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 		}
 		// `*` says "any version is fine" — skip the SQL predicate. A
 		// specific version means "only commit if THIS is still the
-		// current row". Captured here and used in the `eq(updatedAt)`
-		// WHERE clause below.
+		// current row". Captured here and used in the
+		// `eq(lockVersion)` WHERE clause below.
 		if (provided !== '*') {
-			expectedUpdatedAt = canvas.updatedAt;
+			expectedLockVersion = canvas.lockVersion;
 		}
 	}
 
@@ -221,23 +229,22 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 	let updated;
 	try {
 		if (finalUpdates) {
-			// Use a millisecond-truncated epoch comparison instead of
-			// `eq(updatedAt, $date)`. Postgres `current_timestamp` (the
-			// default for new rows) stores microsecond precision; JS
-			// Date is millisecond, so a direct equality check fails on
-			// the first PATCH of a freshly-inserted canvas.
-			// `floor(extract(epoch from updated_at) * 1000)::bigint`
-			// matches the JS Date round-trip both for current_timestamp
-			// rows and for rows already updated through drizzle's
-			// JS-side `$onUpdate`.
+			// Atomically bump `lock_version` in the SET clause and
+			// require the expected version in the WHERE. Two
+			// concurrent PATCHes that both pass the application
+			// precondition serialize at the row level: only one
+			// matches on the version, the loser's UPDATE returns
+			// zero rows. `lock_version` is a monotonic integer
+			// (TASK-98 round 14) so sub-ms races are also covered.
+			const setClause = {
+				...finalUpdates,
+				lockVersion: sql`${canvases.lockVersion} + 1`
+			};
 			const whereClause =
-				expectedUpdatedAt !== null
-					? and(
-							eq(canvases.id, params.id),
-							sql`floor(extract(epoch from ${canvases.updatedAt}) * 1000)::bigint = ${expectedUpdatedAt.getTime()}`
-						)
+				expectedLockVersion !== null
+					? and(eq(canvases.id, params.id), eq(canvases.lockVersion, expectedLockVersion))
 					: eq(canvases.id, params.id);
-			const rows = await db.update(canvases).set(finalUpdates).where(whereClause).returning();
+			const rows = await db.update(canvases).set(setClause).where(whereClause).returning();
 			if (rows.length === 0) {
 				// Either the row vanished (extremely unlikely — owner
 				// check above would 404 first) or another writer raced

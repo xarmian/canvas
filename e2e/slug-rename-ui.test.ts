@@ -363,6 +363,11 @@ test('slug rename: late success does not overwrite a freshly-typed draft (Codex 
 	// to the parent's canvasSlug. The slug prop into the modal
 	// flips to A, which would normally reset slugDraft.
 	await firstPatch;
+	// Wait for a positive UI signal that the success handler ran:
+	// the share-URL input flips to slug A. Only then is it safe to
+	// assert the slug-input draft remained slug B (Codex round 14
+	// P2 — `waitForResponse` alone doesn't prove Svelte flushed).
+	await expect(page.locator('#publish-share-url')).toHaveValue(new RegExp(`/c/${slugA}$`));
 
 	// User's in-progress draft must remain "slugB", not get
 	// silently rewritten to "slugA".
@@ -416,6 +421,13 @@ test('slug rename: late 409 with close-then-quick-reopen still does not surface 
 	// Wait for the actual late 409 to land.
 	const res = await collidingPatch;
 	expect(res.status()).toBe(409);
+	// Force two animation frames so any Svelte-effect chain triggered
+	// by the response has flushed before we assert absence (Codex
+	// round 14 P2 — waitForResponse alone doesn't prove the app
+	// consumed res.json() and rendered).
+	await page.evaluate(
+		() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+	);
 
 	// The late 409 must not have repopulated the new session's UI.
 	await expect(page.getByTestId('slug-server-error')).toBeHidden();
@@ -458,6 +470,12 @@ test('slug rename: late 409 after close does not surface on reopen (Codex round 
 	// Wait for the actual late 409 to land (Codex round 13 P3).
 	const res = await collidingPatch;
 	expect(res.status()).toBe(409);
+	// Force two animation frames so the Svelte-effect chain
+	// triggered by the response has flushed before we assert
+	// absence (Codex round 14 P2).
+	await page.evaluate(
+		() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+	);
 
 	// Reopen the modal. The stale 409 must NOT have repopulated
 	// slugServerError / slugSuggestion.

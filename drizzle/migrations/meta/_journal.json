@@ -15,6 +15,13 @@
 			"when": 1777918125101,
 			"tag": "0001_sleepy_jimmy_woo",
 			"breakpoints": true
+		},
+		{
+			"idx": 2,
+			"version": "7",
+			"when": 1778424196951,
+			"tag": "0002_lazy_warbound",
+			"breakpoints": true
 		}
 	]
 }

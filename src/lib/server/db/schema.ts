@@ -44,6 +44,15 @@ export const canvases = pgTable(
 		// Empty array (not null) is the default — keeps the dashboard's
 		// `canvas.tags.includes(...)` checks branchless.
 		tags: text('tags').array().notNull().default([]),
+		// Monotonic optimistic-concurrency token (TASK-98 round 14).
+		// `updatedAt` alone is not safe — millisecond precision means
+		// two writes in the same ms collide on the same version. The
+		// PATCH endpoint includes a `lock_version = expected` predicate
+		// in the UPDATE's WHERE clause and increments the column in the
+		// SET clause, so a stale `If-Match` request fails atomically
+		// even on sub-ms races. Starts at 0; clients use the value
+		// returned by GET as the `If-Match` token.
+		lockVersion: integer('lock_version').notNull().default(0),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true })
 			.notNull()
