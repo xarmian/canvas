@@ -31,7 +31,10 @@
 		...rest
 	}: Props = $props();
 
-	const errorId = $derived(id ? `${id}-error` : undefined);
+	// Stable SSR-safe id used as a fallback when the consumer didn't pass
+	// `id`. Mirrors Input.svelte (Codex round 1 P2).
+	const uid = $props.id();
+	const errorId = $derived(`${id ?? uid}-error`);
 
 	const ariaDescribedBy = $derived(
 		[errorMessage && errorId, describedBy].filter(Boolean).join(' ') || undefined

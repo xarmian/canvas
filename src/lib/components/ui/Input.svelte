@@ -47,11 +47,12 @@
 		...rest
 	}: Props = $props();
 
-	// Auto-generate an error id linked to this input. Stable across rerenders
-	// because $props() returns the same instance per render. We only emit it
-	// when there's an error message to link to, keeping aria-describedby
-	// short for the common case.
-	const errorId = $derived(id ? `${id}-error` : undefined);
+	// Stable SSR-safe id used as a fallback when the consumer didn't pass
+	// `id`. Without this, `<Input invalid errorMessage="Required" />` would
+	// render the error <p> with no id, leaving aria-describedby unset and
+	// the error invisible to screen readers (Codex round 1 P2).
+	const uid = $props.id();
+	const errorId = $derived(`${id ?? uid}-error`);
 
 	const ariaDescribedBy = $derived(
 		[errorMessage && errorId, describedBy].filter(Boolean).join(' ') || undefined
