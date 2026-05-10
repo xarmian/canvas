@@ -204,7 +204,7 @@
 		const active = editorState.fabricCanvas.getActiveObject();
 		if (active && active.type === 'i-text' && (active as IText).isEditing) return;
 		const clones = await Promise.all(
-			objects.map((o) => o.clone(['paramBindings', 'conditionalStyles']))
+			objects.map((o) => o.clone(['paramBindings', 'conditionalStyles', 'fallbackSrc']))
 		);
 		editorState.fabricCanvas.discardActiveObject();
 		for (const clone of clones) {

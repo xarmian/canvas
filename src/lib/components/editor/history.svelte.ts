@@ -25,7 +25,9 @@ export const historyState = $state({
 export function saveSnapshot(canvas: Canvas) {
 	if (historyState.suppressSnapshots) return;
 
-	const json = JSON.stringify(canvas.toObject(['paramBindings', 'conditionalStyles']));
+	const json = JSON.stringify(
+		canvas.toObject(['paramBindings', 'conditionalStyles', 'fallbackSrc'])
+	);
 
 	// Don't save if identical to last snapshot
 	if (undoStack.length > 0 && undoStack[undoStack.length - 1] === json) return;

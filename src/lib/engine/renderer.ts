@@ -84,19 +84,58 @@ function mergeParams(
 }
 
 /**
- * Collects all image URLs from template objects that need to be fetched.
- * Skips layers whose `visible` was bound to a falsy URL param — drawObject
- * already short-circuits those, but without this filter the renderer
- * would still pay the network cost of fetching the image (and could
- * issue requests to URLs the user explicitly suppressed).
+ * Collects all primary image URLs from template objects that need to be
+ * fetched. Skips layers whose `visible` was bound to a falsy URL param —
+ * drawObject already short-circuits those, but without this filter the
+ * renderer would still pay the network cost of fetching the image (and
+ * could issue requests to URLs the user explicitly suppressed).
+ *
+ * Fallback URLs (TASK-86) are NOT included here — they're fetched lazily
+ * by `collectFallbackUrls` only when the primary fails, so a happy-path
+ * render doesn't pay for an unused fallback.
  */
 function collectImageUrls(objects: FabricObject[]): string[] {
 	const seen = new Set<string>();
 	for (const obj of objects) {
 		if (obj.visible === false) continue;
-		if ((obj.type === 'image' || obj.type === 'Image') && obj.src) {
-			seen.add(obj.src);
-		}
+		if (obj.type !== 'image' && obj.type !== 'Image') continue;
+		if (obj.src) seen.add(obj.src);
+	}
+	return [...seen];
+}
+
+/**
+ * Collects fallback URLs to fetch for image layers whose primary `src`
+ * failed to load (TASK-86). Run after the first `loadImagesParallel`
+ * pass — the imageMap encodes which primaries returned null, and we
+ * only attempt a fallback for those layers. Single-level: if the
+ * fallback also fails, drawImageObject draws the gray placeholder.
+ *
+ * Deduped against `imageMap` so a URL already fetched (e.g. another
+ * layer's primary) isn't re-fetched. Preloaded URLs (TASK-89) are NOT
+ * filtered out — they don't auto-populate `imageMap`; they only land
+ * there when explicitly passed to `loadImagesParallel`. Skipping them
+ * here would mean a primary failure on a layer with an `asset://`
+ * fallback never reaches `imageMap`, leaving `drawImageObject` to draw
+ * gray instead of the (already-resolved) fallback bytes.
+ */
+function collectFallbackUrls(
+	objects: FabricObject[],
+	imageMap: Map<string, Image | null>
+): string[] {
+	const seen = new Set<string>();
+	for (const obj of objects) {
+		if (obj.visible === false) continue;
+		if (obj.type !== 'image' && obj.type !== 'Image') continue;
+		if (!obj.fallbackSrc) continue;
+		// Skip layers whose primary loaded fine, or which had no primary.
+		if (!obj.src) continue;
+		const primary = imageMap.get(obj.src);
+		if (primary) continue;
+		// Already attempted via another layer's primary — `loadImagesParallel`
+		// would re-fetch (its dedup is per-call), so dedup here.
+		if (imageMap.has(obj.fallbackSrc)) continue;
+		seen.add(obj.fallbackSrc);
 	}
 	return [...seen];
 }
@@ -194,6 +233,12 @@ function drawTextObject(ctx: SKRSContext2D, obj: FabricObject): void {
 
 /**
  * Draws an image object.
+ *
+ * Fallback chain (TASK-86, single-level): primary `src` → `fallbackSrc` →
+ * gray placeholder. The fallback is attempted only when the primary failed
+ * (collectImageUrls pre-fetched both, so this is a cache lookup, not a
+ * second round-trip). Width/height come from the layer's intrinsic
+ * dimensions either way so the fallback occupies the same footprint.
  */
 function drawImageObject(
 	ctx: SKRSContext2D,
@@ -202,7 +247,11 @@ function drawImageObject(
 ): void {
 	if (!obj.src) return;
 
-	const img = imageMap.get(obj.src);
+	let img = imageMap.get(obj.src) ?? null;
+	if (!img && obj.fallbackSrc) {
+		img = imageMap.get(obj.fallbackSrc) ?? null;
+	}
+
 	if (!img) {
 		// Draw placeholder rectangle for failed images
 		const width = obj.width ?? 100;
@@ -263,6 +312,22 @@ export async function render(
 	// owned assets that bypass the SSRF-bounded fetch.
 	const imageUrls = collectImageUrls(mergedJson.objects);
 	const imageMap = await loadImagesParallel(imageUrls, 3000, options.preloadedImages);
+
+	// TASK-86: fetch fallback URLs only for layers whose primary failed.
+	// Done as a second batch (not in parallel with primaries) so a happy-
+	// path render with all primaries succeeding pays zero fallback cost.
+	// On a cold cache this adds at most one extra round-trip serialized
+	// after the primary fetch; subsequent renders hit the LRU cache.
+	// `preloadedImages` is forwarded so an owned asset:// fallback resolves
+	// from the trusted in-process bytes path — without it, `loadRemoteImage`
+	// would block the local-storage URL via the SSRF check.
+	const fallbackUrls = collectFallbackUrls(mergedJson.objects, imageMap);
+	if (fallbackUrls.length > 0) {
+		const fallbackMap = await loadImagesParallel(fallbackUrls, 3000, options.preloadedImages);
+		for (const [url, img] of fallbackMap) {
+			imageMap.set(url, img);
+		}
+	}
 
 	// Create canvas at the scaled physical size, then `ctx.scale(dpr, dpr)`
 	// so all draw calls use the original logical coordinates. This keeps

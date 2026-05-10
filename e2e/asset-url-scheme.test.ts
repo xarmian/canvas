@@ -101,11 +101,7 @@ test('asset:// resolves to the owner asset (TASK-89)', async ({ page }) => {
 	// row for this user) must render the placeholder, NOT throw and
 	// NOT match the resolved render. Same gray bytes as the broken
 	// external URL.
-	await patchSingleImageCanvas(
-		request,
-		canvas.id,
-		`asset://00000000-0000-0000-0000-000000000000`
-	);
+	await patchSingleImageCanvas(request, canvas.id, `asset://00000000-0000-0000-0000-000000000000`);
 	const missing = await request.get(`/api/canvas/${canvas.id}/preview`);
 	expect(missing.status()).toBe(200);
 	const missingBody = await missing.body();

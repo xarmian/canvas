@@ -45,6 +45,11 @@
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		isImage ? ((editorState.selectedObject as any)?.getSrc?.() ?? '') : '')
 	);
+	// Per-layer image fallback (TASK-86). Stored as a custom Fabric property
+	// so it's picked up by the same `propertiesToInclude` list as paramBindings
+	// / conditionalStyles when the canvas is serialized (history, autosave,
+	// duplicate). The renderer uses it when the primary `src` fails to fetch.
+	let fallbackSrc = $derived(getObjProp<string>('fallbackSrc', ''));
 
 	// Parameter bindings
 	let paramBindings: Record<string, { param: string; default: string; format?: string }> = $derived(
@@ -368,6 +373,24 @@
 					<div class="field-row field-col">
 						<label class="field-label" for="prop-src">Source URL</label>
 						<input id="prop-src" type="text" class="field-input" value={imageSrc} readonly />
+					</div>
+
+					<!-- Fallback URL (TASK-86). Optional second URL the renderer
+						falls back to when the primary `src` fails (404, timeout,
+						SSRF block). Editable: a designer types or pastes a URL,
+						accepts `asset://{id}` once asset-library refs are wired
+						in. Single level only — if both fail, the gray placeholder
+						is drawn. -->
+					<div class="field-row field-col">
+						<label class="field-label" for="prop-fallback-src">Fallback image URL</label>
+						<input
+							id="prop-fallback-src"
+							type="text"
+							class="field-input"
+							value={fallbackSrc}
+							oninput={(e) => setProp('fallbackSrc', e.currentTarget.value || undefined)}
+							placeholder="Used when the bound image URL fails to load"
+						/>
 					</div>
 				</section>
 			{/if}
