@@ -251,7 +251,7 @@
 					<div class="step-num">2</div>
 					<h3>Bind</h3>
 					<p>
-						Mark any property as dynamic and pick a URL parameter name. The param becomes a knob
+						Mark any property as dynamic and give the URL value a name. That name becomes a knob
 						anyone can turn at request time.
 					</p>
 				</li>
