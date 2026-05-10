@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button } from '$lib/components/ui';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { Upload, Library } from '@lucide/svelte';
 
@@ -228,15 +228,14 @@
 			class="upload-panel"
 		>
 			<p class="lede">PNG, JPEG, WebP, or SVG up to {(maxBytes / (1024 * 1024)).toFixed(0)} MB.</p>
-			<button
-				type="button"
-				class="btn btn-primary"
+			<Button
+				variant="primary"
 				onclick={openFilePicker}
-				disabled={isUploading}
+				loading={isUploading}
 				data-testid="add-image-upload-btn"
 			>
 				{isUploading ? 'Uploading…' : 'Choose file'}
-			</button>
+			</Button>
 			<input
 				bind:this={fileInput}
 				type="file"
@@ -255,16 +254,16 @@
 			{#if libraryError && library.length === 0}
 				<div class="library-error">
 					<p>Couldn't load your asset library.</p>
-					<button type="button" class="btn btn-secondary" onclick={refreshLibrary}>Retry</button>
+					<Button variant="secondary" onclick={refreshLibrary}>Retry</Button>
 				</div>
 			{:else if !libraryLoaded && libraryLoading}
 				<p class="library-status">Loading library…</p>
 			{:else if library.length === 0}
 				<div class="library-empty">
 					<p>You haven't uploaded any images yet.</p>
-					<button type="button" class="btn btn-secondary" onclick={() => (activeTab = 'upload')}>
+					<Button variant="secondary" onclick={() => (activeTab = 'upload')}>
 						Upload your first image
-					</button>
+					</Button>
 				</div>
 			{:else}
 				<ul class="library-grid" aria-label="Asset library">
@@ -285,16 +284,15 @@
 				</ul>
 				{#if library.length < libraryTotal}
 					<div class="library-more">
-						<button
-							type="button"
-							class="btn btn-secondary"
+						<Button
+							variant="secondary"
 							onclick={() => loadLibrary(libraryOffset)}
-							disabled={libraryLoading}
+							loading={libraryLoading}
 						>
 							{libraryLoading
 								? 'Loading…'
 								: `Load more (${libraryTotal - library.length} remaining)`}
-						</button>
+						</Button>
 					</div>
 				{/if}
 			{/if}
@@ -352,48 +350,6 @@
 		margin: 0;
 		font-size: 0.875rem;
 		color: #475569;
-	}
-
-	.btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.4rem;
-		padding: 0.5rem 1rem;
-		border-radius: 6px;
-		font-size: 0.875rem;
-		font-weight: 500;
-		border: 1px solid transparent;
-		cursor: pointer;
-		font-family: inherit;
-	}
-
-	.btn-primary {
-		background: #2563eb;
-		color: #fff;
-	}
-
-	.btn-primary:hover {
-		background: #1d4ed8;
-	}
-
-	.btn-primary:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
-	.btn-secondary {
-		background: #fff;
-		color: #1e293b;
-		border-color: #d1d5db;
-	}
-
-	.btn-secondary:hover {
-		background: #f3f4f6;
-	}
-
-	.btn-secondary:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
 	}
 
 	.library-panel {
