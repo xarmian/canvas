@@ -19,6 +19,15 @@ export interface RenderOptions {
 	 * visible quality benefit plateaus. Values <= 0 fall back to 1.
 	 */
 	dpr?: number;
+	/**
+	 * Pre-loaded image buffers keyed by URL. The renderer's image fetcher
+	 * checks this map BEFORE its HTTP fetch path, so callers can inject
+	 * trusted bytes (e.g. resolved `asset://` references loaded directly
+	 * via the storage adapter — TASK-89) without going through
+	 * `loadRemoteImage`'s SSRF check, which would block local-storage
+	 * paths and dev-mode private S3 hosts.
+	 */
+	preloadedImages?: Map<string, Buffer>;
 }
 
 /** A parameter binding on a layer property */

@@ -367,8 +367,11 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 		// Resolve `asset://{id}` references to their storage URLs (TASK-89).
 		// Owner-scoped — cross-user refs and deleted IDs are silently
 		// dropped to the placeholder path inside the renderer's image
-		// fetcher, never 500s.
-		await resolveAssetReferences(sanitizedJson, canvas.userId);
+		// fetcher, never 500s. Returns a URL→Buffer preload map for
+		// owned assets so the renderer doesn't need to round-trip
+		// through HTTP (and skips the SSRF check that would block
+		// local-storage / private-host URLs).
+		const preloadedImages = await resolveAssetReferences(sanitizedJson, canvas.userId);
 
 		const template: CanvasTemplate = {
 			width: canvas.width,
@@ -381,7 +384,8 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 		const buffer = await render(template, queryParams, {
 			format: formatInfo.format,
 			quality: 85,
-			dpr
+			dpr,
+			preloadedImages
 		});
 
 		// Persist to filesystem cache. The FsRenderCache handles LRU

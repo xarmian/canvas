@@ -68,8 +68,9 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
 	// Resolve `asset://{id}` references to their storage URLs (TASK-89).
 	// Mirrors the public render route. Owner-scoped via canvas.userId
 	// (which equals locals.user.id here, since the SELECT above already
-	// filtered to the requesting user's canvases).
-	await resolveAssetReferences(sanitizedJson, canvas.userId);
+	// filtered to the requesting user's canvases). Returns a URL→Buffer
+	// preload map so owned assets bypass the SSRF-bounded fetch.
+	const preloadedImages = await resolveAssetReferences(sanitizedJson, canvas.userId);
 
 	const template: CanvasTemplate = {
 		width: canvas.width,
@@ -79,7 +80,11 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
 		templateJson: sanitizedJson
 	};
 
-	const buffer = await render(template, previewParams, { format: 'png', quality: 85 });
+	const buffer = await render(template, previewParams, {
+		format: 'png',
+		quality: 85,
+		preloadedImages
+	});
 
 	return new Response(new Uint8Array(buffer), {
 		headers: {

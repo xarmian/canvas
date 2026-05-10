@@ -71,31 +71,54 @@ test('asset:// resolves to the owner asset (TASK-89)', async ({ page }) => {
 	await signupAndLogin(page);
 	const canvas = await createCanvas(page, { name: 'Asset URL', preset: 'OG Image' });
 
-	// Upload the same PNG twice and grab back the resolved public URL +
-	// asset id. We will render both:
-	//   - control: src = absolute public URL
-	//   - asset:  src = asset://{id}
-	// If the resolver works, both renders are byte-identical (same image
-	// bytes, same dimensions). If the resolver is a no-op, asset:// is
-	// unfetchable and the asset render shows a gray placeholder — bytes
-	// would diverge.
 	const asset = await uploadPng(request, 'logo.png');
 
-	// Render with absolute URL as control.
-	await patchSingleImageCanvas(request, canvas.id, asset.url);
-	const control = await request.get(`/api/canvas/${canvas.id}/preview`);
-	expect(control.status()).toBe(200);
-	const controlBody = await control.body();
-	expect(controlBody.length).toBeGreaterThan(100);
-
-	// Render with asset:// scheme — should resolve to the same image and
-	// produce the same bytes.
+	// Resolved asset:// — the resolver loads the bytes server-side via
+	// storage.read() and injects them into the renderer's preload map.
+	// Renders the actual image into the layer rectangle.
 	await patchSingleImageCanvas(request, canvas.id, `asset://${asset.id}`);
 	const resolved = await request.get(`/api/canvas/${canvas.id}/preview`);
 	expect(resolved.status()).toBe(200);
 	const resolvedBody = await resolved.body();
 	expect(resolvedBody.length).toBeGreaterThan(100);
-	expect(resolvedBody.equals(controlBody)).toBe(true);
+
+	// Determinism: rendering the SAME canvas twice produces byte-identical
+	// output (no nondeterminism from the resolver / preload path).
+	const resolvedAgain = await request.get(`/api/canvas/${canvas.id}/preview`);
+	expect((await resolvedAgain.body()).equals(resolvedBody)).toBe(true);
+
+	// Disambiguation: a deliberately broken external URL must render
+	// DIFFERENT bytes (gray placeholder, not the real image). This is
+	// the assertion that proves the resolver actually resolved — without
+	// it, the test could pass even if the resolver was a no-op and both
+	// renders happened to fall through to the same placeholder.
+	await patchSingleImageCanvas(request, canvas.id, 'https://invalid.example.test/nope.png');
+	const broken = await request.get(`/api/canvas/${canvas.id}/preview`);
+	expect(broken.status()).toBe(200);
+	expect((await broken.body()).equals(resolvedBody)).toBe(false);
+
+	// Negative path: a syntactically valid but unknown asset id (no DB
+	// row for this user) must render the placeholder, NOT throw and
+	// NOT match the resolved render. Same gray bytes as the broken
+	// external URL.
+	await patchSingleImageCanvas(
+		request,
+		canvas.id,
+		`asset://00000000-0000-0000-0000-000000000000`
+	);
+	const missing = await request.get(`/api/canvas/${canvas.id}/preview`);
+	expect(missing.status()).toBe(200);
+	const missingBody = await missing.body();
+	expect(missingBody.equals(resolvedBody)).toBe(false);
+	expect(missingBody.equals(await broken.body())).toBe(true);
+
+	// Malformed (non-UUID) asset id must NOT throw at the SQL layer —
+	// the resolver validates UUIDs before passing to inArray() against
+	// the uuid column. Same placeholder render as the missing case.
+	await patchSingleImageCanvas(request, canvas.id, `asset://not-a-uuid`);
+	const malformed = await request.get(`/api/canvas/${canvas.id}/preview`);
+	expect(malformed.status()).toBe(200);
+	expect((await malformed.body()).equals(missingBody)).toBe(true);
 });
 
 test('asset:// for a non-owner asset id falls back gracefully (TASK-89)', async ({ browser }) => {
