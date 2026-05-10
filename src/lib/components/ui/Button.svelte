@@ -47,8 +47,7 @@
 <button
 	{...rest}
 	{type}
-	class="btn btn-{variant} size-{size} {className ?? ''}"
-	class:is-loading={loading}
+	class={['btn', `btn-${variant}`, `size-${size}`, loading && 'is-loading', className]}
 	disabled={disabled || loading}
 	aria-busy={loading || undefined}
 	onclick={handleClick}
