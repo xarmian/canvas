@@ -133,12 +133,14 @@ test('POST /api/canvas concurrent same-name creates resolve to distinct slugs (n
 	await signupAndLogin(page);
 	const { name, slug: expected } = uniqueBase('Race');
 
-	// Fire 5 concurrent POSTs with the same name. The TOCTOU window
-	// between the slug probe and the INSERT means at least two of these
-	// can pre-write resolve to the same `-N` candidate; the unique index
-	// would 500 the loser without `insertWithUniqueSlug`'s retry.
+	// Fire 12 concurrent POSTs with the same name. The TOCTOU window
+	// between the slug probe and the INSERT means losers can converge
+	// on the same `-N` candidate; the unique index would 500 a loser
+	// without `insertWithUniqueSlug`'s retry+jitter loop. Codex round 2
+	// flagged a 5-only retry budget — this test guards against the
+	// regression by burst-creating well above the original cap.
 	const responses = await Promise.all(
-		Array.from({ length: 5 }, () => page.request.post('/api/canvas', { data: { name } }))
+		Array.from({ length: 12 }, () => page.request.post('/api/canvas', { data: { name } }))
 	);
 	expect(responses.every((r) => r.status() === 201)).toBe(true);
 

@@ -208,17 +208,29 @@ export function isSlugUniqueViolation(err: unknown): boolean {
  *  serializing all canvas creates. Two concurrent creates probe the
  *  same free slug and collide on the unique index; one wins, the loser
  *  retries `findAvailableSlug` (which now sees the winner's row) and
- *  picks `-2`. After ~3 retries even a wide-open thundering herd
- *  resolves. */
+ *  picks `-2`. With per-retry jitter, multiple losers desynchronize
+ *  so they don't keep reconverging on the same next candidate.
+ *
+ *  `maxRetries=50` is well above any plausible concurrent-create burst
+ *  on the same name (the URL is unique per *user-typed name*, not per
+ *  user — same name across users is the only realistic collision), and
+ *  every retry is a single primary-key lookup so the budget is cheap. */
 export async function insertWithUniqueSlug<T>(
 	dbInstance: typeof Db,
 	base: string,
 	attempt: (slug: string) => Promise<T>,
 	opts: { ignoreId?: string; maxRetries?: number } = {}
 ): Promise<T> {
-	const maxRetries = opts.maxRetries ?? 5;
+	const maxRetries = opts.maxRetries ?? 50;
 	let lastErr: unknown;
 	for (let i = 0; i <= maxRetries; i++) {
+		if (i > 0) {
+			// Small jitter on retry desynchronizes concurrent losers so they
+			// don't all see the same DB snapshot and pick the same next
+			// candidate. ~0-15ms is invisible to the user but enough to
+			// stagger probes across writers competing for the same name.
+			await new Promise((resolve) => setTimeout(resolve, Math.floor(Math.random() * 15)));
+		}
 		const slug = await findAvailableSlug(dbInstance, base, opts);
 		try {
 			return await attempt(slug);
