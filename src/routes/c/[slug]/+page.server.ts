@@ -1,3 +1,32 @@
+/**
+ * Public canvas share route — `/c/{slug}`.
+ *
+ * URL scheme (chosen for v1 in TASK-92):
+ *   - Globally-unique user-chosen slug. One creator's "lp-card" excludes
+ *     anyone else's "lp-card". Collisions on auto-derived slugs (POST
+ *     /api/canvas, duplicate) resolve by appending the smallest free
+ *     `-N` suffix; user-driven rename (PATCH, TASK-98) returns 409 with
+ *     a suggested alternative so the UI can offer one-click acceptance.
+ *   - No `-{nanoid}` suffix on auto-derived slugs (drop from v0.4 scheme).
+ *   - No back-compat redirect when a slug is renamed; the old URL 404s.
+ *     Pre-launch latitude (PLAN-81) — no live URLs to preserve.
+ *
+ * Alternative URL schemes considered:
+ *   - `/c/{username}/{slug}` — slugs unique per user. Rejected because
+ *     v1 wants the cleanest possible URL on social-share copy/paste,
+ *     and user-namespacing forces an extra path segment (and a username
+ *     onboarding decision) that isn't worth the disambiguation benefit.
+ *   - Opaque `/c/{id}` with optional `/c/{slug}` alias. Rejected as more
+ *     plumbing for a marginal flexibility gain we can add later if the
+ *     global namespace gets contentious.
+ *   - Status-quo `/c/{name}-{nanoid}` with rename support. Rejected
+ *     because the nanoid suffix is dead weight on every share URL —
+ *     and renaming a slug-with-nanoid still produces an aesthetically
+ *     ugly URL.
+ *
+ * See `src/lib/server/slug.ts` for the format rules and uniqueness
+ * resolver this route depends on.
+ */
 import { redirect, error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { db } from '$lib/server/db';

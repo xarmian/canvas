@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { canvases } from '$lib/server/db/schema';
 import { eq, and } from 'drizzle-orm';
-import { nanoid } from 'nanoid';
+import { findAvailableSlug, slugify } from '$lib/server/slug';
 import { syncCanvasParams } from '$lib/server/canvas-params';
 import type { FabricCanvasJson } from '$lib/engine';
 
@@ -41,10 +41,11 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 	// canvas repeatedly the names stack ("Foo (copy) (copy)") which is
 	// the same behavior Figma/Notion ship.
 	const newName = `${source.name} (copy)`;
-	const newSlug = `${newName
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/^-|-$/g, '')}-${nanoid(8)}`;
+	// v1 slug scheme (TASK-92): auto-derive from name, resolve collisions
+	// with the smallest free `-N` suffix. Repeated duplicates of the same
+	// source produce `foo-copy`, `foo-copy-2`, `foo-copy-3`, etc. — no
+	// nanoid noise in the URL.
+	const newSlug = await findAvailableSlug(db, slugify(newName));
 
 	const [duplicated] = await db
 		.insert(canvases)

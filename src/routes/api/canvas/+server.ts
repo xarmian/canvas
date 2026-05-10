@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { canvases } from '$lib/server/db/schema';
 import { eq, desc } from 'drizzle-orm';
-import { nanoid } from 'nanoid';
+import { findAvailableSlug, slugify } from '$lib/server/slug';
 
 /** List all canvases for the authenticated user */
 export const GET: RequestHandler = async ({ locals }) => {
@@ -19,7 +19,13 @@ export const GET: RequestHandler = async ({ locals }) => {
 };
 
 /** Create a new canvas. Optional templateJson lets starter-template flows
- * seed a pre-built canvas; otherwise a blank one is created. */
+ * seed a pre-built canvas; otherwise a blank one is created.
+ *
+ * Slug derivation (TASK-92): the v1 URL scheme is `/c/{slug}` with
+ * globally-unique user-chosen slugs. We auto-derive the initial slug
+ * from the canvas name and resolve collisions by appending the smallest
+ * `-N` suffix that's free. Users can rename later via PATCH (TASK-98)
+ * with explicit collision feedback. */
 export const POST: RequestHandler = async ({ request, locals }) => {
 	if (!locals.user) error(401, 'Unauthorized');
 
@@ -44,10 +50,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		safeTemplate = templateJson as { version: string; objects: unknown[] };
 	}
 
-	const slug = `${name
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/^-|-$/g, '')}-${nanoid(8)}`;
+	const baseSlug = slugify(name);
+	const slug = await findAvailableSlug(db, baseSlug);
 
 	const [canvas] = await db
 		.insert(canvases)
