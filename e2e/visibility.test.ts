@@ -9,7 +9,7 @@ import { signupAndLogin, createCanvas, gotoEditor, addTextLayer, bindParam } fro
 test('visibility binding hides the layer when param is false', async ({ page }) => {
 	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Visibility', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Visibility', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 
 	// Add a layer that will sometimes be hidden. Keep the text constant so

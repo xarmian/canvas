@@ -1,11 +1,50 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
+	/**
+	 * New-canvas presets (TASK-102). The label + description teach
+	 * unfamiliar creators which preset to pick — the dimension-only
+	 * labels we shipped before required prior knowledge of OG conventions.
+	 *
+	 * Label is the *accessible* name of the radio (Playwright + screen
+	 * readers both read it). Description is the explanatory copy below
+	 * the label. The thumbnail is a small CSS-scaled outline that
+	 * conveys aspect ratio at a glance — no SVG or image asset
+	 * required.
+	 *
+	 * `recommended` flags the default preset so its row gets a "(recommended)"
+	 * badge. We don't repeat the size in the label because the size is
+	 * already shown explicitly to the right of the description.
+	 */
 	const presets = [
-		{ label: 'OG Image', width: 1200, height: 630 },
-		{ label: 'Twitter Card', width: 1200, height: 600 },
-		{ label: 'Instagram Post', width: 1080, height: 1080 },
-		{ label: 'Custom', width: 0, height: 0 }
+		{
+			label: 'OG / Twitter',
+			width: 1200,
+			height: 630,
+			description: 'Used by Twitter, LinkedIn, Slack, Discord, and most link previews.',
+			recommended: true
+		},
+		{
+			label: 'Twitter card',
+			width: 1200,
+			height: 600,
+			description: "Twitter's specific card size; only use if you want the Twitter-only ratio.",
+			recommended: false
+		},
+		{
+			label: 'Instagram post',
+			width: 1080,
+			height: 1080,
+			description: 'Square format for Instagram feed.',
+			recommended: false
+		},
+		{
+			label: 'Custom',
+			width: 0,
+			height: 0,
+			description: 'Set your own dimensions.',
+			recommended: false
+		}
 	] as const;
 
 	let name = $state('');
@@ -23,6 +62,21 @@
 		presets[selectedPreset].label === 'Custom' ? customHeight : presets[selectedPreset].height
 	);
 	let isCustom = $derived(presets[selectedPreset].label === 'Custom');
+
+	/**
+	 * Scale the thumbnail outline so the larger dimension fits within
+	 * `MAX_THUMB`. Square (Instagram) renders as a square; landscape
+	 * (OG/Twitter) renders as a rectangle. Keeps the visual story
+	 * "this is the shape your image will be."
+	 */
+	const MAX_THUMB = 32;
+	function thumbStyle(w: number, h: number): string {
+		if (w <= 0 || h <= 0) return '';
+		const ratio = w / h;
+		const tw = ratio >= 1 ? MAX_THUMB : MAX_THUMB * ratio;
+		const th = ratio >= 1 ? MAX_THUMB / ratio : MAX_THUMB;
+		return `width: ${tw}px; height: ${th}px;`;
+	}
 
 	async function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
@@ -79,14 +133,30 @@
 			<legend class="label">Dimensions</legend>
 			<div class="presets">
 				{#each presets as preset, i (preset.label)}
-					<label class="preset">
+					<label class="preset" class:active={selectedPreset === i}>
 						<input type="radio" bind:group={selectedPreset} value={i} />
-						<span>
-							{preset.label}
+						<span class="thumb-wrap" aria-hidden="true">
 							{#if preset.label !== 'Custom'}
-								<small>{preset.width}&times;{preset.height}</small>
+								<span
+									class="thumb"
+									style={thumbStyle(preset.width, preset.height)}
+									aria-hidden="true"
+								></span>
+							{:else}
+								<span class="thumb thumb-custom" aria-hidden="true">?</span>
 							{/if}
 						</span>
+						<span class="preset-text">
+							<span class="preset-label">
+								{preset.label}{#if preset.recommended}
+									<span class="badge-recommended">recommended</span>
+								{/if}
+							</span>
+							<span class="preset-desc">{preset.description}</span>
+						</span>
+						{#if preset.label !== 'Custom'}
+							<span class="preset-size">{preset.width}&times;{preset.height}</span>
+						{/if}
 					</label>
 				{/each}
 			</div>
@@ -135,7 +205,7 @@
 
 	.form {
 		width: 100%;
-		max-width: 500px;
+		max-width: 540px;
 	}
 
 	h1 {
@@ -192,22 +262,106 @@
 	}
 
 	.preset {
-		display: flex;
+		display: grid;
+		grid-template-columns: auto auto 1fr auto;
 		align-items: center;
-		gap: 0.5rem;
+		gap: 0.6rem;
+		padding: 0.6rem 0.75rem;
+		border: 1px solid #e2e8f0;
+		border-radius: 8px;
 		font-size: 0.9rem;
 		cursor: pointer;
+		background: #fff;
+		transition:
+			border-color 0.15s,
+			background 0.15s;
 	}
 
-	.preset small {
-		color: #888;
-		margin-left: 0.25rem;
+	.preset:hover {
+		background: #f8fafc;
+	}
+
+	.preset.active {
+		border-color: #0f172a;
+		background: #f1f5f9;
+	}
+
+	.thumb-wrap {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+	}
+
+	.thumb {
+		display: block;
+		border: 1.5px solid #64748b;
+		border-radius: 2px;
+		background: #fff;
+	}
+
+	.preset.active .thumb {
+		border-color: #0f172a;
+	}
+
+	.thumb-custom {
+		width: 28px;
+		height: 28px;
+		border-style: dashed;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: #64748b;
+		background: #fff;
+	}
+
+	.preset-text {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+		min-width: 0;
+	}
+
+	.preset-label {
+		font-weight: 600;
+		color: #0f172a;
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.4rem;
+	}
+
+	.badge-recommended {
+		font-size: 0.7rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		padding: 0.05rem 0.4rem;
+		border-radius: 999px;
+		background: #ecfeff;
+		color: #0e7490;
+		border: 1px solid #a5f3fc;
+	}
+
+	.preset-desc {
+		font-size: 0.8rem;
+		color: #64748b;
+		line-height: 1.4;
+	}
+
+	.preset-size {
+		font-size: 0.75rem;
+		color: #475569;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		white-space: nowrap;
 	}
 
 	.custom-dimensions {
 		display: flex;
 		gap: 1rem;
-		margin-top: 0.5rem;
+		margin-top: 0.75rem;
 	}
 
 	.dimension {
@@ -282,5 +436,16 @@
 
 	.btn-cancel:hover {
 		color: #111;
+	}
+
+	@media (max-width: 520px) {
+		.preset {
+			grid-template-columns: auto 1fr auto;
+			gap: 0.5rem;
+		}
+
+		.preset .thumb-wrap {
+			grid-row: span 1;
+		}
 	}
 </style>

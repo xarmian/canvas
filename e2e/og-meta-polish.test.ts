@@ -19,7 +19,7 @@ function metaContent(html: string, property: string): string | null {
 test('share page emits og:url and og:image:type', async ({ page }) => {
 	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'OG meta polish', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'OG meta polish', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	const { shareUrl } = await publish(page);
@@ -39,7 +39,7 @@ test('share page emits og:url and og:image:type', async ({ page }) => {
 test('og:url preserves user-supplied query params', async ({ page }) => {
 	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'OG canonical', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'OG canonical', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	const { shareUrl } = await publish(page);
@@ -57,7 +57,7 @@ test('og:url preserves user-supplied query params', async ({ page }) => {
 
 test('PublishModal OG embed snippet includes og:url + og:image:type', async ({ page }) => {
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'OG snippet', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'OG snippet', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await publish(page);
@@ -76,7 +76,7 @@ test('OG embed snippet og:url tracks the og:image params toggle (Codex round 1)'
 	page
 }) => {
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'OG og:url match', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'OG og:url match', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	const { addTextLayer, bindParam } = await import('./helpers');
 	await addTextLayer(page, 'placeholder');
@@ -103,7 +103,7 @@ test('OG embed snippet og:url tracks the og:image params toggle (Codex round 1)'
 
 test('Test-on-social buttons link to the right validators with the share URL', async ({ page }) => {
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Validators', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Validators', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	const { shareUrl } = await publish(page);

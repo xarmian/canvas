@@ -32,7 +32,7 @@ test.describe('Param validation', () => {
 	}) => {
 		const request = page.request;
 		await signupAndLogin(page);
-		const canvas = await createCanvas(page, { name: 'Required title', preset: 'OG Image' });
+		const canvas = await createCanvas(page, { name: 'Required title', preset: 'OG / Twitter' });
 		await gotoEditor(page, canvas.id);
 
 		// Bind text → ?title= (no default), then publish.
@@ -82,7 +82,7 @@ test.describe('Param validation', () => {
 	}) => {
 		const request = page.request;
 		await signupAndLogin(page);
-		const canvas = await createCanvas(page, { name: 'Numeric type', preset: 'OG Image' });
+		const canvas = await createCanvas(page, { name: 'Numeric type', preset: 'OG / Twitter' });
 		await gotoEditor(page, canvas.id);
 		await addTextLayer(page, 'placeholder');
 		await bindParam(page, 'Text Content', 'price', '0');
@@ -131,7 +131,7 @@ test.describe('Param validation', () => {
 		// header to find out.
 		const request = page.request;
 		await signupAndLogin(page);
-		const canvas = await createCanvas(page, { name: 'Required defaulted', preset: 'OG Image' });
+		const canvas = await createCanvas(page, { name: 'Required defaulted', preset: 'OG / Twitter' });
 		await gotoEditor(page, canvas.id);
 		await addTextLayer(page, 'placeholder');
 		await bindParam(page, 'Text Content', 'title', 'Hello fallback');
@@ -162,7 +162,7 @@ test.describe('Param validation', () => {
 		await signupAndLogin(page);
 		const canvas = await createCanvas(page, {
 			name: 'Multi required',
-			preset: 'OG Image'
+			preset: 'OG / Twitter'
 		});
 		// Synthesize a template with two bound text layers.
 		const templateJson = {

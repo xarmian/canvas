@@ -10,7 +10,7 @@ import { signupAndLogin, createCanvas, publish, uniqueXffHeaders } from './helpe
 test.describe('Render: AVIF + retina DPR', () => {
 	test('AVIF + dpr=2 produces a 2x AVIF render, dpr=10 clamps to 3', async ({ page }) => {
 		await signupAndLogin(page);
-		await createCanvas(page, { preset: 'OG Image' });
+		await createCanvas(page, { preset: 'OG / Twitter' });
 		const { imageUrl } = await publish(page);
 
 		// imageUrl is .png; rewrite to .avif for the AVIF asserts.
@@ -27,7 +27,7 @@ test.describe('Render: AVIF + retina DPR', () => {
 		const avifBody = await avifRes.body();
 		expect(avifBody.length).toBeGreaterThan(0);
 
-		// dpr=2 on the PNG URL: pixel dims should be 2× the OG Image preset
+		// dpr=2 on the PNG URL: pixel dims should be 2× the OG / Twitter preset
 		// (1200×630 → 2400×1260). Read PNG dimensions from bytes 16-23 (IHDR).
 		const dpr2Res = await ctx.get(`${imageUrl}?_dpr=2`, { headers });
 		expect(dpr2Res.status()).toBe(200);

@@ -13,7 +13,7 @@ import { signupAndLogin, createCanvas, gotoEditor, addTextLayer } from './helper
 test('conditional fill flips on numeric comparison', async ({ page }) => {
 	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Cond fill', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Cond fill', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 
 	// Constant text — DO NOT bind it to ?change. If we did, different param

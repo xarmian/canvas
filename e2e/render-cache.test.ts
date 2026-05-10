@@ -39,7 +39,7 @@ async function dirSize(dir: string): Promise<number> {
 test('render cache: MISS → HIT, distinct keys, persists to disk', async ({ page }) => {
 	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Cache RT', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Cache RT', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'Cache me');
 	const { imageUrl } = await publish(page);

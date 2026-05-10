@@ -20,7 +20,7 @@ import {
 test('slug rename: format validation, successful rename, URLs ripple', async ({ page }) => {
 	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Slug Rename', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Slug Rename', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	const { shareUrl: oldShareUrl } = await publish(page);
@@ -70,7 +70,7 @@ test('slug rename: 409 on collision shows server message + clickable suggestion'
 	expect(canvasA.slug).toBe(taken);
 
 	// Create canvas B and try to rename it to A's slug via the modal.
-	const canvasB = await createCanvas(page, { name: 'Renamer', preset: 'OG Image' });
+	const canvasB = await createCanvas(page, { name: 'Renamer', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvasB.id);
 	await addTextLayer(page, 'placeholder');
 	await publish(page);
@@ -109,7 +109,7 @@ test('slug rename: Enter-submitted collision lets user click suggestion without 
 	const taken = `enter-${Date.now()}`;
 	await page.request.post('/api/canvas', { data: { name: taken } });
 
-	const canvas = await createCanvas(page, { name: 'Enter Submit', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Enter Submit', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await publish(page);
@@ -145,7 +145,7 @@ test('slug rename: Tab from input to suggestion button preserves the suggestion 
 	const taken = `tab-${Date.now()}`;
 	await page.request.post('/api/canvas', { data: { name: taken } });
 
-	const canvas = await createCanvas(page, { name: 'Tab Suggest', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Tab Suggest', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await publish(page);
@@ -181,7 +181,7 @@ test('slug rename: closing modal mid-flight still updates editor slug (Codex rou
 }) => {
 	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Mid-flight close', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Mid-flight close', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await publish(page);
@@ -229,7 +229,7 @@ test('slug rename: close-then-resubmit drops the earlier in-flight rename (Codex
 }) => {
 	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Sequenced Renames', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Sequenced Renames', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await publish(page);
@@ -288,7 +288,7 @@ test('slug rename: closing modal with invalid draft resets state on reopen (Code
 	page
 }) => {
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Slug reset', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Slug reset', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await publish(page);
@@ -324,7 +324,7 @@ test('slug rename: late success does not overwrite a freshly-typed draft (Codex 
 	// NOT overwrite the user's "B" draft with "A" (Codex round 13
 	// P2). The user's in-progress edit is preserved.
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Draft preserve', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Draft preserve', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await publish(page);
@@ -388,7 +388,7 @@ test('slug rename: late 409 with close-then-quick-reopen still does not surface 
 	const taken = `quick-${Date.now()}`;
 	await page.request.post('/api/canvas', { data: { name: taken } });
 
-	const canvas = await createCanvas(page, { name: 'Quick reopen', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Quick reopen', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await publish(page);
@@ -443,7 +443,7 @@ test('slug rename: late 409 after close does not surface on reopen (Codex round 
 	const taken = `late-${Date.now()}`;
 	await page.request.post('/api/canvas', { data: { name: taken } });
 
-	const canvas = await createCanvas(page, { name: 'Late close', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Late close', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await publish(page);
@@ -490,7 +490,7 @@ test('slug rename: lazy version-fetch failure is retry-able with the same value 
 	page
 }) => {
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Lazy retry', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Lazy retry', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 
@@ -538,7 +538,7 @@ test('slug rename: lazy-fetches version when canvasVersion not yet captured (Cod
 }) => {
 	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Lazy version', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Lazy version', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	// The slug input is no longer disabled while loadSharing is in
@@ -582,7 +582,7 @@ test('slug rename: image URL with new slug renders 200 (cache key uses new slug)
 }) => {
 	const request = page.request;
 	await signupAndLogin(page);
-	const canvas = await createCanvas(page, { name: 'Slug cache', preset: 'OG Image' });
+	const canvas = await createCanvas(page, { name: 'Slug cache', preset: 'OG / Twitter' });
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await publish(page);
