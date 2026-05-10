@@ -55,6 +55,13 @@
 	 *  second response could overwrite the first's freshly-edited rows
 	 *  if it took longer to return. */
 	let schemaPending = $state(false);
+	/** The canvasId the cached `schemaRows` belong to. Compared against
+	 *  the current `canvasId` prop on every $effect run so a parent-
+	 *  level canvas switch (the editor route reuses this component
+	 *  across navigations) refetches instead of silently rendering
+	 *  stale rows for canvas A while the user is editing canvas B.
+	 *  Codex round 1 P1. */
+	let schemaCanvasId = $state<string | null>(null);
 
 	/** Per-binding metadata derived from the live Fabric canvas — used to
 	 *  surface which layers reference each param and to expose the
@@ -91,6 +98,10 @@
 	};
 
 	function labelForProperty(prop: string): string {
+		// Sentinel for params surfaced via a conditionalStyles rule rather
+		// than a property binding — kept as a constant so the source
+		// column can render a different style for it.
+		if (prop === '__conditional__') return 'Conditional rule';
 		return PROPERTY_LABELS[prop] ?? prop;
 	}
 
@@ -122,27 +133,49 @@
 		// derived array is recomputed on editGeneration ticks.
 		const byName: Record<string, DerivedParam> = Object.create(null);
 		const order: string[] = [];
+		const ensure = (name: string, init?: { default?: string; formatter?: string }) => {
+			if (!byName[name]) {
+				byName[name] = {
+					name,
+					default: init?.default ?? '',
+					formatter: init?.formatter,
+					sources: []
+				};
+				order.push(name);
+			}
+		};
 		for (const obj of canvas.getObjects()) {
-			const bindings = (
-				obj as FabricObject & {
-					paramBindings?: Record<string, { param: string; default: string; format?: string }>;
-				}
-			).paramBindings;
-			if (!bindings) continue;
 			const layerLabel = labelForLayer(obj);
-			for (const [property, b] of Object.entries(bindings)) {
-				const name = b.param;
-				if (!name) continue;
-				if (!byName[name]) {
-					byName[name] = {
-						name,
-						default: b.default ?? '',
-						formatter: b.format,
-						sources: []
-					};
-					order.push(name);
+			const augmented = obj as FabricObject & {
+				paramBindings?: Record<string, { param: string; default: string; format?: string }>;
+				conditionalStyles?: Array<{ when?: { param?: string } }>;
+			};
+			const bindings = augmented.paramBindings;
+			if (bindings) {
+				for (const [property, b] of Object.entries(bindings)) {
+					const name = b.param;
+					if (!name) continue;
+					ensure(name, { default: b.default ?? '', formatter: b.format });
+					byName[name].sources.push({ layerLabel, property });
 				}
-				byName[name].sources.push({ layerLabel, property });
+			}
+			// Conditional rules can reference params that aren't bound to
+			// any property — the server's deriveCanvasParams treats them
+			// as real schema rows, so the editor must surface them too or
+			// the user can't set type/required for a conditional-only
+			// param. Codex round 1 P2. Source label distinguishes them
+			// from binding-driven sources.
+			const rules = augmented.conditionalStyles;
+			if (rules) {
+				for (const rule of rules) {
+					const name = rule.when?.param;
+					if (!name) continue;
+					ensure(name);
+					byName[name].sources.push({
+						layerLabel,
+						property: '__conditional__'
+					});
+				}
 			}
 		}
 		return order.map((n) => byName[n]);
@@ -152,34 +185,50 @@
 		// Only fetch the schema rows for published canvases — `syncCanvasParams`
 		// only runs when templateJson is PATCH'd through the publish path,
 		// so unpublished canvases have no rows on the server side to fetch.
-		// Re-run whenever the modal opens for the first time on a given
-		// canvas; subsequent opens reuse the cached schemaRows until the
-		// modal closes (which clears them so a different canvas reload
-		// gets fresh state).
-		if (open && published && !schemaLoaded && !schemaPending) {
+		// Refetch when the canvasId itself changes (parent reuses this
+		// component across canvas-id navigations) — without that check
+		// canvas A's schemaRows would briefly show on canvas B until the
+		// next close+reopen. Codex round 1 P1.
+		const stale = schemaCanvasId !== null && schemaCanvasId !== canvasId;
+		if (open && published && (stale || (!schemaLoaded && !schemaPending))) {
 			void loadSchema();
 		}
 		if (!open) {
 			schemaLoaded = false;
 			schemaRows = [];
+			schemaCanvasId = null;
 		}
 	});
 
 	async function loadSchema(): Promise<void> {
 		schemaPending = true;
+		// Snapshot the canvasId at request start. By the time the response
+		// lands the parent may have switched canvases — assigning A's
+		// schemaRows on canvas B's open modal would be a stale-write bug.
+		const requestCanvasId = canvasId;
 		try {
 			const res = await fetch(`/api/canvas/${canvasId}/params`);
-			if (!res.ok) return;
-			const rows = (await res.json()) as SchemaRow[];
-			schemaRows = rows;
-			schemaLoaded = true;
+			if (requestCanvasId !== canvasId) return;
+			if (res.ok) {
+				const rows = (await res.json()) as SchemaRow[];
+				if (requestCanvasId !== canvasId) return;
+				schemaRows = rows;
+				schemaCanvasId = requestCanvasId;
+			}
+			// Even on a non-OK response we flip schemaLoaded below so the
+			// effect doesn't refire in a tight retry loop. The user can
+			// close+reopen the modal (which resets schemaLoaded) to retry,
+			// matching the rest-of-app pattern (PublishModal sharing).
+			// Codex round 1 P2.
 		} catch {
 			// Best-effort: a transient network failure leaves the type/
-			// required cells in their default-disabled state. The user
-			// can close + reopen to retry without losing the rest of the
-			// params view (defaults / sources still come from in-memory).
+			// required cells in their default-disabled state. See above
+			// re. retry mechanics.
 		} finally {
-			schemaPending = false;
+			if (requestCanvasId === canvasId) {
+				schemaLoaded = true;
+				schemaPending = false;
+			}
 		}
 	}
 

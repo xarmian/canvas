@@ -114,6 +114,10 @@
 			showPublishModal = false;
 			publishBindings = [];
 			publishBindingsStale = false;
+			// Close the params panel too — it has its own canvasId-keyed
+			// fetch but rendering A's stale schema rows briefly while
+			// canvas B's render races in is jarring. Codex round 1 P1.
+			showParamsPanel = false;
 		}
 	});
 	let showPublishModal = $state(false);
