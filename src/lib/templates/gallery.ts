@@ -24,10 +24,18 @@
  *  (signed-percent, currency, compact, crypto-price, …). The gallery
  *  shape mirrors the runtime ParamBinding type — defaults stay untyped
  *  here so a binding can target any property regardless of its concrete
- *  type. */
+ *  type.
+ *
+ *  `default` is optional: omit it (or pass undefined) and an unsupplied
+ *  URL param leaves the layer's authored value in place. With a string
+ *  default like `''`, the runtime `??` fallback writes that value into
+ *  the property even when the user didn't pass anything — useful for
+ *  text bindings, harmful for image src bindings where we want the
+ *  authored URL / data-URL fallback to remain unless the user
+ *  explicitly opts in. */
 export interface TemplateParamBinding {
 	param: string;
-	default: unknown;
+	default?: unknown;
 	format?: string;
 }
 
@@ -667,11 +675,15 @@ export const TEMPLATES: TemplateDefinition[] = [
 		const RANGE_RED = '#ef4444';
 
 		// Sample URL exercising every parameter:
-		// /c/crypto-lp-card?tokenA=USDC&tokenB=ETH&gainPercent=12.5&pl=125.30
+		// /c/crypto-lp-card?tokenA=USDC&tokenB=ETH&gainPercent=0.125&pl=125.30
 		//   &entry=0.10&mark=0.22&volume=1234567&range=in_range&rangeLabel=In+Range
 		//   &boosted=true&timeframe=24h
-		// Flip gainPercent < 0 → red gain text + red P/L. Set range=edge or
-		// out_of_range → yellow / red pill. boosted=false → star badge hidden.
+		// `gainPercent` is fractional (0.125 → "+12.50%") because the
+		// signed-percent formatter wraps Intl percent which multiplies by
+		// 100. Flip gainPercent < 0 (e.g. -0.075) → red gain text + red
+		// P/L. Set range=edge or out_of_range → yellow / red pill. Omit
+		// `boosted` (or set it to anything other than `true`) → star badge
+		// hidden.
 		const lpCardTemplate: TemplateDefinition = {
 			id: 'crypto-lp-card',
 			name: 'Crypto LP position',
@@ -696,17 +708,25 @@ export const TEMPLATES: TemplateDefinition[] = [
 							height: 6,
 							fill: '#14b8a6'
 						},
-						// Token A logo (image) — fallbackSrc demos the per-layer fallback (TASK-86)
+						// Token A logo (image) — `src` defaults to the embedded
+						// generic-token fallback so the unbound canvas renders a
+						// recognizable placeholder instead of nothing (the
+						// renderer skips drawing entirely when src is empty).
+						// fallbackSrc kicks in if the user-provided URL fails
+						// (TASK-86). The src binding intentionally omits its
+						// default so an unsupplied ?tokenALogoUrl leaves the
+						// authored data URL in place; only an explicit param
+						// value overrides.
 						{
 							type: 'Image',
 							left: 60,
 							top: 50,
 							width: 80,
 							height: 80,
-							src: '',
+							src: GENERIC_TOKEN_FALLBACK,
 							fallbackSrc: GENERIC_TOKEN_FALLBACK,
 							paramBindings: {
-								src: { param: 'tokenALogoUrl', default: '' }
+								src: { param: 'tokenALogoUrl' }
 							}
 						},
 						// Token B logo (overlapping for the "pair" effect)
@@ -716,10 +736,10 @@ export const TEMPLATES: TemplateDefinition[] = [
 							top: 50,
 							width: 80,
 							height: 80,
-							src: '',
+							src: GENERIC_TOKEN_FALLBACK,
 							fallbackSrc: GENERIC_TOKEN_FALLBACK,
 							paramBindings: {
-								src: { param: 'tokenBLogoUrl', default: '' }
+								src: { param: 'tokenBLogoUrl' }
 							}
 						},
 						// Token-pair label — split into three layers so each side
@@ -786,7 +806,12 @@ export const TEMPLATES: TemplateDefinition[] = [
 								text: { param: 'timeframe', default: '24h' }
 							}
 						},
-						// Gain percent (signed-percent formatter, conditional fill)
+						// Gain percent (signed-percent formatter, conditional fill).
+						// The formatter wraps Intl.NumberFormat({style:'percent'})
+						// which multiplies the input by 100 — so 0.125 renders
+						// as "+12.50%". The conditional rule fires on the raw
+						// param value (also fractional), keeping the < 0
+						// comparison correct in either form.
 						{
 							type: 'Textbox',
 							left: 60,
@@ -799,7 +824,7 @@ export const TEMPLATES: TemplateDefinition[] = [
 							fill: GAIN_GREEN,
 							textAlign: 'left',
 							paramBindings: {
-								text: { param: 'gainPercent', default: '12.5', format: 'signed-percent:2' }
+								text: { param: 'gainPercent', default: '0.125', format: 'signed-percent:2' }
 							},
 							conditionalStyles: [
 								{
@@ -945,8 +970,13 @@ export const TEMPLATES: TemplateDefinition[] = [
 							]
 						},
 						// Boosted-star badge — visible only when ?boosted=true. The
-						// conditional `visible: false` rule fires when boosted is NOT
-						// 'true', so the default visible=true on the layer flips off.
+						// layer defaults to hidden so an URL with `boosted`
+						// omitted keeps the star off; the conditional flips it
+						// visible only on an explicit `boosted == true`.
+						// Using "show on positive match" rather than "hide on
+						// negative match" because conditionals don't fire when
+						// the param is missing — applyConditionalStyles skips
+						// rules whose `when.param` resolved to undefined.
 						{
 							type: 'Badge',
 							left: 940,
@@ -958,15 +988,19 @@ export const TEMPLATES: TemplateDefinition[] = [
 							fontFamily: 'Inter',
 							fontSize: 18,
 							fontWeight: 600,
-							visible: true,
+							visible: false,
 							conditionalStyles: [
 								{
-									when: { param: 'boosted', op: '!=', value: 'true' },
-									then: { property: 'visible', value: 'false' }
+									when: { param: 'boosted', op: '==', value: 'true' },
+									then: { property: 'visible', value: 'true' }
 								}
 							]
 						},
-						// Optional platform-logo image (asset:// or remote URL)
+						// Optional platform-logo image (asset:// or remote URL).
+						// `src` left blank by default — drawObject skips the
+						// layer when src is empty, so an unbound canvas
+						// renders nothing in this slot (the user opts in by
+						// supplying ?platformLogoUrl).
 						{
 							type: 'Image',
 							left: 1080,
@@ -975,7 +1009,7 @@ export const TEMPLATES: TemplateDefinition[] = [
 							height: 60,
 							src: '',
 							paramBindings: {
-								src: { param: 'platformLogoUrl', default: '' }
+								src: { param: 'platformLogoUrl' }
 							}
 						}
 					]
