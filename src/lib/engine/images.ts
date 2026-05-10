@@ -135,10 +135,47 @@ async function isUrlSafe(url: string): Promise<boolean> {
 }
 
 /**
+ * Decodes a `data:` image URL into a Buffer the renderer can pass into
+ * `Image.src`. Returns null when the data URL is malformed or exceeds
+ * MAX_IMAGE_BYTES.
+ *
+ * Why bypass `loadRemoteImage`'s fetch path: data URLs make no network
+ * call, so they don't pose an SSRF risk. The standard SSRF guard
+ * (`isUrlSafe`) rejects every non-http(s) scheme, which would otherwise
+ * make legitimate inline images (template gallery placeholders, small
+ * SVG glyphs in templates) render as the gray placeholder. We still
+ * enforce the size cap so a hand-crafted JSON with a 100 MB inline PNG
+ * can't bloat process memory.
+ */
+function decodeDataImageUrl(url: string): Buffer | null {
+	// Format: data:[<mime>][;base64],<data> — we accept any image/* mime,
+	// base64 or percent-encoded. Reject anything that doesn't decode to
+	// a non-empty buffer.
+	const match = /^data:([^,;]+)?(;base64)?,(.*)$/s.exec(url);
+	if (!match) return null;
+	const [, mime, base64Marker, payload] = match;
+	if (mime && !mime.startsWith('image/')) return null;
+	try {
+		const buf = base64Marker
+			? Buffer.from(payload, 'base64')
+			: Buffer.from(decodeURIComponent(payload), 'utf-8');
+		if (buf.byteLength === 0) return null;
+		if (buf.byteLength > MAX_IMAGE_BYTES) return null;
+		return buf;
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Loads a remote image by URL with timeout and caching.
  * Returns null on failure (timeout, 404, network error, or unsafe URL).
  *
- * SSRF defense layers:
+ * `data:image/*` URLs short-circuit the network path: they're decoded
+ * inline (size-capped) and returned directly. No SSRF risk because no
+ * network call is made.
+ *
+ * SSRF defense layers (for http(s) URLs):
  * 1. DNS resolution of all A+AAAA records with private IP validation
  * 2. Redirect following disabled (redirect: 'error')
  * 3. Timeout bounding all operations including DNS
@@ -150,6 +187,17 @@ export async function loadRemoteImage(
 	url: string,
 	timeoutMs: number = 3000
 ): Promise<Image | null> {
+	// Inline data URLs — decoded synchronously, no network. Returned
+	// before the SSRF / fetch path because that path would reject the
+	// non-http(s) scheme.
+	if (url.startsWith('data:')) {
+		const buf = decodeDataImageUrl(url);
+		if (!buf) return null;
+		const img = new Image();
+		img.src = buf;
+		return img;
+	}
+
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 
