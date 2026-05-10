@@ -534,9 +534,7 @@
 					>
 						Unbind
 					</button>
-					<button type="button" class="bind-editor-done" onclick={closeBindEditor}>
-						Done
-					</button>
+					<button type="button" class="bind-editor-done" onclick={closeBindEditor}> Done </button>
 				</div>
 			</div>
 		{/if}
