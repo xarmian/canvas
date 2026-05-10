@@ -62,6 +62,30 @@ type AnyOptions = any;
 export class Badge extends FabricObject {
 	static type = 'Badge';
 
+	/**
+	 * Custom visual properties that must invalidate Fabric's object cache
+	 * when changed. Without this list, edits to `fg` / `radius` /
+	 * `iconPosition` / etc. could leave a stale rendered bitmap on the
+	 * cache canvas (Fabric only re-paints when a `cacheProperties` entry
+	 * mutates). Layout-affecting fields (label, font*, padding, iconImage)
+	 * also drive `_syncBounds` via the `set` override below — listing them
+	 * here ensures the visual cache invalidates even when `_syncBounds`
+	 * happens to leave width/height unchanged.
+	 */
+	static cacheProperties: string[] = [
+		...FabricObject.cacheProperties,
+		'label',
+		'bg',
+		'fg',
+		'padding',
+		'radius',
+		'iconImage',
+		'iconPosition',
+		'fontFamily',
+		'fontSize',
+		'fontWeight'
+	];
+
 	static ownDefaults: Partial<TClassProperties<Badge>> = BADGE_DEFAULTS;
 
 	declare label: string;
@@ -99,14 +123,18 @@ export class Badge extends FabricObject {
 	}
 
 	/** Override `set` so any change to layout-affecting props re-syncs the
-	 *  bounding box and re-loads the icon if the URL changed. Fabric's
-	 *  default setter just assigns; without this hook the badge would keep
-	 *  stale dimensions after a label / padding / font edit. */
+	 *  bounding box and re-loads the icon if the URL changed. Also marks
+	 *  the object dirty so Fabric's per-object render cache invalidates —
+	 *  required because badge visual props extend beyond Fabric's standard
+	 *  `cacheProperties` list (the static `cacheProperties` extension
+	 *  catches most cases, but mutations through `setOptions` / direct
+	 *  property assignment skip that path). */
 	set(key: string | Record<string, AnyOptions>, value?: AnyOptions): this {
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const result = super.set(key as any, value as any);
 		this._syncBounds();
 		this._maybeLoadIcon();
+		this.dirty = true;
 		return result;
 	}
 
