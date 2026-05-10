@@ -2,6 +2,7 @@
 	import { untrack } from 'svelte';
 	import { Modal } from '$lib/components/ui';
 	import { toast } from '$lib/stores/toast.svelte';
+	import { nearestParamName } from './param-validation';
 
 	export interface PublishModalBinding {
 		/** Parameter name as it appears in the URL. */
@@ -274,14 +275,25 @@
 	}
 
 	/** `{{name}}` references in the current redirectUrl that don't
-	 *  match any of this canvas's bound parameters. Used to surface
-	 *  a red warning beside the field. Recomputes whenever the
-	 *  redirect URL or the bindings change. */
-	let redirectUnknownParams = $derived.by(() => {
+	 *  match any of this canvas's bound parameters, paired with the
+	 *  closest known name (TASK-106) when one exists within the
+	 *  shared validator's typo threshold. Used to surface a red
+	 *  warning AND a "did you mean X?" chip per offender. Recomputes
+	 *  whenever the redirect URL or the bindings change. */
+	interface RedirectUnknownParam {
+		name: string;
+		suggestion: string | null;
+	}
+	let redirectUnknownParams = $derived.by<RedirectUnknownParam[]>(() => {
 		const url = sharing.redirectUrl;
-		if (!url) return [] as string[];
+		if (!url) return [];
 		const validNames = bindings.map((b) => b.name);
-		return extractPlaceholders(url).filter((k) => !validNames.includes(k));
+		const validSet = new Set(validNames);
+		const unknown = extractPlaceholders(url).filter((k) => !validSet.has(k));
+		return unknown.map((name) => ({
+			name,
+			suggestion: nearestParamName(name, validNames)?.name ?? null
+		}));
 	});
 
 	/** `{{name}}` references that ARE matched by a binding — used to
@@ -1029,10 +1041,18 @@
 					{#if redirectUnknownParams.length > 0}
 						<p class="redirect-warning" data-testid="redirect-unknown-params" role="alert">
 							⚠️ {redirectUnknownParams.length === 1 ? 'Unknown parameter:' : 'Unknown parameters:'}
-							{#each redirectUnknownParams as name, i (name)}<code>{`{{${name}}}`}</code>{i <
-								redirectUnknownParams.length - 1
-									? ', '
-									: ''}{/each}.
+							{#each redirectUnknownParams as p, i (p.name)}<!--
+								Render each unknown placeholder + its optional "did
+								you mean X?" suggestion inline. Suggestions use the
+								shared param-validation Levenshtein helper so the
+								typo threshold matches the conditional-rule editor's
+								(TASK-106).
+							--><code
+									>{`{{${p.name}}}`}</code
+								>{#if p.suggestion}
+									<span class="redirect-warning-suggest"
+										>(did you mean <code>{p.suggestion}</code>?)</span
+									>{/if}{i < redirectUnknownParams.length - 1 ? ', ' : ''}{/each}.
 							{bindings.length === 0
 								? 'This canvas has no bound parameters yet.'
 								: `Available: ${bindings.map((b) => b.name).join(', ')}.`}
@@ -1493,6 +1513,13 @@
 		padding: 0.05rem 0.3rem;
 		border-radius: 3px;
 		color: #7f1d1d;
+	}
+
+	.redirect-warning-suggest {
+		margin-left: 0.25rem;
+		font-size: 0.7rem;
+		color: #7f1d1d;
+		opacity: 0.85;
 	}
 
 	.redirect-ok {

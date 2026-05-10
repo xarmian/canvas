@@ -3,6 +3,7 @@
 	import { ChevronRight, AlignLeft, AlignCenter, AlignRight, Zap } from '@lucide/svelte';
 	import { editorState, markDirty } from './state.svelte.ts';
 	import { fontStore } from '$lib/stores/fonts.svelte';
+	import { paramRefStatus } from './param-validation';
 
 	// --- Derived properties from the selected object ---
 	// editorState.editGeneration is read to force re-derivation when Fabric mutates
@@ -83,6 +84,40 @@
 			{}
 		)
 	);
+
+	/** Canvas-wide set of parameter names known to be bound somewhere
+	 *  (TASK-106). Drives the conditional-rule typo validator: a rule
+	 *  referencing `gainPct` when the canvas binds `gainPercent`
+	 *  silently no-ops at render time, so we surface the typo at design
+	 *  time with a suggested correction. Walks every object's
+	 *  paramBindings, not just the selected one — a rule on layer A
+	 *  legitimately references a param bound on layer B. */
+	let canvasParamNames = $derived.by<string[]>(() => {
+		void editorState.editGeneration;
+		const canvas = editorState.fabricCanvas;
+		if (!canvas) return [];
+		// Plain object as a dedup index. `new Set()` would trip the
+		// `svelte/prefer-svelte-reactivity` lint rule even though the
+		// derivation doesn't need reactive Set semantics — the whole
+		// array is recomputed on editGeneration ticks.
+		const seen: Record<string, true> = Object.create(null);
+		const order: string[] = [];
+		for (const obj of canvas.getObjects()) {
+			const bindings = (
+				obj as typeof obj & {
+					paramBindings?: Record<string, { param: string; default: string; format?: string }>;
+				}
+			).paramBindings;
+			if (!bindings) continue;
+			for (const b of Object.values(bindings)) {
+				if (b?.param && !seen[b.param]) {
+					seen[b.param] = true;
+					order.push(b.param);
+				}
+			}
+		}
+		return order;
+	});
 
 	// TASK-104: which property's inline bind editor is currently open. Only
 	// one editor is expanded at a time so the panel stays compact. `null`
@@ -952,16 +987,21 @@
 					{:else}
 						<div class="conditionals-list">
 							{#each conditionalStyles as rule, i (i)}
+								{@const refStatus = paramRefStatus(rule.when.param, canvasParamNames)}
 								<div class="conditional-rule">
 									<div class="conditional-row">
 										<span class="conditional-when-label">When</span>
 										<input
 											type="text"
 											class="field-input conditional-param"
+											class:field-input-warning={refStatus.kind === 'unknown'}
 											value={rule.when.param}
 											oninput={(e) => updateRule(i, 'when', 'param', e.currentTarget.value)}
 											placeholder="param"
 											aria-label="Rule {i + 1} parameter name"
+											aria-describedby={refStatus.kind === 'unknown'
+												? `rule-${i}-param-warning`
+												: undefined}
 										/>
 										<select
 											class="field-select conditional-op"
@@ -986,6 +1026,33 @@
 											aria-label="Rule {i + 1} comparison value"
 										/>
 									</div>
+									{#if refStatus.kind === 'unknown'}
+										<!--
+											Param-name typo warning (TASK-106). Visible only when
+											the user has typed a name that no binding on this
+											canvas references. The Levenshtein-based suggestion
+											chip is click-to-fix so a single click corrects the
+											typo without making the user retype.
+										-->
+										<p
+											id="rule-{i}-param-warning"
+											class="conditional-warning"
+											role="alert"
+											data-testid="rule-{i}-param-warning"
+										>
+											No binding references <code>{rule.when.param}</code>; this rule won't fire.
+											{#if refStatus.suggestion}
+												<button
+													type="button"
+													class="conditional-warning-suggest"
+													onclick={() => updateRule(i, 'when', 'param', refStatus.suggestion ?? '')}
+													data-testid="rule-{i}-param-suggest"
+												>
+													Did you mean <code>{refStatus.suggestion}</code>?
+												</button>
+											{/if}
+										</p>
+									{/if}
 									<div class="conditional-row">
 										<span class="conditional-when-label">Then set</span>
 										<select
@@ -1618,6 +1685,53 @@
 	.conditional-add:hover {
 		background: #f9fafb;
 		border-color: #94a3b8;
+	}
+
+	/* Conditional-rule param-name typo warning (TASK-106). Sits inside
+	   the .conditional-rule card between the When-row and the Then-row
+	   so the user can fix the rule without losing the surrounding
+	   context. */
+	.conditional-warning {
+		margin: 4px 0 0;
+		padding: 6px 8px;
+		background: #fef3c7;
+		border: 1px solid #fde68a;
+		border-radius: 4px;
+		font-size: 11px;
+		color: #92400e;
+		line-height: 1.45;
+	}
+
+	.conditional-warning code {
+		background: #fff;
+		border: 1px solid #fde68a;
+		border-radius: 3px;
+		padding: 0 0.2rem;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 10.5px;
+	}
+
+	.conditional-warning-suggest {
+		display: inline-block;
+		margin-top: 2px;
+		padding: 0;
+		background: none;
+		border: none;
+		color: #1d4ed8;
+		font-family: inherit;
+		font-size: 11px;
+		text-decoration: underline;
+		cursor: pointer;
+	}
+
+	.conditional-warning-suggest:hover,
+	.conditional-warning-suggest:focus-visible {
+		color: #1e40af;
+	}
+
+	.conditional-warning-suggest:focus-visible {
+		outline: 2px solid #2563eb;
+		outline-offset: 2px;
 	}
 
 	.binding-format-hint {
