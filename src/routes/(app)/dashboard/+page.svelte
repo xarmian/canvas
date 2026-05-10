@@ -325,6 +325,15 @@
 				Each template ships with sensible defaults and named parameters — change one, the image
 				changes. No code, no rebuild.
 			</p>
+			<a href="/assets" class="empty-assets-link" data-testid="empty-assets-link">
+				<span class="empty-assets-icon" aria-hidden="true">📁</span>
+				<span>
+					<strong>Upload logos and images to reuse across canvases</strong>
+					<span class="empty-assets-sub"
+						>Drop them in your asset library, then drag into any canvas.</span
+					>
+				</span>
+			</a>
 		</div>
 	{:else}
 		<div class="layout">
@@ -393,6 +402,23 @@
 						</button>
 					</div>
 				{/if}
+				<!--
+					Assets tile (TASK-103). Surfacing the asset library at the
+					bottom of the folders sidebar — the list-row context makes
+					"this is a category of stuff you have" obvious, where the
+					top-nav link reads as system chrome and gets ignored. The
+					count is the user's image-asset total (fonts excluded).
+				-->
+				<a href="/assets" class="assets-tile" data-testid="dashboard-assets-tile">
+					<span class="assets-tile-icon" aria-hidden="true">📁</span>
+					<span class="assets-tile-text">
+						<span class="assets-tile-label">Assets</span>
+						<span class="assets-tile-meta">
+							{data.assetCount}
+							{data.assetCount === 1 ? 'image' : 'images'} uploaded
+						</span>
+					</span>
+				</a>
 			</aside>
 
 			<div class="main">
@@ -786,6 +812,85 @@
 	.btn-secondary:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
+	}
+
+	.empty-assets-link {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.7rem;
+		margin-top: 1.25rem;
+		padding: 0.7rem 0.9rem;
+		background: #f8fafc;
+		border: 1px solid #e2e8f0;
+		border-radius: 8px;
+		text-decoration: none;
+		color: #0f172a;
+		text-align: left;
+		max-width: 460px;
+		transition:
+			background 0.15s,
+			border-color 0.15s;
+	}
+
+	.empty-assets-link:hover {
+		background: #f1f5f9;
+		border-color: #cbd5e1;
+	}
+
+	.empty-assets-icon {
+		font-size: 1.4rem;
+		line-height: 1;
+	}
+
+	.empty-assets-sub {
+		display: block;
+		margin-top: 0.15rem;
+		font-size: 0.8rem;
+		color: #64748b;
+		font-weight: 400;
+	}
+
+	.assets-tile {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		margin-top: 0.4rem;
+		padding: 0.55rem 0.65rem;
+		border: 1px solid #e2e8f0;
+		border-radius: 8px;
+		text-decoration: none;
+		background: #fff;
+		color: #0f172a;
+		transition:
+			background 0.15s,
+			border-color 0.15s;
+	}
+
+	.assets-tile:hover {
+		background: #f8fafc;
+		border-color: #cbd5e1;
+	}
+
+	.assets-tile-icon {
+		font-size: 1.1rem;
+		line-height: 1;
+	}
+
+	.assets-tile-text {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+		min-width: 0;
+	}
+
+	.assets-tile-label {
+		font-weight: 600;
+		font-size: 0.85rem;
+	}
+
+	.assets-tile-meta {
+		font-size: 0.75rem;
+		color: #64748b;
 	}
 
 	.empty-hint {

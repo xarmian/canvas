@@ -667,7 +667,10 @@
 				body: JSON.stringify({ params: [{ name, ...patch }] })
 			});
 		} catch {
-			toast.error(`Couldn't save schema flag for ${name}.`);
+			// User-facing copy: "params accepted" matches the vocabulary
+			// vocab doc (TASK-103) — internal code/comments still use
+			// "schema" since that's the API/DB term.
+			toast.error(`Couldn't save the params-accepted setting for ${name}.`);
 		}
 	}
 
