@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button, Input, Textarea } from '$lib/components/ui';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { nearestParamName } from './param-validation';
 
@@ -852,14 +852,9 @@
 			Publishing makes this canvas available at a public URL. You can unpublish any time.
 		</p>
 		<div class="actions">
-			<button
-				type="button"
-				class="btn btn-primary"
-				disabled={busy}
-				onclick={() => togglePublished(true)}
-			>
+			<Button variant="primary" loading={busy} onclick={() => togglePublished(true)}>
 				{busy ? 'Publishing…' : 'Publish canvas'}
-			</button>
+			</Button>
 		</div>
 	{:else}
 		<p class="intro">
@@ -877,12 +872,13 @@
 				No 308 from the old slug — pre-launch latitude (PLAN-81).
 			-->
 			<div class="copy-row">
-				<input
+				<Input
 					id="publish-slug"
 					type="text"
 					data-testid="slug-input"
 					value={slugDraft}
 					disabled={slugBusy}
+					invalid={(slugDirty && slugFormatError !== null) || slugServerError !== null}
 					oninput={(e) => {
 						slugDraft = e.currentTarget.value;
 						slugServerError = null;
@@ -939,10 +935,8 @@
 		<div class="field">
 			<label for="publish-share-url">Share page URL</label>
 			<div class="copy-row">
-				<input id="publish-share-url" type="text" readonly value={shareUrl} />
-				<button type="button" class="btn btn-copy" onclick={() => copy(shareUrl, 'Share URL')}>
-					Copy
-				</button>
+				<Input id="publish-share-url" type="text" readonly value={shareUrl} class="url-input" />
+				<Button variant="copy" onclick={() => copy(shareUrl, 'Share URL')}>Copy</Button>
 			</div>
 			<p class="help">
 				Humans see an OG preview + redirect; bots/crawlers get <code>og:image</code> meta tags.
@@ -952,10 +946,8 @@
 		<div class="field">
 			<label for="publish-image-url">Image URL</label>
 			<div class="copy-row">
-				<input id="publish-image-url" type="text" readonly value={imageUrl} />
-				<button type="button" class="btn btn-copy" onclick={() => copy(imageUrl, 'Image URL')}>
-					Copy
-				</button>
+				<Input id="publish-image-url" type="text" readonly value={imageUrl} class="url-input" />
+				<Button variant="copy" onclick={() => copy(imageUrl, 'Image URL')}>Copy</Button>
 			</div>
 			<p class="help">
 				Returns the rendered PNG directly. Append your dynamic parameters as query strings, e.g.
@@ -979,7 +971,7 @@
 			-->
 			<div class="field">
 				<label for="publish-og-title">OG title</label>
-				<input
+				<Input
 					id="publish-og-title"
 					type="text"
 					data-testid="og-title-input"
@@ -997,10 +989,10 @@
 
 			<div class="field">
 				<label for="publish-og-description">OG description</label>
-				<textarea
+				<Textarea
 					id="publish-og-description"
 					data-testid="og-description-input"
-					rows="2"
+					rows={2}
 					placeholder={sharingLoaded
 						? 'One- or two-sentence summary that appears under the title'
 						: 'Loading…'}
@@ -1008,12 +1000,12 @@
 					value={sharing.ogDescription}
 					oninput={(e) => (sharing = { ...sharing, ogDescription: e.currentTarget.value })}
 					onblur={(e) => persistSharingField('ogDescription', e.currentTarget.value)}
-				></textarea>
+				/>
 			</div>
 
 			<div class="field">
 				<label for="publish-redirect-url">Redirect URL</label>
-				<input
+				<Input
 					id="publish-redirect-url"
 					type="text"
 					data-testid="redirect-url-input"
@@ -1099,22 +1091,22 @@
 			</div>
 
 			<div class="embed-snippet">
-				<textarea
+				<Textarea
 					readonly
 					value={activeSnippet}
 					rows={activeTab === 'og' ? 3 : 2}
 					data-testid="embed-snippet"
 					aria-label="Embed snippet"
-				></textarea>
+					class="snippet-textarea"
+				/>
 				<div class="embed-actions">
-					<button
-						type="button"
-						class="btn btn-copy"
+					<Button
+						variant="copy"
 						data-testid="embed-copy"
 						onclick={() => copy(activeSnippet, 'Snippet')}
 					>
 						Copy
-					</button>
+					</Button>
 					<a href={snippetImageUrl} target="_blank" rel="noopener noreferrer" class="btn btn-link">
 						Open in new tab
 					</a>
@@ -1240,28 +1232,32 @@
 				<div class="field">
 					<label for="publish-example-image">Example image URL</label>
 					<div class="copy-row">
-						<input id="publish-example-image" type="text" readonly value={exampleImageUrl} />
-						<button
-							type="button"
-							class="btn btn-copy"
-							onclick={() => copy(exampleImageUrl, 'Example URL')}
-						>
+						<Input
+							id="publish-example-image"
+							type="text"
+							readonly
+							value={exampleImageUrl}
+							class="url-input"
+						/>
+						<Button variant="copy" onclick={() => copy(exampleImageUrl, 'Example URL')}>
 							Copy
-						</button>
+						</Button>
 					</div>
 				</div>
 
 				<div class="field">
 					<label for="publish-curl">Copy as cURL</label>
 					<div class="copy-row">
-						<input id="publish-curl" type="text" readonly value={curlFor(exampleImageUrl)} />
-						<button
-							type="button"
-							class="btn btn-copy"
-							onclick={() => copy(curlFor(exampleImageUrl), 'cURL command')}
-						>
+						<Input
+							id="publish-curl"
+							type="text"
+							readonly
+							value={curlFor(exampleImageUrl)}
+							class="url-input"
+						/>
+						<Button variant="copy" onclick={() => copy(curlFor(exampleImageUrl), 'cURL command')}>
 							Copy
-						</button>
+						</Button>
 					</div>
 					<p class="help">
 						Downloads the rendered PNG to <code>canvas.png</code>. No auth required — public
@@ -1272,28 +1268,25 @@
 				<div class="field">
 					<label for="publish-example-share">Example share URL</label>
 					<div class="copy-row">
-						<input id="publish-example-share" type="text" readonly value={exampleShareUrl} />
-						<button
-							type="button"
-							class="btn btn-copy"
-							onclick={() => copy(exampleShareUrl, 'Example share URL')}
-						>
+						<Input
+							id="publish-example-share"
+							type="text"
+							readonly
+							value={exampleShareUrl}
+							class="url-input"
+						/>
+						<Button variant="copy" onclick={() => copy(exampleShareUrl, 'Example share URL')}>
 							Copy
-						</button>
+						</Button>
 					</div>
 				</div>
 			{/if}
 		</section>
 
 		<div class="unpublish">
-			<button
-				type="button"
-				class="btn btn-secondary"
-				disabled={busy}
-				onclick={() => togglePublished(false)}
-			>
+			<Button variant="secondary" loading={busy} onclick={() => togglePublished(false)}>
 				{busy ? 'Unpublishing…' : 'Unpublish'}
-			</button>
+			</Button>
 		</div>
 	{/if}
 </Modal>
@@ -1327,17 +1320,21 @@
 	.copy-row {
 		display: flex;
 		gap: 0.4rem;
+		align-items: center;
 	}
 
-	.copy-row input {
+	/*
+	 * Read-only URL displays inside `.copy-row` use the Input primitive
+	 * but want a monospace + slightly muted treatment so the URL/cURL
+	 * value is visually distinct from a normal editable text field.
+	 * `:global` reaches through the primitive's scoped CSS — every Input
+	 * with `class="url-input"` in this modal opts into this treatment.
+	 */
+	.copy-row :global(.url-input) {
 		flex: 1;
-		padding: 0.45rem 0.6rem;
-		border: 1px solid #d1d5db;
-		border-radius: 5px;
 		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 		font-size: 0.8125rem;
 		background: #f9fafb;
-		color: #111;
 	}
 
 	.help {
@@ -1399,6 +1396,14 @@
 		border-top: 1px solid #eee;
 	}
 
+	/*
+	 * `.btn-link` and `.btn.btn-secondary` remain for the few <a> elements
+	 * that act as buttons (embed "Open in new tab", validator anchors).
+	 * The Button primitive renders <button>, not <a>; href-bearing
+	 * variants would need a primitive change (Button polymorphism). Until
+	 * then, anchors keep their inline styles. Tracked for follow-up after
+	 * TASK-110 — anchor styling will inherit token vars in the same pass.
+	 */
 	.btn {
 		padding: 0.45rem 0.9rem;
 		border-radius: 5px;
@@ -1408,23 +1413,9 @@
 		cursor: pointer;
 	}
 
-	.btn:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
 	.btn:focus-visible {
 		outline: 2px solid #2563eb;
 		outline-offset: 2px;
-	}
-
-	.btn-primary {
-		background: #2563eb;
-		color: #fff;
-	}
-
-	.btn-primary:hover:not(:disabled) {
-		background: #1d4ed8;
 	}
 
 	.btn-secondary {
@@ -1433,17 +1424,8 @@
 		border-color: #d1d5db;
 	}
 
-	.btn-secondary:hover:not(:disabled) {
+	.btn-secondary:hover {
 		background: #f3f4f6;
-	}
-
-	.btn-copy {
-		background: #111;
-		color: #fff;
-	}
-
-	.btn-copy:hover {
-		background: #333;
 	}
 
 	.btn-link {
@@ -1478,23 +1460,12 @@
 		line-height: 1.5;
 	}
 
-	.sharing-section .field input[type='text'],
-	.sharing-section .field textarea {
-		width: 100%;
-		padding: 0.45rem 0.6rem;
-		border: 1px solid #d1d5db;
-		border-radius: 5px;
-		font-family: inherit;
-		font-size: 0.85rem;
-		background: #fff;
-		color: #111;
-	}
-
-	.sharing-section .field textarea {
-		resize: vertical;
-		min-height: 2.5rem;
-		font-family: inherit;
-	}
+	/*
+	 * Sharing-section inputs/textareas now come from the Input/Textarea
+	 * primitives, which already provide identical padding, border,
+	 * radius, font, and background. The previous element-selector
+	 * overrides have been removed.
+	 */
 
 	.redirect-warning {
 		margin: 0.4rem 0 0;
@@ -1610,16 +1581,17 @@
 		font-weight: 600;
 	}
 
-	.embed-snippet textarea {
-		width: 100%;
+	/*
+	 * The embed snippet textarea now uses the Textarea primitive with
+	 * `class="snippet-textarea"`. Reach through scoped CSS via :global
+	 * to apply the monospace + slightly muted treatment that signals
+	 * "this is a code snippet" rather than a free-form text field.
+	 */
+	.embed-snippet :global(.snippet-textarea) {
 		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 		font-size: 0.8rem;
-		padding: 0.5rem;
-		border: 1px solid #d1d5db;
-		border-radius: 4px;
 		background: #f8fafc;
 		color: #0f172a;
-		resize: vertical;
 	}
 
 	.embed-actions {
