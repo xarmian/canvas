@@ -100,6 +100,37 @@ test('slug rename: 409 on collision shows server message + clickable suggestion'
 	expect(body.slug).toBe(`${taken}-2`);
 });
 
+test('slug rename: closing modal with invalid draft resets state on reopen (Codex round 1 P3)', async ({
+	page
+}) => {
+	await signupAndLogin(page);
+	const canvas = await createCanvas(page, { name: 'Slug reset', preset: 'OG Image' });
+	await gotoEditor(page, canvas.id);
+	await addTextLayer(page, 'placeholder');
+	await publish(page);
+
+	const slugInput = page.getByTestId('slug-input');
+	const startingSlug = await slugInput.inputValue();
+	expect(startingSlug.length).toBeGreaterThan(0);
+
+	// Type an invalid value so the format error shows.
+	await slugInput.fill('Bad Value');
+	await expect(page.getByTestId('slug-format-error')).toBeVisible();
+
+	// Dismiss the modal — Esc is the project's universal modal close.
+	await page.keyboard.press('Escape');
+	await expect(page.getByTestId('sharing-section')).toBeHidden();
+
+	// Reopen.
+	await page.getByTestId('toolbar-publish').click();
+	await expect(page.getByTestId('sharing-section')).toBeVisible();
+
+	// Draft is back to the canonical slug; format error is cleared.
+	await expect(page.getByTestId('slug-input')).toHaveValue(startingSlug);
+	await expect(page.getByTestId('slug-format-error')).toBeHidden();
+	await expect(page.getByTestId('slug-server-error')).toBeHidden();
+});
+
 test('slug rename: image URL with new slug renders 200 (cache key uses new slug)', async ({
 	page
 }) => {

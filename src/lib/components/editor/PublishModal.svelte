@@ -116,6 +116,12 @@
 			sharingPending = false;
 			sharingGen++;
 			sharing = { ogTitle: '', ogDescription: '', redirectUrl: '' };
+			// Reset slug-rename state on close so reopening for the same
+			// canvas doesn't show a stale 409 error or an invalid draft
+			// the user typed and then dismissed (Codex round 1 P3).
+			slugDraft = slug;
+			slugServerError = null;
+			slugSuggestion = null;
 		}
 	});
 
@@ -337,34 +343,48 @@
 		if (slugBusy) return;
 		if (!slugDirty) return;
 		if (slugFormatError) return; // local validation already shown
+		// Snapshot the canvasId at request start. The editor route reuses
+		// this component across canvas-id navigations, so a slow rename
+		// from canvas A could land after the user has switched to canvas
+		// B and overwrite B's local slug. Drop the result if either has
+		// changed (Codex round 1 P2).
+		const requestCanvasId = canvasId;
 		slugBusy = true;
 		slugServerError = null;
 		slugSuggestion = null;
 		try {
-			const res = await fetch(`/api/canvas/${canvasId}`, {
+			const res = await fetch(`/api/canvas/${requestCanvasId}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ slug: candidate })
 			});
+			if (requestCanvasId !== canvasId) return;
 			if (res.ok) {
 				const data = (await res.json()) as { slug: string };
+				if (requestCanvasId !== canvasId) return;
 				onSlugChange?.(data.slug);
 				slugDraft = data.slug;
 				toast.success('Slug renamed');
 			} else if (res.status === 409) {
 				const body = (await res.json()) as { message: string; suggestion?: string };
+				if (requestCanvasId !== canvasId) return;
 				slugServerError = body.message;
 				slugSuggestion = body.suggestion ?? null;
 			} else if (res.status === 400) {
 				const body = (await res.json()) as { message: string };
+				if (requestCanvasId !== canvasId) return;
 				slugServerError = body.message;
 			} else {
+				if (requestCanvasId !== canvasId) return;
 				slugServerError = `Couldn't rename slug (${res.status}).`;
 			}
 		} catch {
+			if (requestCanvasId !== canvasId) return;
 			slugServerError = "Couldn't reach the server. Please try again.";
 		} finally {
-			slugBusy = false;
+			if (requestCanvasId === canvasId) {
+				slugBusy = false;
+			}
 		}
 	}
 
