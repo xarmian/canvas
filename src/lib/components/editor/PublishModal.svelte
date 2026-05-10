@@ -62,6 +62,31 @@
 	let paramRows = $state<ParamRow[]>([]);
 	let paramRowsLoaded = $state(false);
 
+	// --- Sharing & redirect (TASK-95) ---
+	// OG title / description / redirect URL are first-class shareable
+	// metadata — the schema and PATCH endpoint already accept them, but
+	// before TASK-95 there was no UI to edit them. Loaded lazily when
+	// the modal opens for a published canvas. Edits persist on blur via
+	// the existing PATCH so we keep the auto-save discipline of the
+	// param-flags rows.
+	interface SharingState {
+		ogTitle: string;
+		ogDescription: string;
+		redirectUrl: string;
+	}
+	let sharing = $state<SharingState>({ ogTitle: '', ogDescription: '', redirectUrl: '' });
+	let sharingLoaded = $state(false);
+	// In-flight guard so the same $effect re-running (e.g. when
+	// paramRowsLoaded or versionToken later changes) doesn't kick off
+	// a second concurrent GET that could land after the user has
+	// started typing and overwrite their input. Codex round 2 P2.
+	let sharingPending = $state(false);
+	// Monotonic counter incremented every time the modal opens for a
+	// fresh canvas. Stale loadSharing() completions (modal closed, or
+	// reopened on a different canvas) are dropped by comparing against
+	// the generation captured at request start. Codex round 3 P2.
+	let sharingGen = 0;
+
 	$effect(() => {
 		if (open && published && !paramRowsLoaded) {
 			void loadParamSchema();
@@ -69,12 +94,35 @@
 		if (open && published && versionToken === null) {
 			void loadVersionToken();
 		}
+		if (open && published && !sharingLoaded && !sharingPending) {
+			void loadSharing();
+		}
 		if (!open) {
-			// Reset so reopening for a different canvas refetches.
+			// Reset so reopening for a different canvas refetches. Bump
+			// the generation so any in-flight `loadSharing` from this
+			// session is treated as stale on completion.
 			paramRowsLoaded = false;
 			paramRows = [];
 			versionToken = null;
+			sharingLoaded = false;
+			sharingPending = false;
+			sharingGen++;
+			sharing = { ogTitle: '', ogDescription: '', redirectUrl: '' };
 		}
+	});
+
+	// Reset sharing state if the parent passes a different canvasId
+	// while the modal stays open (rare but possible — e.g. dashboard
+	// list with a single shared modal instance). Same generation bump
+	// so any in-flight load drops.
+	$effect(() => {
+		// Read canvasId so the effect tracks it; the body intentionally
+		// runs whenever it changes.
+		void canvasId;
+		sharingLoaded = false;
+		sharingPending = false;
+		sharingGen++;
+		sharing = { ogTitle: '', ogDescription: '', redirectUrl: '' };
 	});
 
 	/** `_v` token from /api/canvas/[id]/version — when present, embed
@@ -109,6 +157,79 @@
 		} catch {
 			// Silent — schema row is best-effort metadata, not critical to
 			// the publish flow itself. The user can retry by reopening.
+		}
+	}
+
+	async function loadSharing(): Promise<void> {
+		// Snapshot the canvasId + generation at request start; if either
+		// has changed by the time the response lands, the modal has
+		// closed or moved to a different canvas — drop the result so we
+		// don't commit stale metadata that the user could then save back
+		// on blur. Codex round 3 P2.
+		const requestCanvasId = canvasId;
+		const requestGen = sharingGen;
+		sharingPending = true;
+		try {
+			const res = await fetch(`/api/canvas/${canvasId}`);
+			if (requestCanvasId !== canvasId || requestGen !== sharingGen) return;
+			if (res.ok) {
+				const data = (await res.json()) as {
+					ogTitle: string | null;
+					ogDescription: string | null;
+					redirectUrl: string | null;
+				};
+				if (requestCanvasId !== canvasId || requestGen !== sharingGen) return;
+				sharing = {
+					ogTitle: data.ogTitle ?? '',
+					ogDescription: data.ogDescription ?? '',
+					redirectUrl: data.redirectUrl ?? ''
+				};
+			}
+			// Even on a non-OK / network error, flip the loaded flag so
+			// the inputs unlock and the user can edit manually. Codex
+			// round 2 P3 — without this, a transient 5xx during open
+			// would leave the fields permanently disabled.
+		} catch {
+			// Swallow network rejections. The `finally` block flips the
+			// loaded flag so the user can still type into the inputs.
+			// Codex round 3: without an explicit catch, the `void
+			// loadSharing()` call site would surface an unhandled
+			// promise rejection on transient network failure.
+		} finally {
+			// Only flip the flags if this request is still the live one;
+			// otherwise we'd resurrect a stale "loaded" state for an old
+			// canvas mid-typing.
+			if (requestCanvasId === canvasId && requestGen === sharingGen) {
+				sharingLoaded = true;
+				sharingPending = false;
+			}
+		}
+	}
+
+	/**
+	 * Persist a single sharing field on blur. Trims the value, sends the
+	 * trimmed version (so trailing whitespace doesn't slip into a public
+	 * og:title), and treats an empty string as "clear this field" — the
+	 * server PATCH stores empty/null which makes the share-page fall
+	 * back to the canvas name / a generic description / no redirect.
+	 *
+	 * Optimistic in-memory update first so the field doesn't snap back
+	 * if the request is in flight when the user clicks elsewhere.
+	 */
+	async function persistSharingField<K extends keyof SharingState>(
+		key: K,
+		value: SharingState[K]
+	): Promise<void> {
+		const trimmed = value.trim();
+		sharing = { ...sharing, [key]: trimmed };
+		try {
+			await fetch(`/api/canvas/${canvasId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ [key]: trimmed })
+			});
+		} catch {
+			toast.error(`Couldn't save ${key}.`);
 		}
 	}
 
@@ -316,6 +437,75 @@
 				<code>?title=Hello</code>.
 			</p>
 		</div>
+
+		<section class="sharing-section" data-testid="sharing-section">
+			<h3 class="sharing-title">Sharing &amp; redirect</h3>
+			<p class="sharing-hint">
+				Customize what social-media unfurls show, and where humans land after clicking the share
+				URL. Leave blank to use the canvas name / no redirect.
+			</p>
+
+			<!--
+				Inputs stay disabled until `loadSharing()` resolves.
+				Codex round 1 P2: without the gate, a user typing into a
+				blank field before the GET completes would have their
+				input overwritten when the response arrived, then their
+				blur would save the (stale) server value.
+			-->
+			<div class="field">
+				<label for="publish-og-title">OG title</label>
+				<input
+					id="publish-og-title"
+					type="text"
+					data-testid="og-title-input"
+					placeholder={sharingLoaded ? 'Defaults to canvas name' : 'Loading…'}
+					disabled={!sharingLoaded}
+					value={sharing.ogTitle}
+					oninput={(e) => (sharing = { ...sharing, ogTitle: e.currentTarget.value })}
+					onblur={(e) => persistSharingField('ogTitle', e.currentTarget.value)}
+				/>
+				<p class="help">
+					Shown as the title in Twitter / Facebook / LinkedIn cards. Supports
+					<code>{'{{param}}'}</code> substitution.
+				</p>
+			</div>
+
+			<div class="field">
+				<label for="publish-og-description">OG description</label>
+				<textarea
+					id="publish-og-description"
+					data-testid="og-description-input"
+					rows="2"
+					placeholder={sharingLoaded
+						? 'One- or two-sentence summary that appears under the title'
+						: 'Loading…'}
+					disabled={!sharingLoaded}
+					value={sharing.ogDescription}
+					oninput={(e) => (sharing = { ...sharing, ogDescription: e.currentTarget.value })}
+					onblur={(e) => persistSharingField('ogDescription', e.currentTarget.value)}
+				></textarea>
+			</div>
+
+			<div class="field">
+				<label for="publish-redirect-url">Redirect URL</label>
+				<input
+					id="publish-redirect-url"
+					type="text"
+					data-testid="redirect-url-input"
+					placeholder={sharingLoaded
+						? `https://your-site.example.com/landing?utm_source={{utm}}`
+						: 'Loading…'}
+					disabled={!sharingLoaded}
+					value={sharing.redirectUrl}
+					oninput={(e) => (sharing = { ...sharing, redirectUrl: e.currentTarget.value })}
+					onblur={(e) => persistSharingField('redirectUrl', e.currentTarget.value)}
+				/>
+				<p class="help">
+					Humans get a 302 to this URL. Bots see the OG card. Use
+					<code>{'{{paramName}}'}</code> to substitute query parameters into the redirect.
+				</p>
+			</div>
+		</section>
 
 		<section class="embed-section" data-testid="embed-section">
 			<header class="embed-header">
@@ -628,6 +818,44 @@
 
 	.btn-link:hover {
 		text-decoration: underline;
+	}
+
+	.sharing-section {
+		margin-top: 1.25rem;
+		padding-top: 1rem;
+		border-top: 1px solid #eee;
+	}
+
+	.sharing-title {
+		margin: 0 0 0.4rem;
+		font-size: 0.95rem;
+		font-weight: 600;
+		color: #111;
+	}
+
+	.sharing-hint {
+		margin: 0 0 0.85rem;
+		font-size: 0.8125rem;
+		color: #4b5563;
+		line-height: 1.5;
+	}
+
+	.sharing-section .field input[type='text'],
+	.sharing-section .field textarea {
+		width: 100%;
+		padding: 0.45rem 0.6rem;
+		border: 1px solid #d1d5db;
+		border-radius: 5px;
+		font-family: inherit;
+		font-size: 0.85rem;
+		background: #fff;
+		color: #111;
+	}
+
+	.sharing-section .field textarea {
+		resize: vertical;
+		min-height: 2.5rem;
+		font-family: inherit;
 	}
 
 	.embed-section {
