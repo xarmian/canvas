@@ -368,16 +368,27 @@
 	 *  we don't try. */
 	let markdownSnippet = $derived(`![Canvas: ${slug}](${snippetImageUrl})`);
 
-	/** OG meta tags. og:image:width and og:image:height help OG previews
-	 *  size correctly without each crawler having to pre-fetch and inspect
-	 *  the binary. */
-	let ogSnippet = $derived(
-		[
+	/** OG meta tags (TASK-97). og:image:width and og:image:height help
+	 *  OG previews size correctly without each crawler having to pre-
+	 *  fetch and inspect the binary. og:image:type lets crawlers skip
+	 *  the binary-sniff step (LinkedIn / older Slack are picky about
+	 *  this). og:image:secure_url is emitted only when the URL is
+	 *  https — localhost dev pages serve over http. og:url uses the
+	 *  bare share URL (no `_v` so a copy/paste of the share URL stays
+	 *  user-friendly). */
+	let ogSnippet = $derived.by(() => {
+		const lines = [
 			`<meta property="og:image" content="${snippetImageUrl}" />`,
 			`<meta property="og:image:width" content="1200" />`,
-			`<meta property="og:image:height" content="630" />`
-		].join('\n')
-	);
+			`<meta property="og:image:height" content="630" />`,
+			`<meta property="og:image:type" content="image/png" />`
+		];
+		if (snippetImageUrl.startsWith('https://')) {
+			lines.push(`<meta property="og:image:secure_url" content="${snippetImageUrl}" />`);
+		}
+		lines.push(`<meta property="og:url" content="${shareUrl}" />`);
+		return lines.join('\n');
+	});
 
 	/** Plain URL — the snippet is the URL itself. Useful for pasting into
 	 *  Notion / Slack / email where the rich-link unfurler renders the
@@ -663,6 +674,46 @@
 					edit produces a fresh token.
 				</p>
 			{/if}
+		</section>
+
+		<section class="validator-section" data-testid="validator-section">
+			<h3 class="validator-title">Test on social</h3>
+			<p class="validator-hint">
+				Open the share URL in each platform's preview tool to refresh the cache and confirm the card
+				renders. Each link opens in a new tab with the URL pre-filled.
+			</p>
+			<div class="validator-row">
+				<a
+					class="btn btn-secondary"
+					data-testid="validator-twitter"
+					href="https://cards-dev.twitter.com/validator?url={encodeURIComponent(shareUrl)}"
+					target="_blank"
+					rel="noopener noreferrer"
+					title="Force Twitter / X to re-fetch the OG card and show validation issues"
+				>
+					Twitter Card Validator
+				</a>
+				<a
+					class="btn btn-secondary"
+					data-testid="validator-facebook"
+					href="https://developers.facebook.com/tools/debug/?q={encodeURIComponent(shareUrl)}"
+					target="_blank"
+					rel="noopener noreferrer"
+					title="Facebook / Meta sharing debugger — also flushes WhatsApp / Instagram caches"
+				>
+					Facebook Debugger
+				</a>
+				<a
+					class="btn btn-secondary"
+					data-testid="validator-linkedin"
+					href="https://www.linkedin.com/post-inspector/inspect/{encodeURIComponent(shareUrl)}"
+					target="_blank"
+					rel="noopener noreferrer"
+					title="LinkedIn Post Inspector — re-fetches and shows the rendered card"
+				>
+					LinkedIn Post Inspector
+				</a>
+			</div>
 		</section>
 
 		<section class="docs-section">
@@ -1090,6 +1141,38 @@
 		padding: 0.05rem 0.3rem;
 		border-radius: 3px;
 		font-size: 0.75rem;
+	}
+
+	.validator-section {
+		margin-top: 1.25rem;
+		padding-top: 1rem;
+		border-top: 1px solid #eee;
+	}
+
+	.validator-title {
+		margin: 0 0 0.4rem;
+		font-size: 0.95rem;
+		font-weight: 600;
+		color: #111;
+	}
+
+	.validator-hint {
+		margin: 0 0 0.6rem;
+		font-size: 0.8125rem;
+		color: #4b5563;
+		line-height: 1.5;
+	}
+
+	.validator-row {
+		display: flex;
+		gap: 0.4rem;
+		flex-wrap: wrap;
+	}
+
+	.validator-row .btn {
+		text-decoration: none;
+		display: inline-flex;
+		align-items: center;
 	}
 
 	.docs-section {

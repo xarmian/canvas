@@ -156,6 +156,21 @@ export const load: PageServerLoad = async ({ params, url, request }) => {
 		// No redirect configured — fall through to landing page
 	}
 
+	// Canonical share URL emitted as `og:url` (TASK-97). Strips the
+	// `_v` query token and any underscore-prefixed flags so the
+	// canonical reflects the user-typed URL, not the auto-versioned
+	// one we emit on og:image. Query params the user did pass through
+	// (e.g. ?title=...) are preserved so the canonical for a
+	// parameterized share page distinguishes from the bare canvas page.
+	const canonicalQuery = new URLSearchParams();
+	for (const [key, value] of Object.entries(queryParams)) {
+		if (key.startsWith('_')) continue;
+		canonicalQuery.set(key, value);
+	}
+	const canonicalShareUrl = `${url.origin}/c/${canvas.slug}${
+		canonicalQuery.size ? `?${canonicalQuery.toString()}` : ''
+	}`;
+
 	return {
 		canvas: {
 			name: canvas.name,
@@ -164,6 +179,7 @@ export const load: PageServerLoad = async ({ params, url, request }) => {
 			height: canvas.height
 		},
 		imageUrl,
+		canonicalShareUrl,
 		ogTitle,
 		ogDescription,
 		queryParams
