@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Modal from './Modal.svelte';
+	import Button from './Button.svelte';
 
 	interface Props {
 		open: boolean;
@@ -9,7 +10,10 @@
 		confirmLabel?: string;
 		/** Cancel button label. Default "Cancel". */
 		cancelLabel?: string;
-		/** 'default' uses neutral styling, 'danger' uses a red confirm button. */
+		/** 'default' uses the canonical primary CTA, 'danger' uses the
+		 *  red destructive variant. Per TASK-120 the audit's "Confirm"
+		 *  pattern maps to the `primary` Button variant — the previous
+		 *  dark `.btn-confirm` was an inconsistency we're now retiring. */
 		variant?: 'default' | 'danger';
 		onConfirm: () => void;
 		onCancel: () => void;
@@ -30,18 +34,12 @@
 <Modal {open} {title} width="24rem" onClose={onCancel}>
 	<p class="message">{message}</p>
 	{#snippet footer()}
-		<button type="button" class="btn btn-cancel" onclick={onCancel}>
+		<Button variant="secondary" onclick={onCancel}>
 			{cancelLabel}
-		</button>
-		<button
-			type="button"
-			class="btn"
-			class:btn-confirm={variant === 'default'}
-			class:btn-danger={variant === 'danger'}
-			onclick={onConfirm}
-		>
+		</Button>
+		<Button variant={variant === 'danger' ? 'danger' : 'primary'} onclick={onConfirm}>
 			{confirmLabel}
-		</button>
+		</Button>
 	{/snippet}
 </Modal>
 
@@ -50,50 +48,5 @@
 		margin: 0;
 		color: #333;
 		line-height: 1.5;
-	}
-
-	.btn {
-		padding: 0.5rem 1rem;
-		border-radius: 6px;
-		font-size: 0.875rem;
-		font-weight: 500;
-		border: 1px solid transparent;
-		cursor: pointer;
-		transition:
-			background 0.15s,
-			border-color 0.15s;
-	}
-
-	.btn:focus-visible {
-		outline: 2px solid #2563eb;
-		outline-offset: 2px;
-	}
-
-	.btn-cancel {
-		background: #fff;
-		color: #333;
-		border-color: #d1d5db;
-	}
-
-	.btn-cancel:hover {
-		background: #f3f4f6;
-	}
-
-	.btn-confirm {
-		background: #111;
-		color: #fff;
-	}
-
-	.btn-confirm:hover {
-		background: #333;
-	}
-
-	.btn-danger {
-		background: #dc2626;
-		color: #fff;
-	}
-
-	.btn-danger:hover {
-		background: #b91c1c;
 	}
 </style>
