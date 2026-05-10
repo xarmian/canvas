@@ -121,7 +121,15 @@ export const load: PageServerLoad = async ({ params, url, request }) => {
 	// would be churn-y — the user would have to re-copy after every
 	// edit. Cards refresh because crawlers follow the `og:image` meta,
 	// which we control on every render.
-	const versionToken = await resolveContentVersion(canvas.updatedAt, canvas.userId);
+	// Pass templateJson so the asset-set fingerprint folds into the
+	// token (TASK-117). Asset deletes/replacements roll `_v` even
+	// when the canvas itself wasn't edited, so social-CDN caches
+	// drop the stale resolved render.
+	const versionToken = await resolveContentVersion(
+		canvas.updatedAt,
+		canvas.userId,
+		(canvas.templateJson as unknown as import('$lib/engine').FabricCanvasJson | null) ?? null
+	);
 	const imageQuery = new URLSearchParams(queryParams);
 	imageQuery.set('_v', versionToken);
 	const imageUrl = `${url.origin}/c/${canvas.slug}/image.png?${imageQuery.toString()}`;

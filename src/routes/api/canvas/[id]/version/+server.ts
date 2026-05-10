@@ -1,10 +1,10 @@
 import { json, error } from '@sveltejs/kit';
-import { createHash } from 'node:crypto';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { canvases } from '$lib/server/db/schema';
 import { eq, and } from 'drizzle-orm';
-import { getLiveUserFontDescriptors } from '$lib/server/user-fonts';
+import { resolveContentVersion } from '$lib/server/content-version';
+import type { FabricCanvasJson } from '$lib/engine';
 
 /**
  * GET /api/canvas/[id]/version — returns the public render route's
@@ -12,13 +12,13 @@ import { getLiveUserFontDescriptors } from '$lib/server/user-fonts';
  * emit immutable-cache URLs.
  *
  * The token is derived from canvas.updatedAt + the user's font-set
- * fingerprint (same algorithm as src/routes/c/[slug]/[file]/+server.ts).
- * Keeping the derivation server-side means clients don't need access to
- * the font asset list or the algorithm — they just paste the token into
- * the URL.
+ * fingerprint + the canvas's asset-set fingerprint (TASK-117) — same
+ * algorithm as src/routes/c/[slug]/[file]/+server.ts and the share
+ * page. Keeping the derivation server-side via `resolveContentVersion`
+ * ensures all three call sites stay in lockstep.
  *
- * Owner-only (we don't expose this for arbitrary slugs) so a third party
- * can't trivially probe internal fingerprint state.
+ * Owner-only (we don't expose this for arbitrary slugs) so a third
+ * party can't trivially probe internal fingerprint state.
  */
 export const GET: RequestHandler = async ({ params, locals }) => {
 	if (!locals.user) error(401, 'Unauthorized');
@@ -30,16 +30,12 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 
 	if (!canvas) error(404, 'Canvas not found');
 
-	const liveDescriptors = await getLiveUserFontDescriptors(canvas.userId);
-	const fontSetVersion = liveDescriptors
-		.map((d) => d.id)
-		.sort()
-		.join('|');
+	const token = await resolveContentVersion(
+		canvas.updatedAt,
+		canvas.userId,
+		(canvas.templateJson as unknown as FabricCanvasJson | null) ?? null
+	);
 	const updatedAtMs = canvas.updatedAt.getTime().toString();
-	const token = createHash('sha256')
-		.update(`${updatedAtMs}|${fontSetVersion}`)
-		.digest('hex')
-		.slice(0, 12);
 
 	return json({ token, updatedAtMs });
 };

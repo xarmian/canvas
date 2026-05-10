@@ -305,7 +305,11 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 	const etag = buildEtag(key);
 	const updatedAtMs = canvas.updatedAt.getTime().toString();
 	const lastModified = canvas.updatedAt.toUTCString();
-	const versionToken = buildContentVersionToken(updatedAtMs, fontSetVersion);
+	// Mix the asset-set fingerprint into `_v` (TASK-117) so a stale
+	// `_v` from an embed-code snippet stops matching the immutable-
+	// cache opt-in once a referenced asset is mutated. Otherwise a
+	// 1-year CDN cache would keep serving the pre-mutation render.
+	const versionToken = buildContentVersionToken(updatedAtMs, fontSetVersion, assetSetVersion);
 	const cacheControl = pickCacheControl(requestedVersion, versionToken);
 
 	// Conditional GET: 304 short-circuits before we touch storage / cache.

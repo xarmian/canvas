@@ -153,6 +153,43 @@ test('re-uploading after delete keeps the cache invalidated (canvas still refere
 	expect(await bytesHash(await afterReupload.body())).not.toBe(primedHash);
 });
 
+test('_v token rolls when a referenced asset is deleted (Codex round 1 P1)', async ({
+	page
+}) => {
+	// Without folding the asset-set fingerprint into `_v`, social-CDN
+	// immutable-cache opt-in URLs would still match after a delete →
+	// CDNs would keep serving the pre-delete render for up to a year.
+	const request = page.request;
+	await signupAndLogin(page);
+	const created = await createCanvas(page, {
+		name: `Asset _v ${Date.now()}`,
+		preset: 'OG Image'
+	});
+	const asset = await uploadPng(request, 'tok.png');
+	const { slug } = await patchAndPublish(request, created.id, `asset://${asset.id}`);
+
+	// Read `_v` from the share page (bot UA) before delete.
+	const beforeShare = await request.get(`/c/${slug}`, {
+		headers: { 'user-agent': 'Twitterbot/1.0' }
+	});
+	const beforeHtml = await beforeShare.text();
+	const beforeV = (beforeHtml.match(/og:image"\s+content="[^"]*[?&]_v=([a-f0-9]{12})/) || [])[1];
+	expect(beforeV).toBeDefined();
+
+	// Delete the asset.
+	expect((await request.delete(`/api/library/${asset.id}`)).status()).toBe(200);
+
+	// Re-read share page. `_v` must have rolled — otherwise an
+	// immutable-cached CDN entry from before would keep serving.
+	const afterShare = await request.get(`/c/${slug}`, {
+		headers: { 'user-agent': 'Twitterbot/1.0' }
+	});
+	const afterHtml = await afterShare.text();
+	const afterV = (afterHtml.match(/og:image"\s+content="[^"]*[?&]_v=([a-f0-9]{12})/) || [])[1];
+	expect(afterV).toBeDefined();
+	expect(afterV).not.toBe(beforeV);
+});
+
 test('renders without asset:// refs are unaffected by asset library mutations', async ({
 	page
 }) => {
