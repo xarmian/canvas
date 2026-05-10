@@ -66,9 +66,32 @@ function isBot(userAgent: string): boolean {
 	return BOT_USER_AGENTS.some((bot) => ua.includes(bot));
 }
 
-/** Replace {{param}} placeholders in a string with query parameter values */
+/** Match a single `{{paramName}}` placeholder. Allows `[\w-]` so a
+ *  user binding `utm-source` works the same as `utmSource`. */
+const PARAM_PLACEHOLDER_RE = /\{\{([\w-]+)\}\}/g;
+
+/** Replace `{{param}}` placeholders in a string with query parameter
+ *  values. Missing keys substitute to empty string — the redirect /
+ *  og:title contracts treat that as "user didn't provide a value", so
+ *  the public URL doesn't 500 just because the creator added a
+ *  placeholder for an unbound param. The caller can detect missing
+ *  substitutions separately via {@link findUnsubstitutedPlaceholders}.
+ */
 function substituteParams(template: string, params: Record<string, string>): string {
-	return template.replace(/\{\{([\w-]+)\}\}/g, (_, key) => params[key] ?? '');
+	return template.replace(PARAM_PLACEHOLDER_RE, (_, key) => params[key] ?? '');
+}
+
+/** Return the list of `{{name}}` placeholders in `template` whose key
+ *  is NOT present in `params`. Used to surface a structured warning
+ *  log when the redirect-URL substitution is incomplete (TASK-96) so
+ *  ops can spot misconfigured templates without parsing access logs. */
+function findUnsubstitutedPlaceholders(template: string, params: Record<string, string>): string[] {
+	const missing = new Set<string>();
+	for (const match of template.matchAll(PARAM_PLACEHOLDER_RE)) {
+		const key = match[1];
+		if (!Object.hasOwn(params, key)) missing.add(key);
+	}
+	return [...missing];
 }
 
 export const load: PageServerLoad = async ({ params, url, request }) => {
@@ -116,6 +139,18 @@ export const load: PageServerLoad = async ({ params, url, request }) => {
 		// Human visitor — redirect to configured destination or show landing page
 		if (canvas.redirectUrl) {
 			const redirectTo = substituteParams(canvas.redirectUrl, queryParams);
+			// Structured warning log when a placeholder couldn't be
+			// substituted: ops should be able to spot misconfigured
+			// canvases without grepping access logs (TASK-96). Substitution
+			// still proceeds — the missing placeholder collapses to '',
+			// which is preferable to either failing the redirect or
+			// leaking literal `{{name}}` into the destination URL.
+			const missing = findUnsubstitutedPlaceholders(canvas.redirectUrl, queryParams);
+			if (missing.length > 0) {
+				console.warn(
+					`[redirect] unsubstituted placeholders slug=${canvas.slug} missing=${missing.join(',')}`
+				);
+			}
 			redirect(302, redirectTo);
 		}
 		// No redirect configured — fall through to landing page

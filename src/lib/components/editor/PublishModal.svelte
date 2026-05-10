@@ -216,6 +216,70 @@
 	 * Optimistic in-memory update first so the field doesn't snap back
 	 * if the request is in flight when the user clicks elsewhere.
 	 */
+	/** Single-match regex used for "does this URL contain any
+	 *  placeholder?" checks. Non-global so .test() doesn't mutate
+	 *  `lastIndex` between reactive reruns (a footgun on the global
+	 *  variant). The actual extraction uses a *fresh* global regex
+	 *  per call so `matchAll` works against an unmodified instance. */
+	const PARAM_PLACEHOLDER_PROBE = /\{\{[\w-]+\}\}/;
+
+	/** Extract every `{{name}}` reference from `template` once,
+	 *  preserving first-seen order and de-duping. Returns an empty
+	 *  array when no placeholders are present. */
+	function extractPlaceholders(template: string): string[] {
+		const re = /\{\{([\w-]+)\}\}/g;
+		const seen: string[] = [];
+		for (const match of template.matchAll(re)) {
+			const key = match[1];
+			if (!seen.includes(key)) seen.push(key);
+		}
+		return seen;
+	}
+
+	/** `{{name}}` references in the current redirectUrl that don't
+	 *  match any of this canvas's bound parameters. Used to surface
+	 *  a red warning beside the field. Recomputes whenever the
+	 *  redirect URL or the bindings change. */
+	let redirectUnknownParams = $derived.by(() => {
+		const url = sharing.redirectUrl;
+		if (!url) return [] as string[];
+		const validNames = bindings.map((b) => b.name);
+		return extractPlaceholders(url).filter((k) => !validNames.includes(k));
+	});
+
+	/** `{{name}}` references that ARE matched by a binding — used to
+	 *  render a "looks good" affirmation when the user types a valid
+	 *  reference. */
+	let redirectKnownParams = $derived.by(() => {
+		const url = sharing.redirectUrl;
+		if (!url) return [] as string[];
+		const validNames = bindings.map((b) => b.name);
+		return extractPlaceholders(url).filter((k) => validNames.includes(k));
+	});
+
+	/** Live-preview the redirect URL substituted with each binding's
+	 *  default (or sample) value. Helps the user see "what URL will
+	 *  the human actually land on" without having to publish + click
+	 *  through. Returns null when no redirect URL or no `{{...}}`
+	 *  placeholders are present (preview adds nothing in that case). */
+	let redirectPreview = $derived.by(() => {
+		const url = sharing.redirectUrl;
+		if (!url) return null;
+		if (!PARAM_PLACEHOLDER_PROBE.test(url)) return null;
+		const sampleParams: Record<string, string> = {};
+		for (const b of bindings) {
+			sampleParams[b.name] = b.default || sampleFor(b.sourceLabel);
+		}
+		// Fresh global regex so .replace() iterates the whole string;
+		// any unknown placeholder is preserved verbatim so the preview
+		// makes the omission visible (matches the server's behavior of
+		// substituting "" only when the URL request supplies the param,
+		// not when the placeholder itself is unknown).
+		return url.replace(/\{\{([\w-]+)\}\}/g, (_, key) =>
+			Object.hasOwn(sampleParams, key) ? sampleParams[key] : `{{${key}}}`
+		);
+	});
+
 	async function persistSharingField<K extends keyof SharingState>(
 		key: K,
 		value: SharingState[K]
@@ -504,6 +568,37 @@
 					Humans get a 302 to this URL. Bots see the OG card. Use
 					<code>{'{{paramName}}'}</code> to substitute query parameters into the redirect.
 				</p>
+
+				<!--
+					Live syntax feedback (TASK-96). Shown only while a redirect
+					URL is set and bindings are known so we don't pester the
+					user with warnings on a blank field or before publish.
+					Both branches render below the help text so the layout
+					doesn't shift when typing.
+				-->
+				{#if sharing.redirectUrl}
+					{#if redirectUnknownParams.length > 0}
+						<p class="redirect-warning" data-testid="redirect-unknown-params" role="alert">
+							⚠️ {redirectUnknownParams.length === 1 ? 'Unknown parameter:' : 'Unknown parameters:'}
+							{#each redirectUnknownParams as name, i (name)}<code>{`{{${name}}}`}</code>{i <
+								redirectUnknownParams.length - 1
+									? ', '
+									: ''}{/each}.
+							{bindings.length === 0
+								? 'This canvas has no bound parameters yet.'
+								: `Available: ${bindings.map((b) => b.name).join(', ')}.`}
+						</p>
+					{:else if redirectKnownParams.length > 0}
+						<p class="redirect-ok" data-testid="redirect-params-ok">✓ All references are valid.</p>
+					{/if}
+
+					{#if redirectPreview}
+						<p class="redirect-preview" data-testid="redirect-preview">
+							<span class="redirect-preview-label">Preview</span>
+							<code>{redirectPreview}</code>
+						</p>
+					{/if}
+				{/if}
 			</div>
 		</section>
 
@@ -856,6 +951,56 @@
 		resize: vertical;
 		min-height: 2.5rem;
 		font-family: inherit;
+	}
+
+	.redirect-warning {
+		margin: 0.4rem 0 0;
+		padding: 0.4rem 0.55rem;
+		background: #fef2f2;
+		border: 1px solid #fecaca;
+		border-radius: 4px;
+		font-size: 0.75rem;
+		color: #991b1b;
+		line-height: 1.45;
+	}
+
+	.redirect-warning code {
+		font-size: 0.72rem;
+		background: #fee2e2;
+		padding: 0.05rem 0.3rem;
+		border-radius: 3px;
+		color: #7f1d1d;
+	}
+
+	.redirect-ok {
+		margin: 0.4rem 0 0;
+		font-size: 0.75rem;
+		color: #047857;
+	}
+
+	.redirect-preview {
+		margin: 0.4rem 0 0;
+		font-size: 0.75rem;
+		color: #475569;
+		display: flex;
+		align-items: baseline;
+		gap: 0.4rem;
+		flex-wrap: wrap;
+	}
+
+	.redirect-preview code {
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 0.72rem;
+		background: #f1f5f9;
+		padding: 0.1rem 0.35rem;
+		border-radius: 3px;
+		color: #0f172a;
+		word-break: break-all;
+	}
+
+	.redirect-preview-label {
+		font-weight: 600;
+		color: #334155;
 	}
 
 	.embed-section {
