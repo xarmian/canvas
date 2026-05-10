@@ -1,0 +1,105 @@
+/*
+ * Canvas design tokens — Tailwind 4 (CSS-first config).
+ *
+ * Token names below are derived from the colors / spacing / radii / type
+ * scale already in use across the editor + dashboard surfaces (PublishModal,
+ * CanvasSettingsModal, ConfirmDialog, etc.). Defining them as `@theme`
+ * variables makes them simultaneously:
+ *
+ *   1. CSS custom properties — usable from per-component `<style>` blocks
+ *      as `var(--color-primary)`, `var(--spacing-4)`, etc. Migration of
+ *      existing styles can flip hex literals to tokens incrementally.
+ *
+ *   2. Tailwind utility classes — `bg-primary`, `text-text-muted`,
+ *      `rounded-md`, `shadow-md`, etc. New code can reach for utilities
+ *      directly without giving up the variable form.
+ *
+ * This file is intentionally additive: nothing is migrated yet. Per
+ * TASK-127's acceptance, existing component CSS continues to render via
+ * its inline hex values; the tokens just make a unified vocabulary
+ * available for the per-component / per-utility migrations under TASK-110.
+ *
+ * Token reference — quick lookup:
+ *
+ *   Colors (semantic, not numeric scales — the audit found ~10 base values
+ *   in use, so these names track usage rather than a 50–950 ramp).
+ *     bg, surface, surface-muted     — page / card / hover backgrounds
+ *     text, text-muted, text-subtle  — primary / secondary / tertiary copy
+ *     border, border-strong          — separator strokes
+ *     primary, primary-hover         — CTA blue (matches existing #2563eb)
+ *     danger, danger-hover           — destructive red (#dc2626)
+ *     success, warning               — status colors
+ *
+ *   Spacing — quarter-rem scale. Mirrors Tailwind's defaults for the
+ *   sizes actually in use across modals + panels.
+ *
+ *   Typography — modular scale from 0.75rem → 1.5rem covering the labels,
+ *   help text, body, and section headings present in the audit.
+ *
+ *   Radii — 4 / 5 / 6 / 8 / 10px-equivalent + a pill stop.
+ *
+ *   Shadows — sm / md / lg surfaces + a deep modal shadow used for the
+ *   <dialog> backdrop layer.
+ */
+
+@import 'tailwindcss';
+
+/*
+ * `@theme static` forces every variable below to be emitted as a CSS
+ * custom property at `:root`, regardless of whether the matching
+ * Tailwind utility (e.g. `bg-primary`, `text-text-muted`) appears in
+ * the template scan. Without `static`, Tailwind 4 tree-shakes unused
+ * tokens — fine for utility-only consumers, but it would break the
+ * `var(--color-...)` migration path documented above (Codex round 1
+ * P2): per-component `<style>` blocks can't be statically analyzed
+ * by Tailwind, so any token they reference would be missing from the
+ * generated stylesheet.
+ */
+@theme static {
+	/* Colors — semantic */
+	--color-bg: #ffffff;
+	--color-surface: #f8fafc;
+	--color-surface-muted: #f3f4f6;
+	--color-text: #111111;
+	--color-text-muted: #4b5563;
+	--color-text-subtle: #6b7280;
+	--color-border: #e5e7eb;
+	--color-border-strong: #d1d5db;
+	--color-primary: #2563eb;
+	--color-primary-hover: #1d4ed8;
+	--color-danger: #dc2626;
+	--color-danger-hover: #b91c1c;
+	--color-success: #16a34a;
+	--color-warning: #f59e0b;
+
+	/* Spacing scale */
+	--spacing-1: 0.25rem;
+	--spacing-2: 0.5rem;
+	--spacing-3: 0.75rem;
+	--spacing-4: 1rem;
+	--spacing-6: 1.5rem;
+	--spacing-8: 2rem;
+	--spacing-12: 3rem;
+
+	/* Typography */
+	--text-xs: 0.75rem;
+	--text-sm: 0.8125rem;
+	--text-base: 0.875rem;
+	--text-md: 1rem;
+	--text-lg: 1.125rem;
+	--text-xl: 1.25rem;
+	--text-2xl: 1.5rem;
+
+	/* Radii */
+	--radius-sm: 0.25rem;
+	--radius-md: 0.3125rem;
+	--radius-lg: 0.5rem;
+	--radius-xl: 0.625rem;
+	--radius-pill: 9999px;
+
+	/* Elevation */
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+	--shadow-md: 0 4px 6px rgba(0, 0, 0, 0.08);
+	--shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+	--shadow-modal: 0 20px 50px rgba(0, 0, 0, 0.25);
+}
