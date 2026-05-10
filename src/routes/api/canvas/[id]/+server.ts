@@ -65,7 +65,11 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 				.from(canvases)
 				.where(and(eq(canvases.slug, slugInput), ne(canvases.id, canvas.id)));
 			if (collision) {
-				const suggestion = await suggestAlternateSlug(db, slugInput, { ignoreId: canvas.id });
+				// Don't pass ignoreId here: a canvas currently owning `foo-2`
+				// renaming to taken `foo` should be suggested `foo-3`, not
+				// its own current slug. (No-op renames are short-circuited
+				// above this branch — `slugInput !== canvas.slug` is true.)
+				const suggestion = await suggestAlternateSlug(db, slugInput);
 				return json(
 					{
 						error: 'slug_taken',
@@ -146,7 +150,11 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 			: canvas;
 	} catch (err) {
 		if (isSlugUniqueViolation(err) && typeof updates.slug === 'string') {
-			const suggestion = await suggestAlternateSlug(db, updates.slug, { ignoreId: canvas.id });
+			// See ignoreId comment above — same rationale: the conflict
+			// branch implies the requested slug differs from the canvas's
+			// own, so a suggestion that matches the canvas's current slug
+			// would be useless.
+			const suggestion = await suggestAlternateSlug(db, updates.slug);
 			return json(
 				{
 					error: 'slug_taken',

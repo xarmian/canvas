@@ -92,6 +92,29 @@ test('PATCH /api/canvas/:id returns 409 with suggestion on slug collision', asyn
 	expect(body.suggestion).toBe(`${existingSlug}-2`);
 });
 
+test('PATCH /api/canvas/:id collision suggestion does not return the canvas own slug', async ({
+	page
+}) => {
+	// Codex round 3 P3: a canvas currently owning `foo-2` renaming to
+	// taken `foo` was being suggested `foo-2` (its own slug) because the
+	// suggestion lookup ignored the current row. Lock the fix in place:
+	// the suggestion must skip past every existing slug *including* the
+	// renaming canvas's own.
+	await signupAndLogin(page);
+	const { name, slug: baseSlug } = uniqueBase('Owns');
+	await page.request.post('/api/canvas', { data: { name } });
+	const second = await (await page.request.post('/api/canvas', { data: { name } })).json();
+	expect(second.slug).toBe(`${baseSlug}-2`);
+
+	const conflict = await page.request.patch(`/api/canvas/${second.id}`, {
+		data: { slug: baseSlug }
+	});
+	expect(conflict.status()).toBe(409);
+	const body = await conflict.json();
+	expect(body.suggestion).toBe(`${baseSlug}-3`);
+	expect(body.suggestion).not.toBe(second.slug);
+});
+
 test('PATCH /api/canvas/:id returns 400 on invalid slug format', async ({ page }) => {
 	await signupAndLogin(page);
 	const { name } = uniqueBase('Validate');
