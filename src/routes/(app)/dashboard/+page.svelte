@@ -220,6 +220,68 @@
 	function toggleTagFilter(tag: string) {
 		activeTag = activeTag === tag ? null : tag;
 	}
+
+	/**
+	 * Build the absolute share URL for a canvas slug. We use the live
+	 * `window.location.origin` rather than a server-injected origin so
+	 * preview deployments and self-hosted instances copy the URL the
+	 * user is actually browsing — pasting `https://staging.host/c/foo`
+	 * into a tweet is correct from staging, and `http://localhost:5173`
+	 * is correct from `pnpm dev`.
+	 */
+	function shareUrlFor(slug: string): string {
+		// SSR safety — these handlers only run in the browser, but the
+		// $derived expressions above can evaluate during hydration. Guard
+		// with a typeof check so a stray render doesn't throw.
+		const origin = typeof window !== 'undefined' ? window.location.origin : '';
+		return `${origin}/c/${slug}`;
+	}
+
+	function imageUrlFor(slug: string): string {
+		return `${shareUrlFor(slug)}/image.png`;
+	}
+
+	/**
+	 * Write `text` to the clipboard and surface success / failure as a
+	 * toast. Uses `navigator.clipboard.writeText` (gated to a
+	 * user-gesture click handler — Safari requires this). Returns true
+	 * on success so callers can keep their UI logic small. */
+	async function copyToClipboard(text: string, successMessage: string): Promise<boolean> {
+		try {
+			if (!navigator.clipboard) {
+				toast.error('Clipboard API unavailable. Copy the URL manually from the editor.');
+				return false;
+			}
+			await navigator.clipboard.writeText(text);
+			toast.success(successMessage);
+			return true;
+		} catch {
+			// User rejected the permission prompt, or the API threw.
+			// Either way the URL didn't make it to the clipboard, so
+			// surface a recovery hint instead of silently no-oping.
+			toast.error('Could not copy to clipboard. Check browser permissions and try again.');
+			return false;
+		}
+	}
+
+	function copyShareUrl(canvas: { slug: string; published: boolean; name: string }) {
+		// Defensive: button is disabled when !published, but a stray
+		// programmatic click (DevTools, screen-reader workaround) still
+		// gets a clear toast instead of a junk URL.
+		if (!canvas.published) {
+			toast.info(`Publish "${canvas.name}" first to copy a share URL.`);
+			return;
+		}
+		void copyToClipboard(shareUrlFor(canvas.slug), `Share URL for "${canvas.name}" copied`);
+	}
+
+	function copyImageUrl(canvas: { slug: string; published: boolean; name: string }) {
+		if (!canvas.published) {
+			toast.info(`Publish "${canvas.name}" first to copy an image URL.`);
+			return;
+		}
+		void copyToClipboard(imageUrlFor(canvas.slug), `Image URL for "${canvas.name}" copied`);
+	}
 </script>
 
 <svelte:head>
@@ -370,6 +432,28 @@
 								</div>
 								<div class="card-actions">
 									<a href="/canvas/{canvas.id}/edit" class="btn btn-edit">Edit</a>
+									<button
+										class="btn btn-copy"
+										data-testid="card-copy-share-url"
+										disabled={!canvas.published}
+										title={canvas.published
+											? 'Copy the share page URL'
+											: 'Publish this canvas to share.'}
+										onclick={() => copyShareUrl(canvas)}
+									>
+										Copy share URL
+									</button>
+									<button
+										class="btn btn-copy"
+										data-testid="card-copy-image-url"
+										disabled={!canvas.published}
+										title={canvas.published
+											? 'Copy the image-only URL'
+											: 'Publish this canvas to share.'}
+										onclick={() => copyImageUrl(canvas)}
+									>
+										Copy image URL
+									</button>
 									<button
 										class="btn btn-secondary-row"
 										data-testid="card-organize"
@@ -581,6 +665,25 @@
 		color: #334155;
 		border: 1px solid #d1d5db;
 		padding: 0.5rem 0.75rem;
+	}
+
+	.btn-copy {
+		background: none;
+		color: #1d4ed8;
+		border: 1px solid #bfdbfe;
+		padding: 0.5rem 0.75rem;
+	}
+
+	.btn-copy:hover:not(:disabled) {
+		background: #eff6ff;
+		border-color: #93c5fd;
+	}
+
+	.btn-copy:disabled {
+		opacity: 0.55;
+		cursor: not-allowed;
+		color: #64748b;
+		border-color: #e2e8f0;
 	}
 
 	.btn-secondary-row:hover {
