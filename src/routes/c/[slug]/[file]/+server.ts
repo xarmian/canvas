@@ -164,14 +164,15 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 		error(404, 'Canvas not found or not published');
 	}
 
-	// Parse URL query parameters. `_v` is reserved for the content-
-	// version hint and is not forwarded to the renderer. `_v` is chosen
-	// over `v` because users frequently bind short single-letter param
-	// names; the underscore prefix is namespace-style and unlikely to
-	// collide with a real render param.
+	// Parse URL query parameters. `_v`, `_dpr`, `_strict` are reserved
+	// underscore-prefixed flags and are not forwarded to the renderer.
+	// Underscore prefix is namespace-style and unlikely to collide with
+	// a user-defined param name (people bind `v`, `dpr`, `strict`
+	// without thinking, but rarely `_v`/`_dpr`/`_strict`).
 	const queryParams: Record<string, string> = {};
 	let requestedVersion: string | null = null;
 	let dprParam: string | null = null;
+	let strictParam: string | null = null;
 	for (const [key, value] of url.searchParams) {
 		if (key === '_v') {
 			requestedVersion = value;
@@ -181,9 +182,21 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 			dprParam = value;
 			continue;
 		}
+		if (key === '_strict') {
+			strictParam = value;
+			continue;
+		}
 		queryParams[key] = value;
 	}
 	const dpr = parseDpr(dprParam);
+	// `?_strict=1` opts into the legacy strict-validation behavior
+	// (returns 400 on missing-required / type-mismatch). The default —
+	// lenient — fills missing required params from defaults / empty
+	// string and emits a `Canvas-Param-Warnings` header. Strict mode
+	// is intended for API integrators wiring up validation logic; the
+	// public render path is owned by social crawlers that drop the card
+	// silently on 400, so the lenient path keeps the preview working.
+	const strict = strictParam === '1' || strictParam === 'true';
 
 	// Validation runs BEFORE cache lookup so a previously-cached URL
 	// can't bypass newly-enforced required/type constraints. (The
@@ -194,10 +207,12 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 		.from(canvasParams)
 		.where(eq(canvasParams.canvasId, canvas.id));
 
-	const validation = validateParams(queryParams, paramDefs);
+	const validation = validateParams(queryParams, paramDefs, { lenient: !strict });
 	if (!validation.ok) {
-		// Return a structured JSON 400 — this surface is consumed by API
-		// integrators, not browsers. error() would emit text/HTML.
+		// Strict mode (or the unrecoverable `ok: false` shape) — return
+		// a structured JSON 400 to API integrators. Lenient validation
+		// always returns `ok: true`, so this branch only runs when the
+		// caller explicitly opted in via `?_strict=1`.
 		return new Response(
 			JSON.stringify({
 				error: 'invalid_param',
@@ -211,6 +226,15 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 		);
 	}
 	Object.assign(queryParams, validation.resolved);
+
+	// Build a header listing param names that fell back to defaults so
+	// the render is observable to anyone debugging "why does my card
+	// look wrong?" without changing the response status. Comma-
+	// separated; only added when there's at least one warning so
+	// well-formed requests don't pay header bytes.
+	const paramWarnings = validation.warnings;
+	const paramWarningsHeader =
+		paramWarnings.length > 0 ? paramWarnings.map((w) => w.field).join(', ') : null;
 
 	// Compute the live font set BEFORE cache lookup. The cache key
 	// includes a fingerprint of the user's current font library so any
@@ -251,15 +275,14 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 	const ifNoneMatch = request.headers.get('if-none-match');
 	if (ifNoneMatch !== null) {
 		if (ifNoneMatchHits(ifNoneMatch, etag)) {
-			return new Response(null, {
-				status: 304,
-				headers: {
-					ETag: etag,
-					'Cache-Control': cacheControl,
-					'Last-Modified': lastModified,
-					Vary: 'Accept'
-				}
-			});
+			const headers: Record<string, string> = {
+				ETag: etag,
+				'Cache-Control': cacheControl,
+				'Last-Modified': lastModified,
+				Vary: 'Accept'
+			};
+			if (paramWarningsHeader) headers['Canvas-Param-Warnings'] = paramWarningsHeader;
+			return new Response(null, { status: 304, headers });
 		}
 		// ETag didn't match — fall through to a full render. Skip the
 		// If-Modified-Since branch entirely per RFC 9110.
@@ -275,16 +298,16 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 
 	const cachedBuf = await renderCache.get(key, formatInfo.format);
 	if (cachedBuf) {
-		return new Response(new Uint8Array(cachedBuf), {
-			headers: {
-				'Content-Type': formatInfo.contentType,
-				'Cache-Control': cacheControl,
-				ETag: etag,
-				'Last-Modified': lastModified,
-				Vary: 'Accept',
-				'X-Cache': 'HIT'
-			}
-		});
+		const headers: Record<string, string> = {
+			'Content-Type': formatInfo.contentType,
+			'Cache-Control': cacheControl,
+			ETag: etag,
+			'Last-Modified': lastModified,
+			Vary: 'Accept',
+			'X-Cache': 'HIT'
+		};
+		if (paramWarningsHeader) headers['Canvas-Param-Warnings'] = paramWarningsHeader;
+		return new Response(new Uint8Array(cachedBuf), { headers });
 	}
 
 	// Cache miss → we're going to do real CPU work. Apply throttle layers
@@ -375,18 +398,18 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 		// eviction internally based on CACHE_MAX_MB.
 		await renderCache.set(key, formatInfo.format, buffer);
 
-		return new Response(new Uint8Array(buffer), {
-			headers: {
-				'Content-Type': formatInfo.contentType,
-				'Cache-Control': cacheControl,
-				ETag: etag,
-				'Last-Modified': lastModified,
-				Vary: 'Accept',
-				'X-Cache': 'MISS',
-				'X-RateLimit-Limit': String(limit.limit),
-				'X-RateLimit-Remaining': String(limit.remaining)
-			}
-		});
+		const headers: Record<string, string> = {
+			'Content-Type': formatInfo.contentType,
+			'Cache-Control': cacheControl,
+			ETag: etag,
+			'Last-Modified': lastModified,
+			Vary: 'Accept',
+			'X-Cache': 'MISS',
+			'X-RateLimit-Limit': String(limit.limit),
+			'X-RateLimit-Remaining': String(limit.remaining)
+		};
+		if (paramWarningsHeader) headers['Canvas-Param-Warnings'] = paramWarningsHeader;
+		return new Response(new Uint8Array(buffer), { headers });
 	} finally {
 		releaseSlot();
 	}
