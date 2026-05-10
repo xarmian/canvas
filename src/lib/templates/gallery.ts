@@ -659,11 +659,14 @@ export const TEMPLATES: TemplateDefinition[] = [
 		// Fallback "generic token" SVG used when a tokenA/B logo URL fails
 		// to load. Embedded as a data URL so the template renders the
 		// fallback feature out of the box without depending on a CDN that
-		// might 404 over time.
+		// might 404 over time. Raw `#` colors here — encodeURIComponent
+		// percent-encodes them once to produce `%23...`. Pre-encoding
+		// would double-encode and the canvas renderer would then see
+		// literal `%23...` strings as fill values.
 		const GENERIC_TOKEN_FALLBACK =
 			'data:image/svg+xml;utf8,' +
 			encodeURIComponent(
-				'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="%2364748b"/><text x="32" y="42" font-size="32" font-family="sans-serif" font-weight="700" text-anchor="middle" fill="%23ffffff">?</text></svg>'
+				'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#64748b"/><text x="32" y="42" font-size="32" font-family="sans-serif" font-weight="700" text-anchor="middle" fill="#ffffff">?</text></svg>'
 			);
 		// LOSS_RED + GAIN_GREEN are the conditional fill targets for the
 		// gain/percent + P/L texts; reused by the range badge so the

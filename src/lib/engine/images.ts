@@ -148,15 +148,23 @@ async function isUrlSafe(url: string): Promise<boolean> {
  * can't bloat process memory.
  */
 function decodeDataImageUrl(url: string): Buffer | null {
-	// Format: data:[<mime>][;base64],<data> — we accept any image/* mime,
-	// base64 or percent-encoded. Reject anything that doesn't decode to
-	// a non-empty buffer.
-	const match = /^data:([^,;]+)?(;base64)?,(.*)$/s.exec(url);
-	if (!match) return null;
-	const [, mime, base64Marker, payload] = match;
+	// RFC 2397: data:[<mediatype>],<data> where <mediatype> can carry an
+	// arbitrary number of `;param=value` segments AND optionally end in
+	// `;base64`. Splitting on the FIRST comma is more tolerant than a
+	// fixed regex — handles `data:image/svg+xml;utf8,...`,
+	// `data:image/png;base64,...`, `data:image/svg+xml;charset=utf-8,...`
+	// and bare `data:,<text>` alike.
+	if (!url.startsWith('data:')) return null;
+	const commaIdx = url.indexOf(',');
+	if (commaIdx === -1) return null;
+	const prefix = url.slice(5, commaIdx); // strip 'data:'
+	const payload = url.slice(commaIdx + 1);
+	const params = prefix.split(';');
+	const mime = params.shift() ?? '';
 	if (mime && !mime.startsWith('image/')) return null;
+	const isBase64 = params.some((p) => p.toLowerCase() === 'base64');
 	try {
-		const buf = base64Marker
+		const buf = isBase64
 			? Buffer.from(payload, 'base64')
 			: Buffer.from(decodeURIComponent(payload), 'utf-8');
 		if (buf.byteLength === 0) return null;
