@@ -3,13 +3,28 @@
 </script>
 
 <svelte:head>
-	<!-- OG Meta Tags -->
+	<!-- OG Meta Tags (TASK-97) -->
 	<title>{data.ogTitle}</title>
 	<meta property="og:title" content={data.ogTitle} />
 	<meta property="og:description" content={data.ogDescription} />
 	<meta property="og:image" content={data.imageUrl} />
 	<meta property="og:image:width" content={String(data.canvas.width)} />
 	<meta property="og:image:height" content={String(data.canvas.height)} />
+	<!-- og:image:type: required by some crawlers (LinkedIn, older Slack)
+	     to skip the binary-sniff step. The share page always emits a
+	     PNG image URL — JPEG/WebP/AVIF are alternate render formats
+	     consumers can request explicitly via the file extension, but
+	     the social-card path is hard-coded to PNG. -->
+	<meta property="og:image:type" content="image/png" />
+	{#if data.imageUrl.startsWith('https://')}
+		<!-- og:image:secure_url is the same value when the public app
+		     URL is https. Crawlers prefer this on https pages and
+		     omitting it can cause inline-card downgrades. We emit it
+		     conditionally so localhost dev (http) doesn't put a bogus
+		     https URL in the head. -->
+		<meta property="og:image:secure_url" content={data.imageUrl} />
+	{/if}
+	<meta property="og:url" content={data.canonicalShareUrl} />
 	<meta property="og:type" content="website" />
 
 	<!-- Twitter Card -->
