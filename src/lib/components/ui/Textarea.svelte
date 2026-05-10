@@ -29,8 +29,15 @@
 		rows = 3,
 		class: className,
 		'aria-describedby': consumerAriaDescribedBy,
+		'aria-invalid': consumerAriaInvalid,
 		...rest
 	}: Props = $props();
+
+	// Mirror Input.svelte: honor the visual `invalid` prop but fall back
+	// to the consumer's native `aria-invalid` so passing a string-valued
+	// ARIA state (e.g. `"grammar"`) isn't clobbered by the explicit
+	// attribute below the spread (Codex round 3 P2).
+	const ariaInvalid = $derived(invalid ? 'true' : (consumerAriaInvalid ?? undefined));
 
 	// Stable SSR-safe id used as a fallback when the consumer didn't pass
 	// `id`. Mirrors Input.svelte (Codex round 1 P2).
@@ -51,7 +58,7 @@
 	{id}
 	{rows}
 	bind:value
-	aria-invalid={invalid || undefined}
+	aria-invalid={ariaInvalid}
 	aria-describedby={ariaDescribedBy}
 	class={['textarea', `size-${size}`, invalid && 'is-invalid', className]}
 ></textarea>

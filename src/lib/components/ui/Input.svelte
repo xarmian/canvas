@@ -45,8 +45,16 @@
 		id,
 		class: className,
 		'aria-describedby': consumerAriaDescribedBy,
+		'aria-invalid': consumerAriaInvalid,
 		...rest
 	}: Props = $props();
+
+	// Honor the visual `invalid` prop, but fall back to the consumer's
+	// native `aria-invalid` if they passed one (e.g. `aria-invalid="grammar"`
+	// or a string-based ARIA value the visual prop can't express). Without
+	// the destructure, the explicit attribute below would clobber the
+	// spread (Codex round 3 P2).
+	const ariaInvalid = $derived(invalid ? 'true' : (consumerAriaInvalid ?? undefined));
 
 	// Stable SSR-safe id used as a fallback when the consumer didn't pass
 	// `id`. Without this, `<Input invalid errorMessage="Required" />` would
@@ -71,7 +79,7 @@
 	{id}
 	{type}
 	bind:value
-	aria-invalid={invalid || undefined}
+	aria-invalid={ariaInvalid}
 	aria-describedby={ariaDescribedBy}
 	class={['input', `type-${type}`, `size-${size}`, invalid && 'is-invalid', className]}
 />
