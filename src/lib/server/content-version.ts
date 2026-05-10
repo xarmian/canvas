@@ -68,6 +68,19 @@ export function fontSetVersionFromDescriptors(descriptors: Array<{ id: string }>
 		.join('|');
 }
 
+/** Build the asset-set fingerprint from a list of `(id, storageKey)`
+ *  entries. Folded into the render cache key so deleting / replacing
+ *  an asset that a published canvas references invalidates the
+ *  canvas's cached renders without requiring a canvas edit
+ *  (TASK-117). Empty string when the canvas has no `asset://` refs
+ *  OR all referenced ids have been deleted. */
+export function assetSetVersionFromEntries(
+	entries: Array<{ id: string; storageKey: string }>
+): string {
+	if (entries.length === 0) return '';
+	return entries.map((e) => `${e.id}:${e.storageKey}`).join('|');
+}
+
 /** Build the user font-set fingerprint that feeds the content-version
  *  token. Sorted asset IDs joined with `|`; empty string when the user
  *  has zero fonts registered. */

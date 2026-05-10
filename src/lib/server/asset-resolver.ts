@@ -53,6 +53,64 @@ export const ASSET_URL_PROTOCOL = 'asset://';
  * canonical form (any version, any variant). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Walk a templateJson and return the set of `asset://` UUIDs it
+ *  references in `src` / `fallbackSrc` / `iconImage` fields. Public
+ *  helper used both by the resolver (to query asset rows) and by the
+ *  render cache-key path (to include an asset-fingerprint that
+ *  invalidates when a referenced asset is deleted or its storage
+ *  key changes — TASK-117). Sorted return for stable hashing
+ *  downstream. */
+export function collectAssetReferences(
+	templateJson: FabricCanvasJson | null | undefined
+): string[] {
+	const objects: AssetReferencingLayer[] = templateJson?.objects ?? [];
+	if (objects.length === 0) return [];
+	const ids = new Set<string>();
+	for (const obj of objects) {
+		const srcId = parseAssetId(obj.src);
+		if (srcId) ids.add(srcId);
+		const fallbackId = parseAssetId(obj.fallbackSrc);
+		if (fallbackId) ids.add(fallbackId);
+		const iconId = parseAssetId(obj.iconImage);
+		if (iconId) ids.add(iconId);
+	}
+	return [...ids].sort();
+}
+
+/** Per-asset descriptor folded into the render cache key. `id` plus
+ *  `storageKey` makes the fingerprint sensitive to "asset row mutated"
+ *  (rename / replace creates a new storage_key) AND "asset deleted"
+ *  (id drops from the result). */
+export interface AssetFingerprintEntry {
+	id: string;
+	storageKey: string;
+}
+
+/** Build an asset-set fingerprint for a canvas: query the `assets`
+ *  rows referenced by `assetIds` (owner-scoped) and return their
+ *  current ids + storage keys, sorted. Used by the render cache key
+ *  so deleting / replacing a referenced asset invalidates cached
+ *  renders even when the canvas's templateJson hasn't been edited
+ *  (TASK-117 acceptance — "no edit to the canvas required").
+ *
+ *  An empty list means "no asset:// refs OR no referenced assets
+ *  still exist for this owner". Both cases are valid fingerprint
+ *  states; the empty-list case yields a stable empty fingerprint
+ *  string downstream. */
+export async function loadAssetFingerprint(
+	assetIds: string[],
+	ownerId: string
+): Promise<AssetFingerprintEntry[]> {
+	if (assetIds.length === 0) return [];
+	const rows = await db
+		.select({ id: assets.id, storageKey: assets.storageKey })
+		.from(assets)
+		.where(and(inArray(assets.id, assetIds), eq(assets.userId, ownerId)));
+	return rows
+		.map((r) => ({ id: r.id, storageKey: r.storageKey }))
+		.sort((a, b) => a.id.localeCompare(b.id));
+}
+
 /** Cap on simultaneous storage reads when preloading owned-asset
  * buffers. Mirrors the renderer's image-fetch ceiling so a canvas with
  * many unique `asset://` refs can't fan out to a few-dozen-deep parallel
