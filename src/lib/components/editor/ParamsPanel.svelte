@@ -197,6 +197,12 @@
 			schemaLoaded = false;
 			schemaRows = [];
 			schemaCanvasId = null;
+			// Also clear the in-flight flag so a navigation that closes
+			// the modal mid-fetch doesn't strand `schemaPending=true` —
+			// otherwise the next open would skip the load (the effect's
+			// guard checks !schemaPending) and the panel would render
+			// type/required cells permanently disabled. Codex round 2 P2.
+			schemaPending = false;
 		}
 	});
 
@@ -225,9 +231,14 @@
 			// required cells in their default-disabled state. See above
 			// re. retry mechanics.
 		} finally {
+			// schemaPending is purely a debounce — clear it unconditionally
+			// when this request settles so a stale (canvas-switched)
+			// completion doesn't leave a future open hanging. The
+			// schemaLoaded gate stays canvasId-matched so we never mark
+			// "loaded" against the wrong canvas's data.
+			schemaPending = false;
 			if (requestCanvasId === canvasId) {
 				schemaLoaded = true;
-				schemaPending = false;
 			}
 		}
 	}
