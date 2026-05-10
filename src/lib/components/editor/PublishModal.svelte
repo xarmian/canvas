@@ -402,23 +402,6 @@
 		// 409 error/suggestion before the user could interact with
 		// it (Codex round 3 P3 — Tab from input to suggestion button).
 		if (candidate === slugLastFailed) return;
-		// Optimistic concurrency: every slug rename ships with an
-		// `If-Match` header. The version is captured by `loadSharing`
-		// on modal open, but if that GET hasn't completed yet (or
-		// failed transiently — Codex round 8 P2), we lazy-fetch
-		// before submitting so a fast typist's first commit still
-		// gets concurrency protection. Failure to obtain a version
-		// surfaces inline; the user can edit + retry.
-		let ifMatchVersion = canvasVersion;
-		if (!ifMatchVersion) {
-			ifMatchVersion = await fetchCanvasVersion(canvasId, new AbortController());
-			if (ifMatchVersion === null) {
-				slugServerError = "Couldn't read canvas version. Please try again.";
-				slugLastFailed = candidate;
-				return;
-			}
-			canvasVersion = ifMatchVersion;
-		}
 		// Snapshot canvasId + generation at request start. The editor
 		// route reuses this component across canvas-id navigations, and
 		// the modal can close mid-flight — both produce stale completions
@@ -433,6 +416,12 @@
 		// could share a generation with the still-pending earlier
 		// request — request A's late success would call onSlugChange
 		// and bump gen, dropping request B. Codex round 4 P2.
+		//
+		// IMPORTANT (Codex round 9 P1): the generation/controller setup
+		// happens BEFORE any lazy fetch. Otherwise a slow lazy-fetch
+		// could be preempted by a newer commit that completes its
+		// PATCH first, then resume after the await and overwrite the
+		// canonical state with the stale candidate.
 		slugRenameGen++;
 		// Abort any in-flight rename so the server doesn't process two
 		// concurrent PATCHes for the same canvas in arrival order
@@ -449,7 +438,31 @@
 		slugBusy = true;
 		slugServerError = null;
 		slugSuggestion = null;
+
+		// Optimistic concurrency: every slug rename ships with an
+		// `If-Match` header. The version is captured by `loadSharing`
+		// on modal open, but if that GET hasn't completed yet (or
+		// failed transiently — Codex round 8 P2), we lazy-fetch
+		// before submitting so a fast typist's first commit still
+		// gets concurrency protection. Failure to obtain a version
+		// surfaces inline; the user can edit + retry.
+		let ifMatchVersion = canvasVersion;
 		try {
+			if (!ifMatchVersion) {
+				ifMatchVersion = await fetchCanvasVersion(requestCanvasId, controller);
+				// `isLive()` after the await: a newer commit may have
+				// invalidated us, or the canvas may have changed.
+				if (!isLive()) return;
+				if (ifMatchVersion === null) {
+					// Don't set slugLastFailed for transient version-fetch
+					// failures — the user should be able to immediately
+					// retry the same candidate without editing first
+					// (Codex round 9 P2).
+					slugServerError = "Couldn't read canvas version. Please try again.";
+					return;
+				}
+				canvasVersion = ifMatchVersion;
+			}
 			let res = await sendSlugPatch(requestCanvasId, candidate, ifMatchVersion, controller);
 			// Optimistic-concurrency retry (TASK-98 / Codex round 6):
 			// on 412 the server's seen a write since our last read.
@@ -461,8 +474,11 @@
 				const refreshed = await fetchCanvasVersion(requestCanvasId, controller);
 				if (!isLive()) return;
 				if (refreshed === null) {
+					// Transient — same retry-on-edit policy applies
+					// (Codex round 9 P2): don't mark the candidate
+					// as failed, the user should be able to retry
+					// the same value.
 					slugServerError = "Couldn't refresh canvas state. Please try again.";
-					slugLastFailed = candidate;
 				} else {
 					canvasVersion = refreshed;
 					res = await sendSlugPatch(requestCanvasId, candidate, refreshed, controller);
@@ -509,11 +525,13 @@
 			// AbortError is the expected outcome when a newer commit
 			// supersedes this one — silently drop. Real network errors
 			// surface via slugServerError, but only if we're still live
-			// (otherwise the newer commit owns the UI).
+			// (otherwise the newer commit owns the UI). Network errors
+			// don't mark slugLastFailed — they're transient, so the
+			// user should be able to retry the same candidate without
+			// editing first (Codex round 9 P2).
 			if ((err as { name?: string })?.name === 'AbortError') return;
 			if (!isLive()) return;
 			slugServerError = "Couldn't reach the server. Please try again.";
-			slugLastFailed = candidate;
 		} finally {
 			// Always release the busy flag if THIS request's generation
 			// is still live — even if we returned early via !isLive().

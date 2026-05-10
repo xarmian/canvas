@@ -315,6 +315,53 @@ test('slug rename: closing modal with invalid draft resets state on reopen (Code
 	await expect(page.getByTestId('slug-server-error')).toBeHidden();
 });
 
+test('slug rename: lazy version-fetch failure is retry-able with the same value (Codex round 9 P2)', async ({
+	page
+}) => {
+	await signupAndLogin(page);
+	const canvas = await createCanvas(page, { name: 'Lazy retry', preset: 'OG Image' });
+	await gotoEditor(page, canvas.id);
+	await addTextLayer(page, 'placeholder');
+
+	// Fail every GET so canvasVersion never loads. The first commit
+	// will see "Couldn't read canvas version. Please try again."
+	// We then unblock GETs and assert the user can retry the SAME
+	// value — without the round-9 P2 fix, the slug is marked as
+	// "lastFailed" and blur-commit short-circuits on subsequent
+	// attempts even though the value never made it to the server.
+	let blockGets = true;
+	await page.route(`**/api/canvas/${canvas.id}`, async (route) => {
+		if (route.request().method() === 'GET' && blockGets) {
+			await route.fulfill({ status: 503, body: '' });
+			return;
+		}
+		await route.continue();
+	});
+	await publish(page);
+
+	const slugInput = page.getByTestId('slug-input');
+	await expect(slugInput).toBeEnabled();
+	const newSlug = `lazy-retry-${Date.now()}`;
+	await slugInput.fill(newSlug);
+	await slugInput.press('Enter');
+
+	// First attempt surfaces the error.
+	await expect(page.getByTestId('slug-server-error')).toBeVisible();
+
+	// Unblock GETs and retry with the same value (no edit). With the
+	// round-9 P2 fix, the lastFailed flag was NOT set, so commit
+	// runs again. The lazy-fetch now succeeds, the rename lands.
+	blockGets = false;
+	await slugInput.press('Enter');
+
+	await expect(async () => {
+		const r = await page.request.get(`/api/canvas/${canvas.id}`);
+		const body = (await r.json()) as { slug: string };
+		expect(body.slug).toBe(newSlug);
+	}).toPass({ timeout: 5_000 });
+	await page.unroute(`**/api/canvas/${canvas.id}`);
+});
+
 test('slug rename: lazy-fetches version when canvasVersion not yet captured (Codex round 8 P2)', async ({
 	page
 }) => {
