@@ -119,15 +119,20 @@
 			// Reset slug-rename UI state on close. Do NOT bump
 			// slugRenameGen here — the parent still needs onSlugChange
 			// to fire so the editor's local canvasSlug mirror gets the
-			// new value. (Codex round 3 P2: close-bumping the generation
-			// dropped the server-committed rename on the floor.) The
+			// new value if the user submitted just before closing.
+			// (Codex round 3 P2: close-bumping the generation dropped
+			// the server-committed rename on the floor.) The
 			// generation-bump is reserved for prop-driven changes
-			// (canvas swap), where dropping in-flight is correct.
+			// (canvas swap) and new-commit-starts.
 			slugDraft = slug;
 			slugServerError = null;
 			slugSuggestion = null;
 			slugBusy = false;
 			slugLastFailed = null;
+			// Don't abort on close — the user may have submitted right
+			// before closing and expects the rename to land. The
+			// successful completion's `isLive()` check will still call
+			// `onSlugChange` since close doesn't bump the generation.
 		}
 	});
 
@@ -326,6 +331,12 @@
 	// before the user can interact with them. Cleared on edit. Codex
 	// round 3 P3.
 	let slugLastFailed = $state<string | null>(null);
+	// AbortController for the currently-in-flight slug PATCH. A newer
+	// commit aborts the older one so the server doesn't process them
+	// out of order (Codex round 5 P2 — purely client-side gen-checking
+	// can drop stale completions but can't prevent the server from
+	// committing two writes in the wrong order).
+	let slugInFlightController: AbortController | null = null;
 
 	$effect(() => {
 		// Reset the draft whenever the canonical slug changes (parent
@@ -387,6 +398,15 @@
 		// request — request A's late success would call onSlugChange
 		// and bump gen, dropping request B. Codex round 4 P2.
 		slugRenameGen++;
+		// Abort any in-flight rename so the server doesn't process two
+		// concurrent PATCHes for the same canvas in arrival order
+		// (which can be different from submission order). The aborted
+		// request's catch branch checks isLive() and bails — server
+		// already won't commit since the connection's gone.
+		// Codex round 5 P2.
+		slugInFlightController?.abort();
+		const controller = new AbortController();
+		slugInFlightController = controller;
 		const requestCanvasId = canvasId;
 		const requestGen = slugRenameGen;
 		const isLive = () => requestCanvasId === canvasId && requestGen === slugRenameGen;
@@ -397,19 +417,19 @@
 			const res = await fetch(`/api/canvas/${requestCanvasId}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ slug: candidate })
+				body: JSON.stringify({ slug: candidate }),
+				signal: controller.signal
 			});
 			if (!isLive()) return;
 			if (res.ok) {
 				const data = (await res.json()) as { slug: string };
-				// onSlugChange should fire even if the user closed the
-				// modal mid-flight — the server has committed the
-				// rename and the editor's local mirror needs the new
-				// value (Codex round 3 P2). Skip only on canvasId
-				// mismatch (different canvas now visible).
-				if (requestCanvasId !== canvasId) return;
-				onSlugChange?.(data.slug);
+				// onSlugChange should fire only if THIS request is still
+				// the live one — same canvas AND same generation. A
+				// newer commit-start would have bumped the generation,
+				// so calling onSlugChange here would clobber the newer
+				// rename's value. Codex round 5 P3.
 				if (!isLive()) return;
+				onSlugChange?.(data.slug);
 				slugDraft = data.slug;
 				slugLastFailed = null;
 				toast.success('Slug renamed');
@@ -429,9 +449,15 @@
 				slugServerError = `Couldn't rename slug (${res.status}).`;
 				slugLastFailed = candidate;
 			}
-		} catch {
+		} catch (err) {
+			// AbortError is the expected outcome when a newer commit
+			// supersedes this one — silently drop. Real network errors
+			// surface via slugServerError, but only if we're still live
+			// (otherwise the newer commit owns the UI).
+			if ((err as { name?: string })?.name === 'AbortError') return;
 			if (!isLive()) return;
 			slugServerError = "Couldn't reach the server. Please try again.";
+			slugLastFailed = candidate;
 		} finally {
 			// Always release the busy flag if THIS request's generation
 			// is still live — even if we returned early via !isLive().
@@ -441,6 +467,7 @@
 			// and its commitSlugRename guard short-circuits on busy).
 			if (isLive()) {
 				slugBusy = false;
+				slugInFlightController = null;
 			}
 		}
 	}
