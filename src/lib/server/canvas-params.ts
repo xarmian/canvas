@@ -150,11 +150,32 @@ export async function applyParamUpdates(
 	}
 }
 
-/** Validation outcome for a render request. Either every required param
- * is present (or has a default) and every typed value parses, or we
- * surface the first failure with a structured reason. */
+/** A single per-field issue surfaced by a lenient validation pass.
+ *  Returned in the `warnings` array on a successful lenient resolution
+ *  so callers can log / surface them via the `Canvas-Param-Warnings`
+ *  response header (TASK-94). */
+export interface ParamWarning {
+	field: string;
+	reason: string;
+}
+
+/** Validation outcome for a render request.
+ *
+ *  Strict mode (default in API integrator paths via `?_strict=1`): either
+ *  every required param is present (or has a default) and every typed
+ *  value parses, or we surface the first failure as `ok: false` so the
+ *  route returns a structured 400.
+ *
+ *  Lenient mode (default for public render — TASK-94): always `ok: true`.
+ *  Missing required params and type-mismatched values are filled with
+ *  the published default (or empty string when no default), and each
+ *  swap is recorded in `warnings` so the route can emit a
+ *  `Canvas-Param-Warnings` header. This way social crawlers (Twitter /
+ *  Bluesky / Telegram / Discord) — which silently drop cards on 400 —
+ *  still see a card; the user notices the missing param via the
+ *  response header / a soft warning on the landing page. */
 export type ParamValidation =
-	| { ok: true; resolved: Record<string, string> }
+	| { ok: true; resolved: Record<string, string>; warnings: ParamWarning[] }
 	| { ok: false; field: string; reason: string };
 
 /** Validate URL params against a list of canvas_params rows. Returns
@@ -167,11 +188,22 @@ export interface ParamRow {
 	required: boolean;
 }
 
+export interface ValidateParamsOptions {
+	/** When true, never returns `ok: false` for missing-required or
+	 *  type-mismatch — instead, fall back to the default (or empty
+	 *  string) and record the issue in `warnings`. Default false (the
+	 *  legacy strict behavior) so callers must opt in. */
+	lenient?: boolean;
+}
+
 export function validateParams(
 	queryParams: Record<string, string>,
-	defs: ParamRow[]
+	defs: ParamRow[],
+	opts: ValidateParamsOptions = {}
 ): ParamValidation {
+	const lenient = opts.lenient === true;
 	const resolved: Record<string, string> = { ...queryParams };
+	const warnings: ParamWarning[] = [];
 	for (const def of defs) {
 		const present = Object.hasOwn(queryParams, def.name);
 		// Empty-string default counts as "no default" — the editor's bind
@@ -184,13 +216,28 @@ export function validateParams(
 		if (!present) {
 			if (hasDefault) {
 				resolved[def.name] = def.defaultValue as string;
+				// Required-but-defaulted still emits a lenient warning:
+				// the creator marked it required because they want user
+				// input, and a silent default fallback would hide that
+				// intent from anyone debugging "why does my card look
+				// generic?". The fallback render still proceeds.
+				if (def.required && lenient) {
+					warnings.push({ field: def.name, reason: 'missing required parameter' });
+				}
 				// Fall through to the type check below — a non-numeric
 				// default on a type=number param should fail just as
 				// loudly as a non-numeric URL value would.
-			} else {
-				if (def.required) {
+			} else if (def.required) {
+				if (!lenient) {
 					return { ok: false, field: def.name, reason: 'missing required parameter' };
 				}
+				// Lenient: surface the missing param and fill with empty
+				// string so the renderer treats this exactly like an
+				// unbound layer / placeholder rather than 400ing.
+				resolved[def.name] = '';
+				warnings.push({ field: def.name, reason: 'missing required parameter' });
+				continue;
+			} else {
 				continue;
 			}
 		}
@@ -206,11 +253,24 @@ export function validateParams(
 			const trimmed = value.trim();
 			const n = Number(trimmed);
 			if (trimmed === '' || !Number.isFinite(n)) {
-				return { ok: false, field: def.name, reason: `expected a number, got "${value}"` };
+				const reason = `expected a number, got "${value}"`;
+				if (!lenient) {
+					return { ok: false, field: def.name, reason };
+				}
+				// Lenient: prefer a sane default over the bad value. The
+				// default is type-checked at PATCH time (above), so it's
+				// safe to swap in here without re-validating.
+				if (hasDefault) {
+					resolved[def.name] = def.defaultValue as string;
+				} else {
+					resolved[def.name] = '';
+				}
+				warnings.push({ field: def.name, reason });
+				continue;
 			}
 		}
 		// 'text' / 'url' / 'date' / 'boolean' — pass-through for now;
 		// stricter validation lands in a later iteration.
 	}
-	return { ok: true, resolved };
+	return { ok: true, resolved, warnings };
 }
