@@ -12,6 +12,7 @@
  */
 
 import type { ConditionalOp, ConditionalRule, FabricObject } from './types.js';
+import { coerceBoolean } from './coerce.js';
 
 /** Compare two strings under `op`. < / <= / > / >= attempt numeric
  * comparison first; if either side isn't a finite number, fall back to
@@ -113,6 +114,16 @@ function applyOverride(obj: FabricObject, rule: ConditionalRule): void {
 		// or hex input; the renderer accepts any value Skia/Canvas2D
 		// understands as a fillStyle.
 		obj.fill = value;
+		return;
+	}
+	if (property === 'visible') {
+		// Reuse the same lenient string→bool semantics as URL-param
+		// bindings (`coerceBoolean`) so the rule's `then.value` accepts
+		// 'true'/'1'/'yes'/'on' and the negative variants. An
+		// unrecognized value leaves `visible` untouched — better to skip
+		// the override than to flip the layer state on a typo.
+		const bool = coerceBoolean(value);
+		if (bool !== undefined) obj.visible = bool;
 		return;
 	}
 }

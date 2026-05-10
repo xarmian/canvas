@@ -63,7 +63,7 @@
 
 	// --- Conditional style rules (TASK-50) ---
 	type ConditionalOp = '==' | '!=' | '<' | '<=' | '>' | '>=' | 'contains';
-	type ConditionalProperty = 'fill' | 'opacity';
+	type ConditionalProperty = 'fill' | 'opacity' | 'visible';
 	interface ConditionalRule {
 		when: { param: string; op: ConditionalOp; value: string };
 		then: { property: ConditionalProperty; value: string };
@@ -89,6 +89,16 @@
 		setRules(conditionalStyles.filter((_, i) => i !== index));
 	}
 
+	/** Default `then.value` for each conditional target property. Used when the
+	 *  user switches the target property so the input doesn't carry stale data
+	 *  (e.g. `'#dc2626'` left over from a fill rule when switching to opacity).
+	 */
+	const conditionalPropertyDefaults: Record<ConditionalProperty, string> = {
+		fill: '#dc2626',
+		opacity: '0.5',
+		visible: 'false'
+	};
+
 	function updateRule<K extends 'when' | 'then'>(
 		index: number,
 		section: K,
@@ -97,6 +107,25 @@
 	) {
 		const next = conditionalStyles.map((r, i) => {
 			if (i !== index) return r;
+			// When the user changes the `then.property` dropdown, the existing
+			// `then.value` is almost certainly nonsensical for the new target
+			// (a hex color isn't a valid opacity, etc.). Reset to a sensible
+			// default for the new property so the corresponding input renders
+			// with a valid initial value.
+			if (
+				section === 'then' &&
+				field === 'property' &&
+				(value === 'fill' || value === 'opacity' || value === 'visible')
+			) {
+				const nextProperty = value as ConditionalProperty;
+				return {
+					...r,
+					then: {
+						property: nextProperty,
+						value: conditionalPropertyDefaults[nextProperty]
+					}
+				} as ConditionalRule;
+			}
 			return {
 				...r,
 				[section]: { ...r[section], [field]: value }
@@ -498,8 +527,8 @@
 
 				{#if conditionalsExpanded}
 					<p class="bindings-intro">
-						Override <code>fill</code> or <code>opacity</code> when a URL parameter matches a condition.
-						Use this for red-on-loss / green-on-gain cards.
+						Override <code>fill</code>, <code>opacity</code>, or <code>visible</code> when a URL parameter
+						matches a condition. Use this for red-on-loss / green-on-gain cards.
 					</p>
 
 					{#if conditionalStyles.length === 0}
@@ -551,6 +580,7 @@
 										>
 											<option value="fill">fill</option>
 											<option value="opacity">opacity</option>
+											<option value="visible">visible</option>
 										</select>
 										<span class="conditional-arrow">to</span>
 										{#if rule.then.property === 'fill'}
@@ -561,7 +591,7 @@
 												oninput={(e) => updateRule(i, 'then', 'value', e.currentTarget.value)}
 												aria-label="Rule {i + 1} fill color"
 											/>
-										{:else}
+										{:else if rule.then.property === 'opacity'}
 											<input
 												type="number"
 												class="field-input conditional-then-num"
@@ -572,6 +602,16 @@
 												oninput={(e) => updateRule(i, 'then', 'value', e.currentTarget.value)}
 												aria-label="Rule {i + 1} opacity 0..1"
 											/>
+										{:else if rule.then.property === 'visible'}
+											<select
+												class="field-select"
+												value={rule.then.value || 'false'}
+												onchange={(e) => updateRule(i, 'then', 'value', e.currentTarget.value)}
+												aria-label="Rule {i + 1} visibility"
+											>
+												<option value="false">hidden</option>
+												<option value="true">visible</option>
+											</select>
 										{/if}
 										<button
 											type="button"
