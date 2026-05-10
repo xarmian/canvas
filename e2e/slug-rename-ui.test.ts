@@ -136,6 +136,96 @@ test('slug rename: Enter-submitted collision lets user click suggestion without 
 	expect(body.slug).toBe(`${taken}-2`);
 });
 
+test('slug rename: Tab from input to suggestion button preserves the suggestion (Codex round 3 P3)', async ({
+	page
+}) => {
+	const request = page.request;
+	await signupAndLogin(page);
+
+	const taken = `tab-${Date.now()}`;
+	await page.request.post('/api/canvas', { data: { name: taken } });
+
+	const canvas = await createCanvas(page, { name: 'Tab Suggest', preset: 'OG Image' });
+	await gotoEditor(page, canvas.id);
+	await addTextLayer(page, 'placeholder');
+	await publish(page);
+
+	const slugInput = page.getByTestId('slug-input');
+	await slugInput.focus();
+	await slugInput.fill(taken);
+	await slugInput.press('Enter');
+
+	const apply = page.getByTestId('slug-suggestion-apply');
+	await expect(apply).toBeVisible();
+
+	// Pressing Tab moves focus off the input. Without the lastFailed
+	// guard, blur fires commit on the still-colliding draft and clears
+	// the suggestion before Tab focus lands on the button.
+	await slugInput.press('Tab');
+	await expect(apply).toBeVisible();
+
+	// The button is now focusable; activating with Enter applies the
+	// suggestion (the click handler is fine via keyboard too because
+	// onmousedown isn't triggered, and the input no longer has focus
+	// to blur-clear the suggestion).
+	await apply.click();
+	await expect(async () => {
+		expect(await page.locator('#publish-share-url').inputValue()).toContain(`/c/${taken}-2`);
+	}).toPass({ timeout: 5_000 });
+	const r = await request.get(`/api/canvas/${canvas.id}`);
+	expect(((await r.json()) as { slug: string }).slug).toBe(`${taken}-2`);
+});
+
+test('slug rename: closing modal mid-flight still updates editor slug (Codex round 3 P2)', async ({
+	page
+}) => {
+	const request = page.request;
+	await signupAndLogin(page);
+	const canvas = await createCanvas(page, { name: 'Mid-flight close', preset: 'OG Image' });
+	await gotoEditor(page, canvas.id);
+	await addTextLayer(page, 'placeholder');
+	await publish(page);
+
+	const newSlug = `midflight-${Date.now()}`;
+	const slugInput = page.getByTestId('slug-input');
+	// Throttle the PATCH on the network layer so we can close the
+	// modal while it's in flight. Playwright's route handler delays
+	// the response by 1.5s — plenty of time to press Escape.
+	await page.route(`**/api/canvas/${canvas.id}`, async (route) => {
+		if (route.request().method() === 'PATCH') {
+			await new Promise((r) => setTimeout(r, 1500));
+		}
+		await route.continue();
+	});
+
+	await slugInput.fill(newSlug);
+	await slugInput.press('Enter');
+	// Close the modal immediately — the PATCH is still in flight.
+	await page.keyboard.press('Escape');
+	await expect(page.getByTestId('sharing-section')).toBeHidden();
+
+	// Wait for the server to confirm the rename. Without the round-3
+	// P2 fix, the modal's close-bumping the slug-rename generation
+	// would have dropped onSlugChange — the editor's local mirror
+	// would still show the old slug even though the server stored
+	// the new one.
+	await expect(async () => {
+		const r = await request.get(`/api/canvas/${canvas.id}`);
+		const body = (await r.json()) as { slug: string };
+		expect(body.slug).toBe(newSlug);
+	}).toPass({ timeout: 5_000 });
+
+	// Reopen the modal — its share/image-URL inputs reflect the new
+	// slug because the editor's `canvasSlug` mirror was updated by
+	// the late onSlugChange.
+	await page.getByTestId('toolbar-publish').click();
+	await expect(page.getByTestId('sharing-section')).toBeVisible();
+	await expect(page.locator('#publish-share-url')).toHaveValue(
+		new RegExp(`/c/${newSlug}$`)
+	);
+	await page.unroute(`**/api/canvas/${canvas.id}`);
+});
+
 test('slug rename: closing modal with invalid draft resets state on reopen (Codex round 1 P3)', async ({
 	page
 }) => {

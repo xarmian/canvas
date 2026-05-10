@@ -116,16 +116,18 @@
 			sharingPending = false;
 			sharingGen++;
 			sharing = { ogTitle: '', ogDescription: '', redirectUrl: '' };
-			// Reset slug-rename state on close so reopening for the same
-			// canvas doesn't show a stale 409 error or an invalid draft
-			// the user typed and then dismissed. Bump the generation
-			// counter so any in-flight rename's completion writes are
-			// dropped (Codex round 1 P3, Codex round 2 P2).
+			// Reset slug-rename UI state on close. Do NOT bump
+			// slugRenameGen here — the parent still needs onSlugChange
+			// to fire so the editor's local canvasSlug mirror gets the
+			// new value. (Codex round 3 P2: close-bumping the generation
+			// dropped the server-committed rename on the floor.) The
+			// generation-bump is reserved for prop-driven changes
+			// (canvas swap), where dropping in-flight is correct.
 			slugDraft = slug;
 			slugServerError = null;
 			slugSuggestion = null;
 			slugBusy = false;
-			slugRenameGen++;
+			slugLastFailed = null;
 		}
 	});
 
@@ -318,6 +320,12 @@
 	// input on B or repopulate an error after the modal was closed.
 	// Codex round 2 P2.
 	let slugRenameGen = 0;
+	// Records the last slug value the server rejected (409 collision or
+	// 400 validation), so a subsequent blur-driven commit with the same
+	// value is a no-op rather than clearing the visible error/suggestion
+	// before the user can interact with them. Cleared on edit. Codex
+	// round 3 P3.
+	let slugLastFailed = $state<string | null>(null);
 
 	$effect(() => {
 		// Reset the draft whenever the canonical slug changes (parent
@@ -329,6 +337,7 @@
 		slugSuggestion = null;
 		slugServerError = null;
 		slugBusy = false;
+		slugLastFailed = null;
 		slugRenameGen++;
 	});
 
@@ -358,6 +367,11 @@
 		if (slugBusy) return;
 		if (!slugDirty) return;
 		if (slugFormatError) return; // local validation already shown
+		// Don't re-submit the slug we just got rejected: a blur-driven
+		// commit on an unchanged candidate would clear the visible
+		// 409 error/suggestion before the user could interact with
+		// it (Codex round 3 P3 — Tab from input to suggestion button).
+		if (candidate === slugLastFailed) return;
 		// Snapshot canvasId + generation at request start. The editor
 		// route reuses this component across canvas-id navigations, and
 		// the modal can close mid-flight — both produce stale completions
@@ -380,22 +394,32 @@
 			if (!isLive()) return;
 			if (res.ok) {
 				const data = (await res.json()) as { slug: string };
-				if (!isLive()) return;
+				// onSlugChange should fire even if the user closed the
+				// modal mid-flight — the server has committed the
+				// rename and the editor's local mirror needs the new
+				// value (Codex round 3 P2). Skip only on canvasId
+				// mismatch (different canvas now visible).
+				if (requestCanvasId !== canvasId) return;
 				onSlugChange?.(data.slug);
+				if (!isLive()) return;
 				slugDraft = data.slug;
+				slugLastFailed = null;
 				toast.success('Slug renamed');
 			} else if (res.status === 409) {
 				const body = (await res.json()) as { message: string; suggestion?: string };
 				if (!isLive()) return;
 				slugServerError = body.message;
 				slugSuggestion = body.suggestion ?? null;
+				slugLastFailed = candidate;
 			} else if (res.status === 400) {
 				const body = (await res.json()) as { message: string };
 				if (!isLive()) return;
 				slugServerError = body.message;
+				slugLastFailed = candidate;
 			} else {
 				if (!isLive()) return;
 				slugServerError = `Couldn't rename slug (${res.status}).`;
+				slugLastFailed = candidate;
 			}
 		} catch {
 			if (!isLive()) return;
@@ -655,6 +679,10 @@
 						slugDraft = e.currentTarget.value;
 						slugServerError = null;
 						slugSuggestion = null;
+						// Clear the "this slug failed" flag whenever the
+						// user edits — they're attempting a new value, so
+						// blur-commit should run again.
+						slugLastFailed = null;
 					}}
 					onblur={() => void commitSlugRename()}
 					onkeydown={(e) => {
