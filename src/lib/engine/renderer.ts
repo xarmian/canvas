@@ -1,6 +1,7 @@
 import { createCanvas, type SKRSContext2D, type Image } from '@napi-rs/canvas';
 import sharp from 'sharp';
 import type {
+	BadgeIconPosition,
 	CanvasTemplate,
 	FabricObject,
 	FabricCanvasJson,
@@ -98,8 +99,16 @@ function collectImageUrls(objects: FabricObject[]): string[] {
 	const seen = new Set<string>();
 	for (const obj of objects) {
 		if (obj.visible === false) continue;
-		if (obj.type !== 'image' && obj.type !== 'Image') continue;
-		if (obj.src) seen.add(obj.src);
+		if (obj.type === 'image' || obj.type === 'Image') {
+			if (obj.src) seen.add(obj.src);
+			continue;
+		}
+		// Badge icons are optional images embedded in the pill (TASK-87).
+		// Pre-fetch via the same path so they participate in the LRU /
+		// SSRF / asset-preload pipeline.
+		if (obj.type === 'badge' || obj.type === 'Badge') {
+			if (obj.iconImage) seen.add(obj.iconImage);
+		}
 	}
 	return [...seen];
 }
@@ -202,6 +211,11 @@ function drawObject(
 			drawRectObject(ctx, obj);
 			break;
 
+		case 'badge':
+		case 'Badge':
+			drawBadgeObject(ctx, obj, imageMap);
+			break;
+
 		default:
 			// Unknown type — skip silently
 			break;
@@ -277,6 +291,119 @@ function drawRectObject(ctx: SKRSContext2D, obj: FabricObject): void {
 
 	ctx.fillStyle = fill;
 	ctx.fillRect(0, 0, width, height);
+}
+
+/** Default visual constants for the badge primitive (TASK-87). */
+const BADGE_DEFAULTS = {
+	padding: 10,
+	iconGap: 6,
+	bg: '#10b981',
+	fg: '#ffffff',
+	fontSize: 16,
+	fontFamily: 'Inter',
+	fontWeight: 600,
+	iconPosition: 'left' as const
+};
+
+/**
+ * Draws a badge / pill primitive (TASK-87).
+ *
+ * Layout: rounded rectangle background sized to (label width + optional
+ * icon width + 2*padding + iconGap) × (max(icon, fontSize) + 2*padding).
+ * Default radius = height/2 produces a true pill; users can override
+ * `radius` for a softer rounded-rect look. Icon position is left/right
+ * relative to the label.
+ *
+ * Auto-sizing means `width`/`height` on the badge layer are advisory —
+ * the renderer recomputes them from the content. This matches the editor
+ * Badge class and keeps the layout consistent across save/reload (the
+ * editor doesn't have to keep stale w/h in sync with label changes).
+ *
+ * The badge's outer transform (left, top, scale, rotate, opacity) was
+ * already applied by `drawObject` before we got here, so we draw at (0,0).
+ */
+function drawBadgeObject(
+	ctx: SKRSContext2D,
+	obj: FabricObject,
+	imageMap: Map<string, Image | null>
+): void {
+	const label = obj.label ?? obj.text ?? '';
+	const padding = obj.padding ?? BADGE_DEFAULTS.padding;
+	const iconGap = label && obj.iconImage ? BADGE_DEFAULTS.iconGap : 0;
+	const fontSize = obj.fontSize ?? BADGE_DEFAULTS.fontSize;
+	const fontFamily = obj.fontFamily ?? BADGE_DEFAULTS.fontFamily;
+	const fontWeight = obj.fontWeight ?? BADGE_DEFAULTS.fontWeight;
+	const fontStyle = obj.fontStyle ?? 'normal';
+	// `fill` doubles as the bg color so the existing param-binding /
+	// conditional pipelines (which target `fill`) drive the pill color
+	// without a parallel `bg` plumbing layer.
+	const bg = obj.fill ?? obj.bg ?? BADGE_DEFAULTS.bg;
+	const fg = obj.fg ?? BADGE_DEFAULTS.fg;
+	const iconPosition: BadgeIconPosition = obj.iconPosition ?? BADGE_DEFAULTS.iconPosition;
+
+	ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+	const labelWidth = label ? ctx.measureText(label).width : 0;
+
+	// Resolve icon (asset:// preloads or remote URL) — fallback chain not
+	// supported on badge icons (single, optional). Icon size matches the
+	// font-derived line height so it visually balances the label.
+	const iconUrl = obj.iconImage;
+	const iconImg = iconUrl ? (imageMap.get(iconUrl) ?? null) : null;
+	const iconRendered = !!iconImg;
+	const iconSize = iconRendered ? Math.round(fontSize * 1.1) : 0;
+
+	const innerHeight = Math.max(fontSize, iconSize);
+	const totalHeight = innerHeight + padding * 2;
+	const totalWidth = labelWidth + (iconRendered ? iconSize + iconGap : 0) + padding * 2;
+	const radius = Math.max(0, Math.min(obj.radius ?? totalHeight / 2, totalHeight / 2));
+
+	// Background pill
+	ctx.fillStyle = bg;
+	if (radius > 0 && typeof ctx.roundRect === 'function') {
+		ctx.beginPath();
+		ctx.roundRect(0, 0, totalWidth, totalHeight, radius);
+		ctx.fill();
+	} else {
+		ctx.fillRect(0, 0, totalWidth, totalHeight);
+	}
+
+	// Layout x positions for icon and label
+	let cursorX = padding;
+	if (iconRendered && iconPosition === 'left') {
+		ctx.drawImage(
+			iconImg as unknown as Image,
+			cursorX,
+			padding + (innerHeight - iconSize) / 2,
+			iconSize,
+			iconSize
+		);
+		cursorX += iconSize + iconGap;
+	}
+
+	// Label baseline: vertically centered. textBaseline 'middle' lets us
+	// position by row center, which is more robust than alphabetic
+	// baseline math when the user picks an unfamiliar font.
+	if (label) {
+		ctx.fillStyle = fg;
+		ctx.textBaseline = 'middle';
+		ctx.textAlign = 'left';
+		ctx.fillText(label, cursorX, padding + innerHeight / 2);
+		cursorX += labelWidth;
+	}
+
+	if (iconRendered && iconPosition === 'right') {
+		ctx.drawImage(
+			iconImg as unknown as Image,
+			cursorX + iconGap,
+			padding + (innerHeight - iconSize) / 2,
+			iconSize,
+			iconSize
+		);
+	}
+
+	// Reset baseline for any subsequent draws (defense in depth — drawObject
+	// wraps each layer in save/restore but a future caller might not).
+	ctx.textBaseline = 'alphabetic';
 }
 
 /**

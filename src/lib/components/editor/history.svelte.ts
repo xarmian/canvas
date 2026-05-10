@@ -1,4 +1,5 @@
 import type { Canvas } from 'fabric';
+import { EDITOR_TO_OBJECT_PROPS } from './serialize';
 
 const MAX_HISTORY = 50;
 
@@ -25,9 +26,7 @@ export const historyState = $state({
 export function saveSnapshot(canvas: Canvas) {
 	if (historyState.suppressSnapshots) return;
 
-	const json = JSON.stringify(
-		canvas.toObject(['paramBindings', 'conditionalStyles', 'fallbackSrc'])
-	);
+	const json = JSON.stringify(canvas.toObject([...EDITOR_TO_OBJECT_PROPS]));
 
 	// Don't save if identical to last snapshot
 	if (undoStack.length > 0 && undoStack[undoStack.length - 1] === json) return;

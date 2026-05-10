@@ -80,6 +80,9 @@ export interface ConditionalRule {
 	then: { property: ConditionalProperty; value: string };
 }
 
+/** Position of a badge's icon relative to its label (TASK-87). */
+export type BadgeIconPosition = 'left' | 'right';
+
 /**
  * Fabric.js serialized object (simplified type for our renderer).
  * The full Fabric.js JSON is richer, but we only need these fields for rendering.
@@ -125,6 +128,28 @@ export interface FabricObject {
 	 * hide it. Distinct from opacity:0, which still renders and consumes
 	 * pixels. */
 	visible?: boolean;
+	// Badge-layer properties (TASK-87). Activated when `type === 'badge'` /
+	// `'Badge'`. The badge auto-sizes to (label + iconWidth + 2*padding) so
+	// `width`/`height` are computed at render time, not authored. `fill` is
+	// reused as the background color and `paramBindings.fill` therefore
+	// drives the bg pill color via the existing pipeline.
+	/** Pill text. Bindable via paramBindings.label. */
+	label?: string;
+	/** Optional explicit background color override. Most templates leave
+	 * this unset and use `fill` for the bg (so the existing param-binding
+	 * + conditional pipelines drive the pill color); `bg` is only needed
+	 * when a template wants `fill` and the bg color to differ. */
+	bg?: string;
+	/** Foreground (label + icon tint) color. Bindable via paramBindings.fg. */
+	fg?: string;
+	/** Optional icon URL (raw or `asset://{id}`). Bindable via paramBindings.iconImage. */
+	iconImage?: string;
+	/** Inner padding from rounded-rect edge to label/icon, in canvas units. */
+	padding?: number;
+	/** Corner radius. Default produces a "pill" shape (radius = height/2). */
+	radius?: number;
+	/** Icon side. Default 'left'. */
+	iconPosition?: BadgeIconPosition;
 	// Our custom properties for parameter binding
 	paramBindings?: ParamBindings;
 	/** Conditional style overrides (TASK-50). Rules apply after param
