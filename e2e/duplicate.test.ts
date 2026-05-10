@@ -19,7 +19,7 @@ test.describe('Canvas duplication', () => {
 
 		// Back to dashboard, then click Duplicate on the original card.
 		await page.getByTestId('nav-dashboard').click();
-		await page.waitForURL('/');
+		await page.waitForURL('/dashboard');
 		const card = page.locator('.card').filter({ hasText: 'Original Canvas' });
 		await expect(card).toBeVisible();
 		await card.getByTestId('card-duplicate').click();
@@ -43,7 +43,7 @@ test.describe('Canvas duplication', () => {
 		// initial dirty cycle on first load of a freshly-duplicated canvas).
 		await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 8_000 });
 		await page.getByTestId('nav-dashboard').click();
-		await page.waitForURL('/');
+		await page.waitForURL('/dashboard');
 		const copyCard = page.locator('.card').filter({ hasText: 'Original Canvas (copy)' });
 		await expect(copyCard).toBeVisible();
 		await expect(copyCard.getByText('Draft')).toBeVisible();

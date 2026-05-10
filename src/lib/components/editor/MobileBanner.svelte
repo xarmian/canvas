@@ -59,7 +59,7 @@
 				know what you're doing.
 			</p>
 			<div class="actions">
-				<a href="/" class="btn btn-primary">Back to dashboard</a>
+				<a href="/dashboard" class="btn btn-primary">Back to dashboard</a>
 				<button type="button" class="btn btn-secondary" onclick={dismiss}> Continue anyway </button>
 			</div>
 			<p class="hint">

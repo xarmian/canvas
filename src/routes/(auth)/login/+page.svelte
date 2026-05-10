@@ -18,7 +18,7 @@
 			if (result.error) {
 				error = result.error.message ?? 'Login failed. Please try again.';
 			} else {
-				await goto('/');
+				await goto('/dashboard');
 			}
 		} catch {
 			error = 'An unexpected error occurred. Please try again.';

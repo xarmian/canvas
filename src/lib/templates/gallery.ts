@@ -689,12 +689,18 @@ export const TEMPLATES: TemplateDefinition[] = [
 		// hidden.
 		const lpCardTemplate: TemplateDefinition = {
 			id: 'crypto-lp-card',
-			name: 'Crypto LP position',
+			// "Crypto LP card" matches the landing-page copy (TASK-99) so
+			// the gallery card and the marketing surface share vocabulary.
+			// Note: the slug `crypto-lp-card` is reserved for the public
+			// landing demo (see `src/lib/server/slug.ts`), so a user
+			// cloning this template auto-derives `crypto-lp-card-2` —
+			// they own that slug, not the system demo URL.
+			name: 'Crypto LP card',
 			description:
 				'Liquidity-pool position card with token logos, gain/loss color, in/edge/out-of-range pill, and optional boosted star.',
 			category: 'crypto-finance',
 			canvas: {
-				name: 'Crypto LP position',
+				name: 'Crypto LP card',
 				width: 1200,
 				height: 630,
 				backgroundType: 'color',

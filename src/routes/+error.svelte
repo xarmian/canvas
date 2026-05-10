@@ -49,9 +49,15 @@
 		<p class="error-lede">{lede}</p>
 
 		<div class="error-actions">
+			<!--
+				href="/" lands authed users on /dashboard (server-side redirect
+				in `routes/+page.server.ts`) and unauthenticated users on the
+				public landing page. Either way "Back home" reads correctly,
+				so we don't need to read locals.user here to vary the label.
+			-->
 			<a href="/" class="btn btn-primary">
 				<Home size={14} aria-hidden="true" />
-				<span>Back to dashboard</span>
+				<span>Back home</span>
 			</a>
 			{#if isServerError}
 				<button type="button" class="btn btn-secondary" onclick={reload}>

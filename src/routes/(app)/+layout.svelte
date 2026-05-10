@@ -22,18 +22,18 @@
 	>
 		<div style="display: flex; align-items: center; gap: 1.5rem;">
 			<a
-				href="/"
+				href="/dashboard"
 				style="font-weight: bold; font-size: 1.25rem; text-decoration: none; color: inherit;"
 				>Canvas</a
 			>
 			<nav aria-label="Primary" style="display: flex; gap: 1rem; font-size: 0.9rem;">
 				<a
-					href="/"
+					href="/dashboard"
 					data-testid="nav-dashboard"
-					aria-current={pathname === '/' ? 'page' : undefined}
-					style="text-decoration: none; color: {pathname === '/'
+					aria-current={pathname === '/dashboard' ? 'page' : undefined}
+					style="text-decoration: none; color: {pathname === '/dashboard'
 						? '#111'
-						: '#64748b'}; font-weight: {pathname === '/' ? 600 : 400};"
+						: '#64748b'}; font-weight: {pathname === '/dashboard' ? 600 : 400};"
 				>
 					Dashboard
 				</a>

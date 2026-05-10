@@ -16,15 +16,15 @@ test.describe('Dashboard organization', () => {
 		// counts NULL folders.
 		await createCanvas(page, { name: 'Alpha' });
 		await page.getByTestId('nav-dashboard').click();
-		await page.waitForURL('/');
+		await page.waitForURL('/dashboard');
 
 		await createCanvas(page, { name: 'Beta' });
 		await page.getByTestId('nav-dashboard').click();
-		await page.waitForURL('/');
+		await page.waitForURL('/dashboard');
 
 		await createCanvas(page, { name: 'Gamma' });
 		await page.getByTestId('nav-dashboard').click();
-		await page.waitForURL('/');
+		await page.waitForURL('/dashboard');
 
 		// Three cards on the dashboard.
 		await expect(page.locator('[data-testid="canvas-card"]')).toHaveCount(3);

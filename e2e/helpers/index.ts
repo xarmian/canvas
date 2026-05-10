@@ -58,8 +58,8 @@ export async function signupAndLogin(
 	// Wait for SvelteKit to hydrate before interacting. Without this the
 	// click fires before the form's onsubmit listener attaches, the
 	// browser's native GET submit runs (URL becomes /signup?), and the
-	// JS-driven goto('/') after auth never happens. networkidle is the
-	// reliable cross-route signal that the JS bundle has loaded.
+	// JS-driven goto('/dashboard') after auth never happens. networkidle is
+	// the reliable cross-route signal that the JS bundle has loaded.
 	await page.waitForLoadState('networkidle');
 	// Use accessible name (label text) — it's stable across CSS refactors.
 	await page.getByLabel('Name').fill(credentials.name);
@@ -67,10 +67,11 @@ export async function signupAndLogin(
 	await page.getByLabel('Password').fill(credentials.password);
 	await page.getByRole('button', { name: 'Sign up' }).click();
 
-	// /signup pushes to / on success. Waiting on the URL is more reliable
-	// than waiting on a specific dashboard selector since the empty-state
-	// and populated-state paint differently.
-	await page.waitForURL('/', { timeout: 10_000 });
+	// /signup pushes to /dashboard on success (the dashboard moved out
+	// from `/` when the public landing page shipped — TASK-99). Waiting
+	// on the URL is more reliable than waiting on a specific dashboard
+	// selector since the empty-state and populated-state paint differently.
+	await page.waitForURL('/dashboard', { timeout: 10_000 });
 	return credentials;
 }
 
