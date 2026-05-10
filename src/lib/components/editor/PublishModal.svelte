@@ -81,6 +81,11 @@
 	// a second concurrent GET that could land after the user has
 	// started typing and overwrite their input. Codex round 2 P2.
 	let sharingPending = $state(false);
+	// Monotonic counter incremented every time the modal opens for a
+	// fresh canvas. Stale loadSharing() completions (modal closed, or
+	// reopened on a different canvas) are dropped by comparing against
+	// the generation captured at request start. Codex round 3 P2.
+	let sharingGen = 0;
 
 	$effect(() => {
 		if (open && published && !paramRowsLoaded) {
@@ -93,14 +98,31 @@
 			void loadSharing();
 		}
 		if (!open) {
-			// Reset so reopening for a different canvas refetches.
+			// Reset so reopening for a different canvas refetches. Bump
+			// the generation so any in-flight `loadSharing` from this
+			// session is treated as stale on completion.
 			paramRowsLoaded = false;
 			paramRows = [];
 			versionToken = null;
 			sharingLoaded = false;
 			sharingPending = false;
+			sharingGen++;
 			sharing = { ogTitle: '', ogDescription: '', redirectUrl: '' };
 		}
+	});
+
+	// Reset sharing state if the parent passes a different canvasId
+	// while the modal stays open (rare but possible — e.g. dashboard
+	// list with a single shared modal instance). Same generation bump
+	// so any in-flight load drops.
+	$effect(() => {
+		// Read canvasId so the effect tracks it; the body intentionally
+		// runs whenever it changes.
+		void canvasId;
+		sharingLoaded = false;
+		sharingPending = false;
+		sharingGen++;
+		sharing = { ogTitle: '', ogDescription: '', redirectUrl: '' };
 	});
 
 	/** `_v` token from /api/canvas/[id]/version — when present, embed
@@ -139,15 +161,24 @@
 	}
 
 	async function loadSharing(): Promise<void> {
+		// Snapshot the canvasId + generation at request start; if either
+		// has changed by the time the response lands, the modal has
+		// closed or moved to a different canvas — drop the result so we
+		// don't commit stale metadata that the user could then save back
+		// on blur. Codex round 3 P2.
+		const requestCanvasId = canvasId;
+		const requestGen = sharingGen;
 		sharingPending = true;
 		try {
 			const res = await fetch(`/api/canvas/${canvasId}`);
+			if (requestCanvasId !== canvasId || requestGen !== sharingGen) return;
 			if (res.ok) {
 				const data = (await res.json()) as {
 					ogTitle: string | null;
 					ogDescription: string | null;
 					redirectUrl: string | null;
 				};
+				if (requestCanvasId !== canvasId || requestGen !== sharingGen) return;
 				sharing = {
 					ogTitle: data.ogTitle ?? '',
 					ogDescription: data.ogDescription ?? '',
@@ -158,9 +189,20 @@
 			// the inputs unlock and the user can edit manually. Codex
 			// round 2 P3 — without this, a transient 5xx during open
 			// would leave the fields permanently disabled.
+		} catch {
+			// Swallow network rejections. The `finally` block flips the
+			// loaded flag so the user can still type into the inputs.
+			// Codex round 3: without an explicit catch, the `void
+			// loadSharing()` call site would surface an unhandled
+			// promise rejection on transient network failure.
 		} finally {
-			sharingLoaded = true;
-			sharingPending = false;
+			// Only flip the flags if this request is still the live one;
+			// otherwise we'd resurrect a stale "loaded" state for an old
+			// canvas mid-typing.
+			if (requestCanvasId === canvasId && requestGen === sharingGen) {
+				sharingLoaded = true;
+				sharingPending = false;
+			}
 		}
 	}
 
