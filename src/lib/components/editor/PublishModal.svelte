@@ -435,6 +435,14 @@
 		const requestCanvasId = canvasId;
 		const requestGen = slugRenameGen;
 		const isLive = () => requestCanvasId === canvasId && requestGen === slugRenameGen;
+		// `isLiveAndOpen` gates UI writes (errors / suggestions /
+		// busy state) so a late completion after the modal closed
+		// doesn't repopulate stale UI state for the next open.
+		// Codex round 11 P2. The success path's `onSlugChange`
+		// still uses `isLive()` (no `open` check) so a server-
+		// committed rename always propagates to the editor mirror,
+		// even if the user closed the modal mid-flight.
+		const isLiveAndOpen = () => isLive() && open;
 		slugBusy = true;
 		slugServerError = null;
 		slugSuggestion = null;
@@ -457,8 +465,11 @@
 					// Don't set slugLastFailed for transient version-fetch
 					// failures — the user should be able to immediately
 					// retry the same candidate without editing first
-					// (Codex round 9 P2).
-					slugServerError = "Couldn't read canvas version. Please try again.";
+					// (Codex round 9 P2). Skip the UI write entirely if
+					// the modal closed before this resolved (round 11 P2).
+					if (isLiveAndOpen()) {
+						slugServerError = "Couldn't read canvas version. Please try again.";
+					}
 					return;
 				}
 				canvasVersion = ifMatchVersion;
@@ -478,7 +489,7 @@
 					// (Codex round 9 P2): don't mark the candidate
 					// as failed, the user should be able to retry
 					// the same value.
-					slugServerError = "Couldn't refresh canvas state. Please try again.";
+					if (isLiveAndOpen()) slugServerError = "Couldn't refresh canvas state. Please try again.";
 				} else {
 					canvasVersion = refreshed;
 					res = await sendSlugPatch(requestCanvasId, candidate, refreshed, controller);
@@ -495,19 +506,28 @@
 				// rename's value. Codex round 5 P3.
 				if (!isLive()) return;
 				onSlugChange?.(data.slug);
-				slugDraft = data.slug;
-				slugLastFailed = null;
 				if (etag) canvasVersion = etag;
-				toast.success('Slug renamed');
+				// Modal-only UI writes — guarded by `open` so a late
+				// success after close doesn't flash a "renamed" toast
+				// or reset state the close-handler already cleared.
+				// (The onSlugChange call above is what's actually
+				// user-visible since the editor mirror updates; the
+				// in-modal slugDraft/toast just keep the open modal
+				// in sync.) Codex round 11 P2.
+				if (isLiveAndOpen()) {
+					slugDraft = data.slug;
+					slugLastFailed = null;
+					toast.success('Slug renamed');
+				}
 			} else if (res.status === 409) {
 				const body = (await res.json()) as { message: string; suggestion?: string };
-				if (!isLive()) return;
+				if (!isLiveAndOpen()) return;
 				slugServerError = body.message;
 				slugSuggestion = body.suggestion ?? null;
 				slugLastFailed = candidate;
 			} else if (res.status === 400) {
 				const body = (await res.json()) as { message: string };
-				if (!isLive()) return;
+				if (!isLiveAndOpen()) return;
 				slugServerError = body.message;
 				slugLastFailed = candidate;
 			} else if (res.status === 412) {
@@ -516,23 +536,25 @@
 				// itself. Don't mark `slugLastFailed` so the user
 				// can press Enter again and retry the same value
 				// once contention subsides (Codex round 10 P2).
-				if (!isLive()) return;
+				if (!isLiveAndOpen()) return;
 				slugServerError = 'Canvas is being updated by another tab or device. Please try again.';
 			} else {
-				if (!isLive()) return;
+				if (!isLiveAndOpen()) return;
 				slugServerError = `Couldn't rename slug (${res.status}).`;
 				slugLastFailed = candidate;
 			}
 		} catch (err) {
 			// AbortError is the expected outcome when a newer commit
 			// supersedes this one — silently drop. Real network errors
-			// surface via slugServerError, but only if we're still live
-			// (otherwise the newer commit owns the UI). Network errors
-			// don't mark slugLastFailed — they're transient, so the
-			// user should be able to retry the same candidate without
-			// editing first (Codex round 9 P2).
+			// surface via slugServerError, but only if we're still
+			// live AND open (otherwise the newer commit owns the UI,
+			// or the modal closed and a stale error would resurface
+			// on reopen). Network errors don't mark slugLastFailed —
+			// they're transient, so the user should be able to retry
+			// the same candidate without editing first
+			// (Codex round 9 P2).
 			if ((err as { name?: string })?.name === 'AbortError') return;
-			if (!isLive()) return;
+			if (!isLiveAndOpen()) return;
 			slugServerError = "Couldn't reach the server. Please try again.";
 		} finally {
 			// Always release the busy flag if THIS request's generation

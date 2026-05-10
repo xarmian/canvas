@@ -315,6 +315,46 @@ test('slug rename: closing modal with invalid draft resets state on reopen (Code
 	await expect(page.getByTestId('slug-server-error')).toBeHidden();
 });
 
+test('slug rename: late 409 after close does not surface on reopen (Codex round 11 P2)', async ({
+	page
+}) => {
+	await signupAndLogin(page);
+
+	const taken = `late-${Date.now()}`;
+	await page.request.post('/api/canvas', { data: { name: taken } });
+
+	const canvas = await createCanvas(page, { name: 'Late close', preset: 'OG Image' });
+	await gotoEditor(page, canvas.id);
+	await addTextLayer(page, 'placeholder');
+	await publish(page);
+
+	// Throttle the PATCH so the 409 lands AFTER we close the modal.
+	await page.route(`**/api/canvas/${canvas.id}`, async (route) => {
+		if (route.request().method() === 'PATCH') {
+			await new Promise((r) => setTimeout(r, 1500));
+		}
+		await route.continue();
+	});
+
+	const slugInput = page.getByTestId('slug-input');
+	await slugInput.fill(taken);
+	await slugInput.press('Enter');
+	// Close immediately — the 409 hasn't returned yet.
+	await page.keyboard.press('Escape');
+	await expect(page.getByTestId('sharing-section')).toBeHidden();
+
+	// Wait long enough for the late 409 to land.
+	await page.waitForTimeout(1800);
+
+	// Reopen the modal. The stale 409 must NOT have repopulated
+	// slugServerError / slugSuggestion.
+	await page.getByTestId('toolbar-publish').click();
+	await expect(page.getByTestId('sharing-section')).toBeVisible();
+	await expect(page.getByTestId('slug-server-error')).toBeHidden();
+	await expect(page.getByTestId('slug-suggestion-apply')).toBeHidden();
+	await page.unroute(`**/api/canvas/${canvas.id}`);
+});
+
 test('slug rename: lazy version-fetch failure is retry-able with the same value (Codex round 9 P2)', async ({
 	page
 }) => {
