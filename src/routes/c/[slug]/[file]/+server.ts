@@ -9,6 +9,10 @@ import type { CanvasTemplate, FabricCanvasJson, OutputFormat } from '$lib/engine
 import { validateParams } from '$lib/server/canvas-params';
 import { getDefaultRenderCache } from '$lib/server/render-cache';
 import { ensureUserFontsRegistered, getLiveUserFontDescriptors } from '$lib/server/user-fonts';
+import {
+	buildContentVersionToken,
+	fontSetVersionFromDescriptors
+} from '$lib/server/content-version';
 import { resolveAssetReferences } from '$lib/server/asset-resolver';
 import {
 	acquireRenderSlot,
@@ -127,24 +131,6 @@ function ifNoneMatchHits(headerValue: string, etag: string): boolean {
 }
 
 /**
- * The `_v` value the embed-code modal generates and that the route
- * accepts as immutable-cache opt-in. Includes the font-set fingerprint
- * because font library changes alter the rendered bytes without
- * touching canvas.updatedAt — without it, a delete/reupload would let
- * a stale `_v` serve a 1-year cached render of the old font.
- *
- * The hash is short (12 hex chars) so URLs stay tidy. Anyone is free
- * to pass their own `_v=foo` — it won't match this hash and will fall
- * back to short cache-control (the safe default).
- */
-function buildVersionToken(canvasUpdatedAtMs: string, fontSetVersion: string): string {
-	return createHash('sha256')
-		.update(`${canvasUpdatedAtMs}|${fontSetVersion}`)
-		.digest('hex')
-		.slice(0, 12);
-}
-
-/**
  * Pick the right Cache-Control based on whether the request supplied
  * an `?_v=...` matching the current version token (canvas updatedAt
  * + font set fingerprint).
@@ -235,10 +221,7 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 	// new UUID even though the derived family is identical.
 	const liveDescriptors = await getLiveUserFontDescriptors(canvas.userId);
 	const liveFamilies = new Set(liveDescriptors.map((d) => d.family));
-	const fontSetVersion = liveDescriptors
-		.map((d) => d.id)
-		.sort()
-		.join('|');
+	const fontSetVersion = fontSetVersionFromDescriptors(liveDescriptors);
 
 	// Cache key uses the resolved params (post-default), so two requests
 	// that differ only by relying-on-default vs explicit value hit the
@@ -255,7 +238,7 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 	const etag = buildEtag(key);
 	const updatedAtMs = canvas.updatedAt.getTime().toString();
 	const lastModified = canvas.updatedAt.toUTCString();
-	const versionToken = buildVersionToken(updatedAtMs, fontSetVersion);
+	const versionToken = buildContentVersionToken(updatedAtMs, fontSetVersion);
 	const cacheControl = pickCacheControl(requestedVersion, versionToken);
 
 	// Conditional GET: 304 short-circuits before we touch storage / cache.

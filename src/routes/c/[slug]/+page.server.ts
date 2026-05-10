@@ -32,6 +32,7 @@ import type { PageServerLoad } from './$types';
 import { db } from '$lib/server/db';
 import { canvases } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
+import { resolveContentVersion } from '$lib/server/content-version';
 
 const BOT_USER_AGENTS = [
 	'twitterbot',
@@ -84,9 +85,23 @@ export const load: PageServerLoad = async ({ params, url, request }) => {
 		queryParams[key] = value;
 	}
 
-	// Build image URL with all params forwarded
-	const imageParams = new URLSearchParams(queryParams).toString();
-	const imageUrl = `${url.origin}/c/${canvas.slug}/image.png${imageParams ? `?${imageParams}` : ''}`;
+	// TASK-93: append `_v=<contentVersionToken>` to the og:image URL so
+	// social caches (Twitter / Bluesky / Discord / Slack / LinkedIn)
+	// auto-invalidate after a canvas edit. The token derivation lives
+	// in `$lib/server/content-version.ts` — see that file for the
+	// "what inputs change the token" contract. Same token is what the
+	// render route's immutable-cache opt-in checks against, so embed
+	// snippets keep working unchanged.
+	//
+	// `_v` is added to the og:image URL ONLY (not to the canonical
+	// share URL the user copies). Putting it in the share URL itself
+	// would be churn-y — the user would have to re-copy after every
+	// edit. Cards refresh because crawlers follow the `og:image` meta,
+	// which we control on every render.
+	const versionToken = await resolveContentVersion(canvas.updatedAt, canvas.userId);
+	const imageQuery = new URLSearchParams(queryParams);
+	imageQuery.set('_v', versionToken);
+	const imageUrl = `${url.origin}/c/${canvas.slug}/image.png?${imageQuery.toString()}`;
 
 	// OG metadata with param substitution
 	const ogTitle = canvas.ogTitle ? substituteParams(canvas.ogTitle, queryParams) : canvas.name;
