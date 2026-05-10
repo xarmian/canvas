@@ -171,6 +171,31 @@
 		markDirty();
 	}
 
+	/** Map of URL fields → their library-link id stamp (TASK-116). When
+	 *  the user edits a URL field directly, the corresponding *AssetId
+	 *  must be cleared — otherwise the save serializer would rewrite the
+	 *  user's manually-edited URL back to `asset://{id}` and silently
+	 *  discard the change. The Unlink button is the explicit detach for
+	 *  the visible primary `src` link; this auto-clear is the implicit
+	 *  detach for the URL-edit path. */
+	const ASSET_LINK_STAMPS: Record<string, string> = {
+		src: 'srcAssetId',
+		fallbackSrc: 'fallbackSrcAssetId',
+		iconImage: 'iconImageAssetId'
+	};
+
+	/** setProp wrapper for URL fields — sets the URL AND clears the
+	 *  matching id stamp so a manual edit detaches the layer from the
+	 *  asset library. Use for any input that targets src/fallbackSrc/
+	 *  iconImage. */
+	function setUrlProp(prop: 'src' | 'fallbackSrc' | 'iconImage', value: unknown) {
+		const stamp = ASSET_LINK_STAMPS[prop];
+		if (stamp && editorState.selectedObject?.get(stamp) !== undefined) {
+			setProp(stamp, undefined);
+		}
+		setProp(prop, value);
+	}
+
 	/** Set width/height accounting for scale — resets scale to 1 and sets intrinsic dimension */
 	function setDimension(prop: 'width' | 'height', displayValue: number) {
 		if (!editorState.selectedObject || !editorState.fabricCanvas) return;
@@ -437,7 +462,7 @@
 							type="text"
 							class="field-input"
 							value={fallbackSrc}
-							oninput={(e) => setProp('fallbackSrc', e.currentTarget.value || undefined)}
+							oninput={(e) => setUrlProp('fallbackSrc', e.currentTarget.value || undefined)}
 							placeholder="Used when the bound image URL fails to load"
 						/>
 					</div>
@@ -518,7 +543,7 @@
 							type="text"
 							class="field-input"
 							value={badgeIcon}
-							oninput={(e) => setProp('iconImage', e.currentTarget.value)}
+							oninput={(e) => setUrlProp('iconImage', e.currentTarget.value)}
 							placeholder="Optional icon (URL or asset://)"
 						/>
 					</div>
