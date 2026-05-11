@@ -67,20 +67,28 @@ jobs:
         # no HMR runtime, the real minified JS.
         run: pnpm build
         env:
-          # `pnpm build` should not need a live DB — the public landing
-          # is the only audited route and it's statically renderable.
-          # Provide a dummy DATABASE_URL so any module-load-time
-          # validation that requires the env var doesn't error out.
+          # Stub env vars so module-load-time validation doesn't
+          # refuse startup. None of the audited routes actually use
+          # these — the landing is statically renderable — but
+          # better-auth + drizzle resolve their config at module-load
+          # before any route handler runs.
           DATABASE_URL: postgresql://stub:stub@127.0.0.1:5432/stub
+          BETTER_AUTH_SECRET: stub-secret-not-used-by-audited-routes
+          BETTER_AUTH_URL: http://127.0.0.1:4173
 
       - name: Run Lighthouse CI
         run: pnpm lh:mobile
         env:
           # Same rationale as the build step — `pnpm preview` boots
-          # the SvelteKit server and the landing route doesn't query
-          # the DB, but server-load code paths may still resolve the
-          # env on startup.
+          # the SvelteKit server, and even though the landing route
+          # doesn't query auth or the DB, the server's module-load
+          # eagerly resolves both. better-auth specifically THROWS
+          # on missing BETTER_AUTH_SECRET rather than warning, so
+          # without it the preview process exits before LHCI can
+          # connect.
           DATABASE_URL: postgresql://stub:stub@127.0.0.1:5432/stub
+          BETTER_AUTH_SECRET: stub-secret-not-used-by-audited-routes
+          BETTER_AUTH_URL: http://127.0.0.1:4173
 
       - name: Upload Lighthouse report
         # Always upload so a failing run can be inspected without
