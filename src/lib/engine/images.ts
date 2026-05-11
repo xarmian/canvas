@@ -206,30 +206,22 @@ export async function loadRemoteImage(
 		return img;
 	}
 
-	// In-process short-circuit for `/api/assets/{key}` URLs (BT-154).
-	// `storage.getUrl()` returns same-origin proxy paths by default —
-	// the browser hits the SvelteKit endpoint, the endpoint reads from
-	// MinIO/S3/local via the storage adapter. The server-side renderer
-	// runs in the same process, so going back out over HTTP to its own
-	// `/api/assets/...` endpoint would (a) require knowing the dev /
-	// production hostname, (b) cost a network roundtrip per layer, and
-	// (c) fail the SSRF guard's private-IP block when the app binds to
-	// localhost. Read the bytes directly from storage instead. Owned
-	// `asset://` references already take an even faster path via
-	// `resolveAssetReferences` + the preloaded-images map (TASK-89);
-	// this branch only fires for the rare case where a saved canvas
-	// holds a raw `/api/assets/...` URL on a layer.
-	if (url.startsWith('/api/assets/')) {
-		try {
-			const { getStorage } = await import('../server/storage/index.js');
-			const buffer = await getStorage().read(url.slice('/api/assets/'.length));
-			const img = new Image();
-			img.src = buffer;
-			return img;
-		} catch (err) {
-			console.error('[engine/images] storage.read failed', { url, err });
-			return null;
-		}
+	// Reject `/api/assets/{key}` URLs that reach this point. After
+	// BT-154 these are the app's same-origin proxy paths, but the
+	// renderer should never need to fetch them via HTTP — owned
+	// `asset://` references take the preloaded-buffer path through
+	// `resolveAssetReferences` (TASK-89) and never call into here.
+	// A raw `/api/assets/...` URL surviving onto a layer would mean
+	// (a) a serialization bug bypassed the asset:// rewrite, or (b)
+	// param substitution forged the value from a query-string. Either
+	// way, blindly calling `storage.read(key)` here would bypass the
+	// HTTP route's auth / DB-existence / public-prefix / path-safety
+	// checks and expose arbitrary storage objects (path-traversal on
+	// LocalStorage, private-key reads on S3) to unauthenticated public
+	// renders (Codex round 1 P1). Bail with null — the renderer treats
+	// it as unfetchable and the layer falls through to its placeholder.
+	if (url.startsWith('/api/assets/') || url.startsWith('/')) {
+		return null;
 	}
 
 	const controller = new AbortController();
