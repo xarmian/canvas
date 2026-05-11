@@ -37,8 +37,31 @@ export const editorState = $state({
 	 * `fabricCanvas` exists but `objects` is still empty (TASK-135 Codex
 	 * round 1 P2).
 	 */
-	hydrationComplete: true
+	hydrationComplete: true,
+	/**
+	 * Visual zoom level for the editor canvas — 1 = 100%, 0.5 = 50%, etc.
+	 * This is CSS-transform-based scaling on the canvas wrapper, NOT
+	 * Fabric's `setZoom`. Fabric's intrinsic coordinate system stays at
+	 * the canvas's authored dimensions (e.g. 1200×630) regardless of
+	 * zoom, so exports / save serialization / hit-testing all stay
+	 * oblivious. The toolbar reads this for display; Canvas.svelte owns
+	 * the actual scaling DOM + ResizeObserver. (TASK-150)
+	 */
+	zoom: 1,
+	/**
+	 * Whether zoom auto-recomputes on container resize. 'fit' keeps the
+	 * canvas auto-scaled to whatever's visible; 'manual' freezes the
+	 * current `zoom` value (user has explicitly chosen a scale via
+	 * 100%/wheel/+−). Defaults to 'fit' so a fresh canvas always shows
+	 * the full template at any viewport size. (TASK-150)
+	 */
+	zoomMode: 'fit' as 'fit' | 'manual'
 });
+
+/** Hard bounds on user-controlled zoom. Matches Figma's 10%-400% range
+ *  so users coming from there don't hit a smaller ceiling. (TASK-150) */
+export const ZOOM_MIN = 0.1;
+export const ZOOM_MAX = 4;
 
 /** Register a callback to save undo snapshots (called by Canvas on mount) */
 export function setSnapshotCallback(cb: (() => void) | null) {
@@ -78,6 +101,14 @@ export function setFabricCanvas(canvas: Canvas | null) {
 	// flight. The editor page will flip this false again if/when it
 	// kicks off `loadFromJSON` for a stored template.
 	editorState.hydrationComplete = true;
+	// Reset zoom + zoomMode so a fresh canvas mount starts in auto-fit
+	// at 100%. Without this, navigating between canvases in the same
+	// SPA session would carry over a previous canvas's manual zoom —
+	// Canvas.svelte's local `zoom` starts at 1, but applyFitIfTracking
+	// short-circuits in 'manual' mode and the new canvas never re-fits.
+	// (TASK-150 follow-up — Codex round 1 P2.)
+	editorState.zoom = 1;
+	editorState.zoomMode = 'fit';
 }
 
 /**
@@ -104,4 +135,15 @@ export function setSelectedObject(obj: FabricObject | null) {
  */
 export function setActiveObjects(objects: FabricObject[]) {
 	editorState.activeObjects = [...objects];
+}
+
+/**
+ * Mutate editorState.zoom + zoomMode in one place. Clamped to
+ * [ZOOM_MIN, ZOOM_MAX]. Canvas.svelte calls this whenever it changes
+ * the scale (initial fit, mousewheel, toolbar buttons) so the toolbar's
+ * display stays in sync. (TASK-150)
+ */
+export function setZoomState(zoom: number, mode: 'fit' | 'manual') {
+	editorState.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom));
+	editorState.zoomMode = mode;
 }

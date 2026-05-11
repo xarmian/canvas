@@ -75,4 +75,99 @@ test.describe('Template gallery', () => {
 			)
 			.toBe('#0f172a');
 	});
+
+	test('zoom: auto-fits oversized canvas, scales to 100% on toolbar click, preview bytes stay at intrinsic dims (TASK-150)', async ({
+		page
+	}) => {
+		// Force a viewport narrower than the canvas (1200 wide) so auto-fit
+		// is meaningfully exercised. Editor side panels eat ~600px, so this
+		// guarantees the available width for the canvas is well under 1200.
+		await page.setViewportSize({ width: 1100, height: 700 });
+		await signupAndLogin(page);
+
+		await page.getByTestId('nav-templates').click();
+		await page.waitForURL('**/templates');
+		const ogCard = page.locator('[data-template-id="og-card"]');
+		await ogCard.getByTestId('template-use').click();
+		await page.waitForURL(/\/canvas\/[^/]+\/edit$/, { timeout: 10_000 });
+		// Wait for the canvas wrapper to mount + initial fit to apply.
+		await expect(page.locator('.canvas-stage')).toBeVisible({ timeout: 5_000 });
+
+		// Auto-fit produced a scale < 1 (canvas is wider than the visible
+		// container at this viewport). Polled because the initial fit runs
+		// in a requestAnimationFrame after mount.
+		await expect
+			.poll(
+				async () =>
+					page
+						.locator('.canvas-stage')
+						.evaluate((el) => parseFloat(getComputedStyle(el).getPropertyValue('--canvas-scale'))),
+				{ timeout: 5_000, message: 'expected auto-fit to scale canvas below 1.0' }
+			)
+			.toBeLessThan(1);
+
+		// The toolbar value displays "Fit" (because fit-mode and scale != 1.0).
+		const zoomValue = page.getByTestId('toolbar-zoom-value');
+		await expect(zoomValue).toHaveText('Fit');
+
+		// Click the value button — should toggle to 100% (manual mode).
+		await zoomValue.click();
+		await expect(zoomValue).toHaveText('100%');
+		const scaleAt100 = await page
+			.locator('.canvas-stage')
+			.evaluate((el) => parseFloat(getComputedStyle(el).getPropertyValue('--canvas-scale')));
+		expect(scaleAt100).toBeCloseTo(1, 3);
+
+		// Click again — should toggle back to Fit.
+		await zoomValue.click();
+		await expect(zoomValue).toHaveText('Fit');
+
+		// Zoom-out button decreases scale; zoom-in increases.
+		const beforeOut = await page
+			.locator('.canvas-stage')
+			.evaluate((el) => parseFloat(getComputedStyle(el).getPropertyValue('--canvas-scale')));
+		await page.getByTestId('toolbar-zoom-out').click();
+		const afterOut = await page
+			.locator('.canvas-stage')
+			.evaluate((el) => parseFloat(getComputedStyle(el).getPropertyValue('--canvas-scale')));
+		expect(afterOut).toBeLessThan(beforeOut);
+		await page.getByTestId('toolbar-zoom-in').click();
+		const afterIn = await page
+			.locator('.canvas-stage')
+			.evaluate((el) => parseFloat(getComputedStyle(el).getPropertyValue('--canvas-scale')));
+		expect(afterIn).toBeGreaterThan(afterOut);
+
+		// The Fabric canvas's intrinsic dimensions (HTML attributes) stay
+		// at the authored canvas size regardless of zoom — this is the
+		// guarantee that exports / save / hit-testing aren't affected by
+		// editor-only zoom. Playwright Chromium defaults to DPR=1, so the
+		// backing buffer matches the CSS dimensions exactly.
+		const intrinsic = await page.locator('.lower-canvas').evaluate((c) => ({
+			width: (c as HTMLCanvasElement).width,
+			height: (c as HTMLCanvasElement).height
+		}));
+		expect(intrinsic.width).toBe(1200);
+		expect(intrinsic.height).toBe(630);
+
+		// Preview bytes are independent of zoom level and viewport. Open
+		// the preview and assert the server-rendered PNG comes back at the
+		// canvas's authored dimensions.
+		await page.locator('button.tool-btn', { hasText: 'Preview' }).click();
+		const previewImg = page.locator('.preview-image img');
+		await expect(previewImg).toBeVisible({ timeout: 5_000 });
+		await expect
+			.poll(
+				async () =>
+					previewImg.evaluate((img) => {
+						const i = img as HTMLImageElement;
+						return i.naturalWidth > 0 ? i.naturalWidth : null;
+					}),
+				{ timeout: 5_000, message: 'preview PNG did not load' }
+			)
+			.toBe(1200);
+		const previewNaturalH = await previewImg.evaluate(
+			(img) => (img as HTMLImageElement).naturalHeight
+		);
+		expect(previewNaturalH).toBe(630);
+	});
 });

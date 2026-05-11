@@ -69,6 +69,17 @@
 			]
 		},
 		{
+			// TASK-150 — zoom is CSS-transform-based; Fabric coords + exports
+			// are unaffected by zoom level. Trackpad pinch arrives as a
+			// `wheel` event with ctrlKey synthesized by the browser so the
+			// same handler covers both modifier-wheel and pinch.
+			title: 'Zoom',
+			items: [
+				{ keys: ['Cmd / Ctrl', 'scroll'], label: 'Zoom in / out (anchored at cursor)' },
+				{ keys: ['scroll'], label: 'Pan the canvas' }
+			]
+		},
+		{
 			title: 'Help',
 			items: [{ keys: ['?'], label: 'Open this cheatsheet' }]
 		}
