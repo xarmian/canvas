@@ -50,13 +50,13 @@
 		pointer-events: auto;
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
-		padding: 0.75rem 0.875rem;
-		border-radius: 8px;
-		box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
-		font-size: 0.875rem;
+		gap: var(--spacing-3);
+		padding: var(--spacing-3);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-lg);
+		font-size: var(--text-base);
 		line-height: 1.4;
-		color: #fff;
+		color: var(--color-bg);
 		animation: slide-in 0.2s ease-out;
 	}
 
@@ -72,15 +72,15 @@
 	}
 
 	.toast-success {
-		background: #16a34a;
+		background: var(--color-success);
 	}
 
 	.toast-error {
-		background: #dc2626;
+		background: var(--color-danger);
 	}
 
 	.toast-info {
-		background: #1f2937;
+		background: var(--color-text);
 	}
 
 	.toast-message {
@@ -89,11 +89,11 @@
 
 	.toast-action {
 		background: rgba(255, 255, 255, 0.2);
-		color: #fff;
+		color: var(--color-bg);
 		border: 1px solid rgba(255, 255, 255, 0.35);
-		padding: 0.25rem 0.625rem;
-		border-radius: 4px;
-		font-size: 0.8125rem;
+		padding: var(--spacing-1) var(--spacing-2);
+		border-radius: var(--radius-sm);
+		font-size: var(--text-sm);
 		font-weight: 500;
 		cursor: pointer;
 	}
@@ -103,20 +103,20 @@
 	}
 
 	.toast-action:focus-visible {
-		outline: 2px solid #fff;
+		outline: 2px solid var(--color-bg);
 		outline-offset: 2px;
 	}
 
 	.toast-dismiss {
 		background: none;
 		border: none;
-		color: #fff;
-		font-size: 1.25rem;
+		color: var(--color-bg);
+		font-size: var(--text-xl);
 		line-height: 1;
-		padding: 0 0.25rem;
+		padding: 0 var(--spacing-1);
 		cursor: pointer;
 		opacity: 0.8;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 	}
 
 	.toast-dismiss:hover {
@@ -124,7 +124,7 @@
 	}
 
 	.toast-dismiss:focus-visible {
-		outline: 2px solid #fff;
+		outline: 2px solid var(--color-bg);
 		outline-offset: 2px;
 	}
 </style>

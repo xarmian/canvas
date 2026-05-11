@@ -46,7 +46,7 @@
 <style>
 	.message {
 		margin: 0;
-		color: #333;
+		color: var(--color-text-muted);
 		line-height: 1.5;
 	}
 </style>
