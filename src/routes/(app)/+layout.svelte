@@ -2,6 +2,7 @@
 	import { authClient } from '$lib/auth-client';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { Button } from '$lib/components/ui';
 
 	let { data, children } = $props();
 
@@ -16,24 +17,17 @@
 	let pathname = $derived(page.url.pathname);
 </script>
 
-<div style="min-height: 100vh;">
-	<header
-		style="display: flex; justify-content: space-between; align-items: center; padding: 1rem 2rem; border-bottom: 1px solid #e5e7eb; gap: 1.5rem;"
-	>
-		<div style="display: flex; align-items: center; gap: 1.5rem;">
-			<a
-				href="/dashboard"
-				style="font-weight: bold; font-size: 1.25rem; text-decoration: none; color: inherit;"
-				>Canvas</a
-			>
-			<nav aria-label="Primary" style="display: flex; gap: 1rem; font-size: 0.9rem;">
+<div class="app-shell">
+	<header class="app-header">
+		<div class="app-brand-row">
+			<a href="/dashboard" class="app-brand">Canvas</a>
+			<nav aria-label="Primary" class="app-nav">
 				<a
 					href="/dashboard"
 					data-testid="nav-dashboard"
 					aria-current={pathname === '/dashboard' ? 'page' : undefined}
-					style="text-decoration: none; color: {pathname === '/dashboard'
-						? '#111'
-						: '#64748b'}; font-weight: {pathname === '/dashboard' ? 600 : 400};"
+					class="app-nav-link"
+					class:active={pathname === '/dashboard'}
 				>
 					Dashboard
 				</a>
@@ -41,9 +35,8 @@
 					href="/templates"
 					data-testid="nav-templates"
 					aria-current={pathname.startsWith('/templates') ? 'page' : undefined}
-					style="text-decoration: none; color: {pathname.startsWith('/templates')
-						? '#111'
-						: '#64748b'}; font-weight: {pathname.startsWith('/templates') ? 600 : 400};"
+					class="app-nav-link"
+					class:active={pathname.startsWith('/templates')}
 				>
 					Templates
 				</a>
@@ -51,25 +44,81 @@
 					href="/assets"
 					data-testid="nav-assets"
 					aria-current={pathname.startsWith('/assets') ? 'page' : undefined}
-					style="text-decoration: none; color: {pathname.startsWith('/assets')
-						? '#111'
-						: '#64748b'}; font-weight: {pathname.startsWith('/assets') ? 600 : 400};"
+					class="app-nav-link"
+					class:active={pathname.startsWith('/assets')}
 				>
 					Assets
 				</a>
 			</nav>
 		</div>
-		<div style="display: flex; align-items: center; gap: 1rem;">
-			<span>{data.user?.name ?? data.user?.email}</span>
-			<button
-				onclick={handleLogout}
-				style="padding: 0.5rem 1rem; background: none; border: 1px solid #d1d5db; border-radius: 0.375rem; cursor: pointer;"
-			>
-				Log out
-			</button>
+		<div class="app-user-row">
+			<span class="app-user-name">{data.user?.name ?? data.user?.email}</span>
+			<Button variant="secondary" size="sm" onclick={handleLogout}>Log out</Button>
 		</div>
 	</header>
-	<main style="padding: 2rem;">
+	<main class="app-main">
 		{@render children()}
 	</main>
 </div>
+
+<style>
+	.app-shell {
+		min-height: 100vh;
+		background: var(--color-bg);
+		color: var(--color-text);
+	}
+
+	.app-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: var(--spacing-4) var(--spacing-8);
+		border-bottom: 1px solid var(--color-border);
+		gap: var(--spacing-6);
+	}
+
+	.app-brand-row {
+		display: flex;
+		align-items: center;
+		gap: var(--spacing-6);
+	}
+
+	.app-brand {
+		font-weight: 700;
+		font-size: var(--text-xl);
+		text-decoration: none;
+		color: inherit;
+	}
+
+	.app-nav {
+		display: flex;
+		gap: var(--spacing-4);
+		font-size: var(--text-base);
+	}
+
+	.app-nav-link {
+		text-decoration: none;
+		color: var(--color-text-subtle);
+		font-weight: 400;
+	}
+
+	.app-nav-link.active {
+		color: var(--color-text);
+		font-weight: 600;
+	}
+
+	.app-user-row {
+		display: flex;
+		align-items: center;
+		gap: var(--spacing-4);
+	}
+
+	.app-user-name {
+		font-size: var(--text-base);
+		color: var(--color-text-muted);
+	}
+
+	.app-main {
+		padding: var(--spacing-8);
+	}
+</style>
