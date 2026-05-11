@@ -73,50 +73,14 @@ test.describe('Asset proxy (BT-154)', () => {
 		expect(probe.naturalWidth).toBeGreaterThan(0);
 		expect(probe.naturalHeight).toBeGreaterThan(0);
 	});
-
-	test('preview render includes asset bytes (server short-circuits /api/assets)', async ({
-		page,
-		baseURL,
-		request
-	}) => {
-		await signupAndLogin(page);
-		const canvas = await createCanvas(page);
-
-		// Add the image layer to the canvas + wait for autosave so the
-		// templateJson with the asset reference is persisted server-side.
-		await addImageLayer(page, {
-			name: 'bt154-render.png',
-			mimeType: 'image/png',
-			buffer: ONE_BY_ONE_PNG
-		});
-		await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 8_000 });
-
-		// Hit the preview endpoint directly with the same authenticated
-		// session the page has. `request` inherits cookies from `page`'s
-		// context in Playwright. The response body is a raw PNG.
-		const previewUrl = `${baseURL}/api/canvas/${canvas.id}/preview?_t=${Date.now()}`;
-		const cookies = await page.context().cookies();
-		const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
-		const res = await request.get(previewUrl, { headers: { cookie: cookieHeader } });
-		expect(res.status(), 'preview endpoint should return the PNG').toBe(200);
-		const body = await res.body();
-		// PNG signature: 89 50 4E 47 0D 0A 1A 0A.
-		expect(body[0]).toBe(0x89);
-		expect(body[1]).toBe(0x50);
-		expect(body[2]).toBe(0x4e);
-		expect(body[3]).toBe(0x47);
-
-		// Body is non-trivial — a "render-failed-to-include-image" version
-		// of the canvas would still produce a valid PNG (just the canvas
-		// background), but a successfully-included single-pixel asset
-		// adds compressed data. Use a lower bound that comfortably clears
-		// "background only" (a 1200×630 solid-color PNG is well under 5KB
-		// post-compression; we picked 1KB as the floor that catches the
-		// regression without false positives from incidental size drift).
-		// The bigger signal is that the preview was generated at all —
-		// pre-fix, the server's loadRemoteImage SSRF guard rejected the
-		// /api/assets URL and the renderer's drawImage step skipped the
-		// layer entirely.
-		expect(body.byteLength).toBeGreaterThan(1000);
-	});
 });
+
+// Note: dropped a second test that hit `/api/canvas/{id}/preview` and
+// asserted `body.byteLength > 1000`. A blank 1200×630 PNG already
+// exceeds that threshold (~4.5KB post-compression), so the assertion
+// would have passed even with the image silently skipped — false
+// confidence (Codex round 2). The asset-render path is exercised
+// strongly enough by the `asset-url-scheme.test.ts` / `asset-cache-
+// invalidation.test.ts` specs via the published `/c/{slug}/image.*`
+// route; the regression here is the URL contract that the test above
+// covers directly.
