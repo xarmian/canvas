@@ -126,13 +126,42 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	// using the request's query params, and we still emit the warning
 	// log when a placeholder isn't satisfied (TASK-96) — that signal is
 	// useful regardless of whether the redirect is auto or interstitial.
+	//
+	// SECURITY (Codex round 1, P1): the previous server-side 302 was
+	// immune to `javascript:`-scheme abuse because browsers don't
+	// execute scripts in `Location` headers. Rendering the resolved
+	// URL as a clickable `<a href>` is NOT immune — a creator could
+	// PATCH `redirectUrl=javascript:alert(...)`, or smuggle it through
+	// a `{{param}}` substitution, and the Continue CTA would execute
+	// script on the app origin. Only emit the URL when its
+	// post-substitution scheme is http(s). Anything else collapses to
+	// `null` and the landing renders without a CTA — same fallback
+	// the no-redirect case uses, so layout is unchanged.
 	let redirectUrl: string | null = null;
 	if (canvas.redirectUrl) {
-		redirectUrl = substituteParams(canvas.redirectUrl, queryParams);
+		const resolved = substituteParams(canvas.redirectUrl, queryParams);
 		const missing = findUnsubstitutedPlaceholders(canvas.redirectUrl, queryParams);
 		if (missing.length > 0) {
 			console.warn(
 				`[redirect] unsubstituted placeholders slug=${canvas.slug} missing=${missing.join(',')}`
+			);
+		}
+		try {
+			const parsed = new URL(resolved);
+			if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+				redirectUrl = resolved;
+			} else {
+				console.warn(
+					`[redirect] dropped non-http(s) scheme slug=${canvas.slug} scheme=${parsed.protocol}`
+				);
+			}
+		} catch {
+			// URL constructor throws for bare-`{{param}}` cases where the
+			// whole URL was a placeholder that didn't resolve, or for
+			// inputs the publish form somehow accepted that aren't
+			// parseable. Either way, render the landing without the CTA.
+			console.warn(
+				`[redirect] unparseable resolved URL slug=${canvas.slug} raw=${canvas.redirectUrl}`
 			);
 		}
 	}

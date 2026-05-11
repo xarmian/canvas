@@ -1124,8 +1124,8 @@
 					onblur={(e) => persistSharingField('redirectUrl', e.currentTarget.value)}
 				/>
 				<p class="help">
-					Humans get a 302 to this URL. Bots see the OG card. Use
-					<code>{'{{paramName}}'}</code> to substitute query parameters into the redirect.
+					Visitors see a "Continue to {'{host}'}" button pointing here. Bots see the OG card. Use
+					<code>{'{{paramName}}'}</code> to substitute query parameters into the destination.
 				</p>
 
 				<!--
