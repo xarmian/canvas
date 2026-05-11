@@ -426,7 +426,7 @@
 	 * validating here keeps consumers/devs sane and flags typos early. */
 	const VALID_PARAM_NAME = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 	function paramNameWarning(name: string): string {
-		if (!name) return 'Give this parameter a name, e.g. "title".';
+		if (!name) return 'Name this dynamic value, e.g. "title".';
 		if (!VALID_PARAM_NAME.test(name)) {
 			return 'Use letters, numbers, underscores, or dashes. Start with a letter.';
 		}
@@ -478,12 +478,12 @@
 		class:bind-btn-editing={bindEditingProp === propKey}
 		onclick={() => openBindEditor(propKey)}
 		aria-label={bound
-			? `Edit URL parameter binding for ${meta.label} (currently ?${bound.param || '(unnamed)'})`
-			: `Make ${meta.label} dynamic — bind to a URL parameter`}
+			? `Edit dynamic value for ${meta.label} (currently ?${bound.param || '(unnamed)'})`
+			: `Make ${meta.label} dynamic`}
 		aria-expanded={bindEditingProp === propKey}
 		title={bound
-			? `Bound to ?${bound.param || '(unnamed)'} — click to edit`
-			: 'Make dynamic — bind to a URL parameter'}
+			? `Dynamic — ?${bound.param || '(unnamed)'}. Click to edit.`
+			: 'Make this property dynamic'}
 		data-testid="bind-btn-{propKey}"
 	>
 		<Zap size={12} strokeWidth={2.25} />
@@ -499,10 +499,10 @@
 			{@const urls = urlExample(bound.param, bound.default, meta.sample)}
 			<div class="binding-fields bind-editor-card" data-testid="bind-editor-{propKey}">
 				<div class="bind-editor-header">
-					<span class="bind-editor-title">Binding · {meta.label}</span>
+					<span class="bind-editor-title">Dynamic value · {meta.label}</span>
 				</div>
 				<div class="field-row">
-					<label class="field-label small" for="bind-{propKey}-param">Param name</label>
+					<label class="field-label small" for="bind-{propKey}-param">URL value name</label>
 					<input
 						id="bind-{propKey}-param"
 						type="text"
@@ -527,7 +527,7 @@
 						class="field-input"
 						value={bound.default}
 						oninput={(e) => setBinding(propKey, 'default', e.currentTarget.value)}
-						placeholder="used when URL omits this param"
+						placeholder="used when URL omits this value"
 					/>
 				</div>
 				{#if meta.allowFormat}
@@ -581,7 +581,7 @@
 						onclick={() => unbind(propKey)}
 						data-testid="bind-editor-unbind-{propKey}"
 					>
-						Unbind
+						Remove
 					</button>
 					<button type="button" class="bind-editor-done" onclick={closeBindEditor}> Done </button>
 				</div>
@@ -939,9 +939,9 @@
 			<section class="section" data-testid="property-section-dynamic">
 				<h4 class="section-title section-title-static">
 					<span>
-						Bound Parameters
+						Dynamic values
 						{#if boundCount > 0}
-							<span class="bound-count" aria-label="{boundCount} bound">{boundCount}</span>
+							<span class="bound-count" aria-label="{boundCount} dynamic">{boundCount}</span>
 						{/if}
 					</span>
 				</h4>
@@ -965,7 +965,7 @@
 									class="bound-summary-jump"
 									class:bound-summary-jump-active={bindEditingProp === propKey}
 									onclick={() => openBindEditor(propKey)}
-									title="Edit binding"
+									title="Edit dynamic value"
 									data-testid="bound-summary-jump-{propKey}"
 								>
 									<Zap size={11} strokeWidth={2.5} />
@@ -977,8 +977,8 @@
 									type="button"
 									class="bound-summary-unbind"
 									onclick={() => unbind(propKey)}
-									aria-label="Unbind {meta.label}"
-									title="Unbind"
+									aria-label="Remove dynamic value for {meta.label}"
+									title="Remove"
 								>
 									×
 								</button>
@@ -1012,7 +1012,7 @@
 
 				{#if conditionalsExpanded}
 					<p class="bindings-intro">
-						Override <code>fill</code>, <code>opacity</code>, or <code>visible</code> when a URL parameter
+						Override <code>fill</code>, <code>opacity</code>, or <code>visible</code> when a URL value
 						matches a condition. Use this for red-on-loss / green-on-gain cards.
 					</p>
 
@@ -1032,8 +1032,8 @@
 												!!refStatus.suggestion}
 											value={rule.when.param}
 											oninput={(e) => updateRule(i, 'when', 'param', e.currentTarget.value)}
-											placeholder="param"
-											aria-label="Rule {i + 1} parameter name"
+											placeholder="value name"
+											aria-label="Rule {i + 1} URL value name"
 											aria-describedby={refStatus.kind === 'unknown' && refStatus.suggestion
 												? `rule-${i}-param-warning`
 												: undefined}
