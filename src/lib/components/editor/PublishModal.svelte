@@ -2,6 +2,7 @@
 	import { untrack } from 'svelte';
 	import { Modal, Button, Input, Textarea, ErrorState, LoadingSkeleton } from '$lib/components/ui';
 	import { toast } from '$lib/stores/toast.svelte';
+	import { copyToClipboard } from '$lib/share-clipboard';
 	import { nearestParamName } from './param-validation';
 
 	export interface PublishModalBinding {
@@ -907,12 +908,10 @@
 	}
 
 	async function copy(value: string, label: string) {
-		try {
-			await navigator.clipboard.writeText(value);
-			toast.success(`${label} copied to clipboard`);
-		} catch {
-			toast.error(`Couldn't copy ${label.toLowerCase()}. Select the text and copy manually.`);
-		}
+		// Delegates to the canonical helper so clipboard logic, fallback
+		// path, and toast wording stay consistent across the editor
+		// toolbar, this modal, and the dashboard card menu (TASK-132).
+		await copyToClipboard(value, { success: `${label} copied to clipboard` });
 	}
 </script>
 

@@ -49,6 +49,7 @@
 		serializeAssetLinks
 	} from '$lib/components/editor/asset-link';
 	import { toast } from '$lib/stores/toast.svelte';
+	import { copyToClipboard } from '$lib/share-clipboard';
 	import { ConfirmDialog } from '$lib/components/ui';
 	import { fontStore } from '$lib/stores/fonts.svelte';
 
@@ -1189,37 +1190,14 @@
 	 * Copy the current share URL to the clipboard. Toast confirms the
 	 * action — without it the user has no signal whether the click
 	 * registered, and the URL itself is not visually distinguishable
-	 * from before vs. after the copy. Falls back to a textarea-select
-	 * approach on the (rare) clients without async clipboard support
-	 * (in-app webviews, older Safari) so the button is never a no-op.
+	 * from before vs. after the copy. The shared helper handles
+	 * fallback to the textarea-select approach on the (rare) clients
+	 * without async clipboard support so the button is never a no-op.
 	 */
 	async function copyShareUrl(): Promise<void> {
 		const url = shareUrlWithParams;
 		if (!url) return;
-		try {
-			if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-				await navigator.clipboard.writeText(url);
-			} else {
-				// Fallback: synthesize a hidden textarea and use the legacy
-				// document.execCommand('copy') path. Permissions for the
-				// async clipboard API are gated by user activation, which
-				// IS present here (the click handler), so the fallback is
-				// almost never exercised — but skipping it would leave a
-				// dead button on environments that disable the modern API.
-				const ta = document.createElement('textarea');
-				ta.value = url;
-				ta.setAttribute('readonly', '');
-				ta.style.position = 'fixed';
-				ta.style.left = '-9999px';
-				document.body.appendChild(ta);
-				ta.select();
-				document.execCommand('copy');
-				document.body.removeChild(ta);
-			}
-			toast.success('Share URL copied');
-		} catch {
-			toast.error("Couldn't copy URL — copy it from the field above instead.");
-		}
+		await copyToClipboard(url, { success: 'Share URL copied' });
 	}
 
 	/**
