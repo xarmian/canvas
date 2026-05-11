@@ -596,6 +596,58 @@
 				editorRef?.nudgeSelected(dx, dy);
 				return;
 			}
+			// Align (Alt+Shift+L/C/R/T/M/B) and Distribute (Alt+Shift+H/V)
+			// — TASK-133. Alt+Shift was chosen because it's unbound on
+			// Chrome/Firefox/Safari across macOS/Windows/Linux and doesn't
+			// collide with existing editor shortcuts (Cmd/Ctrl variants).
+			//
+			// Use `e.code` not `e.key` here: macOS's Option (Alt) key
+			// transforms the printed character (Option+L renders `¬`,
+			// not "l"), so reading `e.key` would miss the shortcut on
+			// every Mac. `e.code` reports the physical key regardless
+			// of modifier transforms.
+			//
+			// Selection gating mirrors the toolbar's:
+			//   - align actions require 2+ selected objects
+			//   - distribute actions require 3+ selected objects
+			// Below those thresholds the shortcut still consumes the
+			// keystroke (preventDefault) only when we have a match —
+			// otherwise it falls through so the browser keeps any
+			// native binding.
+			if (e.altKey && e.shiftKey && !e.metaKey && !e.ctrlKey) {
+				const selected = editorState.activeObjects.length;
+				const alignMap: Record<
+					string,
+					'left' | 'center-h' | 'right' | 'top' | 'center-v' | 'bottom'
+				> = {
+					KeyL: 'left',
+					KeyC: 'center-h',
+					KeyR: 'right',
+					KeyT: 'top',
+					KeyM: 'center-v',
+					KeyB: 'bottom'
+				};
+				const distributeMap: Record<string, 'h' | 'v'> = {
+					KeyH: 'h',
+					KeyV: 'v'
+				};
+				const alignDir = alignMap[e.code];
+				if (alignDir) {
+					if (selected >= 2) {
+						e.preventDefault();
+						editorRef?.alignSelected(alignDir);
+					}
+					return;
+				}
+				const distributeAxis = distributeMap[e.code];
+				if (distributeAxis) {
+					if (selected >= 3) {
+						e.preventDefault();
+						editorRef?.distributeSelected(distributeAxis);
+					}
+					return;
+				}
+			}
 			const mod = e.metaKey || e.ctrlKey;
 			if (!mod) return;
 			const key = e.key.toLowerCase();
