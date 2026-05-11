@@ -192,8 +192,8 @@
 		height: 100%;
 		display: flex;
 		flex-direction: column;
-		border-left: 1px solid #ddd;
-		background: #fafafa;
+		border-left: 1px solid var(--color-border);
+		background: var(--color-surface);
 		font-family: system-ui, sans-serif;
 		font-size: 13px;
 		overflow: hidden;
@@ -204,7 +204,7 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 10px 12px;
-		border-bottom: 1px solid #ddd;
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.panel-header h3 {
@@ -214,11 +214,11 @@
 	}
 
 	.count {
-		background: #e0e0e0;
+		background: var(--color-border);
 		border-radius: 10px;
 		padding: 1px 8px;
 		font-size: 11px;
-		color: #555;
+		color: var(--color-text-muted);
 	}
 
 	.layer-list {
@@ -233,7 +233,7 @@
 		width: 100%;
 		padding: 6px 10px;
 		border: none;
-		border-bottom: 1px solid #eee;
+		border-bottom: 1px solid var(--color-border);
 		background: transparent;
 		cursor: pointer;
 		text-align: left;
@@ -242,11 +242,11 @@
 	}
 
 	.layer-row:hover {
-		background: #f0f0f0;
+		background: var(--color-surface-muted);
 	}
 
 	.layer-row.selected {
-		background: #d4e4ff;
+		background: var(--color-primary-surface);
 	}
 
 	.icon {
@@ -255,7 +255,7 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		color: #475569;
+		color: var(--color-text-muted);
 	}
 
 	.action-btn :global(svg) {
@@ -288,6 +288,6 @@
 
 	.action-btn:hover {
 		opacity: 1;
-		background: #ddd;
+		background: var(--color-border);
 	}
 </style>
