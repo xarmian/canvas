@@ -83,34 +83,34 @@
 	}
 
 	.banner {
-		background: #fff;
+		background: var(--color-bg);
 		border-radius: 12px;
 		box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
 		max-width: 28rem;
 		padding: 1.5rem 1.25rem;
 		text-align: center;
-		color: #1e293b;
+		color: var(--color-text);
 	}
 
 	.icon {
 		display: flex;
 		justify-content: center;
 		margin-bottom: 0.75rem;
-		color: #2563eb;
+		color: var(--color-primary);
 	}
 
 	.title {
 		margin: 0 0 0.5rem;
 		font-size: 1.1rem;
 		font-weight: 700;
-		color: #0f172a;
+		color: var(--color-text);
 	}
 
 	.lede {
 		margin: 0 0 1rem;
 		font-size: 0.9rem;
 		line-height: 1.55;
-		color: #475569;
+		color: var(--color-text-muted);
 	}
 
 	.actions {
@@ -134,28 +134,28 @@
 	}
 
 	.btn-primary {
-		background: #2563eb;
-		color: #fff;
+		background: var(--color-primary);
+		color: var(--color-bg);
 	}
 
 	.btn-primary:hover {
-		background: #1d4ed8;
+		background: var(--color-primary-hover);
 	}
 
 	.btn-secondary {
-		background: #fff;
-		color: #374151;
-		border-color: #d1d5db;
+		background: var(--color-bg);
+		color: var(--color-text-muted);
+		border-color: var(--color-border-strong);
 	}
 
 	.btn-secondary:hover {
-		background: #f3f4f6;
+		background: var(--color-surface-muted);
 	}
 
 	.hint {
 		margin: 0;
 		font-size: 0.75rem;
-		color: #94a3b8;
+		color: var(--color-text-subtle);
 		line-height: 1.45;
 	}
 </style>

@@ -85,7 +85,7 @@
 		font-size: 0.85rem;
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
-		color: #64748b;
+		color: var(--color-text-subtle);
 	}
 
 	.group ul {
@@ -113,7 +113,7 @@
 	}
 
 	.plus {
-		color: #94a3b8;
+		color: var(--color-text-subtle);
 		font-size: 0.75rem;
 	}
 
@@ -123,23 +123,23 @@
 		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 		font-size: 0.75rem;
 		font-weight: 500;
-		color: #1e293b;
-		background: #f1f5f9;
-		border: 1px solid #cbd5e1;
+		color: var(--color-text);
+		background: var(--color-surface-muted);
+		border: 1px solid var(--color-border-strong);
 		border-bottom-width: 2px;
 		border-radius: 4px;
 	}
 
 	.label {
-		color: #475569;
+		color: var(--color-text-muted);
 		text-align: right;
 	}
 
 	.note {
 		margin: 1rem 0 0;
 		padding-top: 0.75rem;
-		border-top: 1px solid #f1f5f9;
+		border-top: 1px solid var(--color-surface-muted);
 		font-size: 0.8rem;
-		color: #94a3b8;
+		color: var(--color-text-subtle);
 	}
 </style>

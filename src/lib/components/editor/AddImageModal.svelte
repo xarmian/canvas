@@ -304,7 +304,7 @@
 	.tab-row {
 		display: flex;
 		gap: 0.25rem;
-		border-bottom: 1px solid #e5e7eb;
+		border-bottom: 1px solid var(--color-border);
 		margin-bottom: 1rem;
 	}
 
@@ -317,23 +317,23 @@
 		background: transparent;
 		font-size: 0.875rem;
 		font-weight: 500;
-		color: #64748b;
+		color: var(--color-text-subtle);
 		cursor: pointer;
 		border-bottom: 2px solid transparent;
 		font-family: inherit;
 	}
 
 	.tab-btn:hover {
-		color: #1e293b;
+		color: var(--color-text);
 	}
 
 	.tab-btn.active {
-		color: #1e293b;
-		border-bottom-color: #2563eb;
+		color: var(--color-text);
+		border-bottom-color: var(--color-primary);
 	}
 
 	.tab-btn:focus-visible {
-		outline: 2px solid #2563eb;
+		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
 	}
 
@@ -349,7 +349,7 @@
 	.lede {
 		margin: 0;
 		font-size: 0.875rem;
-		color: #475569;
+		color: var(--color-text-muted);
 	}
 
 	.library-panel {
@@ -361,7 +361,7 @@
 	.library-empty {
 		padding: 1.5rem 1rem;
 		text-align: center;
-		color: #475569;
+		color: var(--color-text-muted);
 	}
 
 	.library-error p,
@@ -385,9 +385,9 @@
 		flex-direction: column;
 		gap: 0.25rem;
 		padding: 0.4rem;
-		border: 1px solid #e5e7eb;
+		border: 1px solid var(--color-border);
 		border-radius: 6px;
-		background: #fff;
+		background: var(--color-bg);
 		cursor: pointer;
 		font-family: inherit;
 		text-align: left;
@@ -395,12 +395,12 @@
 	}
 
 	.library-tile:hover {
-		border-color: #2563eb;
-		background: #f8fafc;
+		border-color: var(--color-primary);
+		background: var(--color-surface);
 	}
 
 	.library-tile:focus-visible {
-		outline: 2px solid #2563eb;
+		outline: 2px solid var(--color-primary);
 		outline-offset: 1px;
 	}
 
@@ -409,13 +409,14 @@
 		width: 100%;
 		aspect-ratio: 1 / 1;
 		object-fit: contain;
-		background: repeating-conic-gradient(#f3f4f6 0% 25%, #fff 0% 50%) 50% / 12px 12px;
+		background: repeating-conic-gradient(var(--color-surface-muted) 0% 25%, var(--color-bg) 0% 50%)
+			50% / 12px 12px;
 		border-radius: 4px;
 	}
 
 	.library-filename {
 		font-size: 0.7rem;
-		color: #475569;
+		color: var(--color-text-muted);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;

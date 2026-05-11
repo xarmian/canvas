@@ -543,7 +543,7 @@
 		   scroll. */
 		width: var(--canvas-w);
 		height: var(--canvas-h);
-		border: 1px solid #e2e8f0;
+		border: 1px solid var(--color-border);
 		border-radius: 4px;
 		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 		overflow: hidden;
@@ -553,7 +553,13 @@
 	.canvas-skeleton {
 		position: absolute;
 		inset: 0;
-		background: linear-gradient(90deg, #f1f5f9 0%, #e2e8f0 40%, #f1f5f9 80%, #f1f5f9 100%);
+		background: linear-gradient(
+			90deg,
+			var(--color-surface-muted) 0%,
+			var(--color-border) 40%,
+			var(--color-surface-muted) 80%,
+			var(--color-surface-muted) 100%
+		);
 		background-size: 200% 100%;
 		animation: canvas-shimmer 1.4s ease-in-out infinite;
 		pointer-events: none;
@@ -572,12 +578,12 @@
 	@media (prefers-reduced-motion: reduce) {
 		.canvas-skeleton {
 			animation: none;
-			background: #e2e8f0;
+			background: var(--color-border);
 		}
 	}
 
 	.canvas-wrapper:focus-within {
-		border-color: #94a3b8;
+		border-color: var(--color-text-subtle);
 		box-shadow:
 			0 1px 3px rgba(0, 0, 0, 0.1),
 			0 0 0 2px rgba(99, 102, 241, 0.2);

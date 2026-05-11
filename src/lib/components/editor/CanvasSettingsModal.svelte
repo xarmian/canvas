@@ -289,7 +289,7 @@
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.5px;
-		color: #6b7280;
+		color: var(--color-text-subtle);
 		margin-bottom: 0.5rem;
 	}
 
@@ -305,21 +305,21 @@
 		align-items: center;
 		gap: 0.4rem;
 		padding: 0.4rem 0.6rem;
-		border: 1px solid #d1d5db;
+		border: 1px solid var(--color-border-strong);
 		border-radius: 5px;
 		cursor: pointer;
 		font-size: 0.8125rem;
-		background: #fff;
+		background: var(--color-bg);
 	}
 
 	.preset:hover {
-		background: #f9fafb;
+		background: var(--color-surface-muted);
 	}
 
 	.preset.active {
-		border-color: #2563eb;
-		background: #eff6ff;
-		color: #1d4ed8;
+		border-color: var(--color-primary);
+		background: var(--color-primary-surface);
+		color: var(--color-primary-hover);
 	}
 
 	.preset input[type='radio'] {
@@ -332,12 +332,12 @@
 	}
 
 	.preset small {
-		color: #9ca3af;
+		color: var(--color-text-subtle);
 		font-size: 0.7rem;
 	}
 
 	.preset.active small {
-		color: #2563eb;
+		color: var(--color-primary);
 	}
 
 	.dim-row {
@@ -355,7 +355,7 @@
 
 	.dim-field > span:first-child {
 		font-weight: 500;
-		color: #374151;
+		color: var(--color-text-muted);
 		width: 3rem;
 	}
 
@@ -371,7 +371,7 @@
 	}
 
 	.dim-field .unit {
-		color: #9ca3af;
+		color: var(--color-text-subtle);
 		font-size: 0.75rem;
 	}
 
@@ -395,11 +395,11 @@
 	.warn {
 		margin: 0 0 0.5rem;
 		padding: 0.55rem 0.75rem;
-		background: #fffbeb;
-		border: 1px solid #fde68a;
+		background: var(--color-warning-surface);
+		border: 1px solid var(--color-warning-border);
 		border-radius: 5px;
 		font-size: 0.8125rem;
-		color: #92400e;
+		color: var(--color-warning-text);
 		line-height: 1.45;
 	}
 </style>
