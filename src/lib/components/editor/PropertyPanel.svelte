@@ -1,9 +1,17 @@
 <script lang="ts">
 	import type { FabricObject } from 'fabric';
-	import { ChevronRight, AlignLeft, AlignCenter, AlignRight, Zap } from '@lucide/svelte';
+	import {
+		ChevronRight,
+		AlignLeft,
+		AlignCenter,
+		AlignRight,
+		Zap,
+		MousePointer2
+	} from '@lucide/svelte';
 	import { editorState, markDirty } from './state.svelte.ts';
 	import { fontStore } from '$lib/stores/fonts.svelte';
 	import { paramRefStatus } from './param-validation';
+	import { LoadingSkeleton, EmptyState } from '$lib/components/ui';
 
 	// --- Derived properties from the selected object ---
 	// editorState.editGeneration is read to force re-derivation when Fabric mutates
@@ -583,10 +591,27 @@
 {/snippet}
 
 <aside class="property-panel">
-	{#if !editorState.selectedObject}
-		<div class="empty-state">
-			<p>No selection</p>
-			<span class="hint">Click an object on the canvas to edit its properties</span>
+	{#if !editorState.fabricCanvas}
+		<!--
+			Loading state — Fabric is still initializing. Skeleton rows
+			match the typical property-panel layout (label + input pairs)
+			so the perceived chrome doesn't shift when real properties
+			render. The Editor unmounts/remounts Fabric on canvas swap, so
+			this state can also re-appear briefly mid-session.
+		-->
+		<div class="panel-skeleton" aria-label="Loading properties">
+			<LoadingSkeleton width="50%" height="14px" />
+			<LoadingSkeleton lines={2} />
+			<LoadingSkeleton width="40%" height="12px" />
+			<LoadingSkeleton lines={3} />
+		</div>
+	{:else if !editorState.selectedObject}
+		<div class="empty-wrapper">
+			<EmptyState
+				icon={MousePointer2}
+				title="No selection"
+				description="Click an object on the canvas to edit its properties."
+			/>
 		</div>
 	{:else}
 		<header class="panel-header">
@@ -1267,26 +1292,26 @@
 		overflow: hidden;
 	}
 
-	.empty-state {
+	/*
+	 * Wrap the EmptyState primitive so it sits centered inside the
+	 * fixed-height panel column rather than collapsing to its content
+	 * height (the primitive's outer flex doesn't fill its parent).
+	 */
+	.empty-wrapper {
 		display: flex;
-		flex-direction: column;
 		align-items: center;
 		justify-content: center;
 		height: 100%;
-		color: var(--color-text-subtle);
-		text-align: center;
-		padding: 20px;
+		padding: var(--spacing-4);
 	}
 
-	.empty-state p {
-		margin: 0 0 4px;
-		font-weight: 600;
-		font-size: 14px;
-	}
-
-	.hint {
-		font-size: 11px;
-		color: var(--color-text-subtle);
+	/* Loading skeleton stack — matches the typical label/input cadence
+	 * so the layout doesn't reflow when real properties render. */
+	.panel-skeleton {
+		display: flex;
+		flex-direction: column;
+		gap: var(--spacing-3);
+		padding: var(--spacing-4);
 	}
 
 	.panel-header {
