@@ -1,5 +1,25 @@
 <script lang="ts">
+	import { ArrowRight } from '@lucide/svelte';
+
 	let { data } = $props();
+
+	/** Friendly label for the Continue CTA — show the destination host
+	 *  rather than the full URL. Full URLs on a mobile button truncate
+	 *  awkwardly and obscure trust signals. The host is what users
+	 *  scan for ("am I going to twitter.com or twiter.com?"). The
+	 *  underlying anchor still navigates to the full substituted URL,
+	 *  so query params + paths are preserved. */
+	const redirectHost = $derived.by(() => {
+		if (!data.redirectUrl) return null;
+		try {
+			return new URL(data.redirectUrl).host;
+		} catch {
+			// Fall back to the raw URL if it failed to parse — shouldn't
+			// happen because the publish form validates URLs, but the
+			// {{param}} substitution path could in theory produce one.
+			return data.redirectUrl;
+		}
+	});
 </script>
 
 <svelte:head>
@@ -36,16 +56,57 @@
 	<meta name="description" content={data.ogDescription} />
 </svelte:head>
 
-<!-- Landing page for human visitors when no redirect is configured -->
+<!--
+	Public landing page for `/c/{slug}`. Two shapes:
+
+	  – No redirect configured → preview card + "Created with Canvas"
+	    footer. This is the social-share interstitial that bots scrape
+	    for OG meta and humans see when they tap the link from Twitter
+	    or similar.
+
+	  – Redirect configured → same card + prominent "Continue to {host}"
+	    CTA. Replaces the previous server-side 302 (see +page.server.ts
+	    for rationale). The CTA is a plain anchor so middle-click /
+	    long-press "Open in new tab" / right-click semantics all work,
+	    and so screen readers announce it as a link, not a button.
+
+	The layout is mobile-first: 1rem of padding at small viewports
+	(audit flagged 2rem as too aggressive at 375px wide — left ~85px
+	usable). Larger viewports get more breathing room. Tokens come
+	from app.css so the page matches the rest of the product.
+-->
 <div class="landing">
 	<div class="card">
-		<img src={data.imageUrl} alt={data.ogTitle} class="preview" />
-		<h1>{data.ogTitle}</h1>
-		<p>{data.ogDescription}</p>
-		<p class="meta">
-			{data.canvas.width} × {data.canvas.height} · Created with
-			<a href="/">Canvas</a>
-		</p>
+		<img
+			src={data.imageUrl}
+			alt={data.ogTitle}
+			class="preview"
+			width={data.canvas.width}
+			height={data.canvas.height}
+			loading="eager"
+			decoding="async"
+		/>
+		<div class="body">
+			<h1>{data.ogTitle}</h1>
+			<p class="description">{data.ogDescription}</p>
+
+			{#if data.redirectUrl && redirectHost}
+				<a
+					href={data.redirectUrl}
+					class="continue"
+					rel="noopener"
+					aria-label="Continue to {redirectHost}"
+				>
+					<span>Continue to {redirectHost}</span>
+					<ArrowRight size={18} aria-hidden="true" />
+				</a>
+			{/if}
+
+			<p class="meta">
+				{data.canvas.width} × {data.canvas.height} · Created with
+				<a href="/" class="brand">Canvas</a>
+			</p>
+		</div>
 	</div>
 </div>
 
@@ -53,44 +114,135 @@
 	.landing {
 		display: flex;
 		justify-content: center;
-		align-items: center;
+		align-items: flex-start;
 		min-height: 100vh;
-		background: #f5f5f5;
-		padding: 2rem;
+		background: var(--color-surface);
+		padding: var(--spacing-4);
 	}
 
 	.card {
-		background: white;
-		border-radius: 12px;
-		box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+		background: var(--color-bg);
+		border-radius: var(--radius-xl);
+		box-shadow: var(--shadow-lg);
 		max-width: 640px;
 		width: 100%;
 		overflow: hidden;
-		text-align: center;
+		margin-block: var(--spacing-6) var(--spacing-8);
 	}
 
 	.preview {
 		width: 100%;
 		height: auto;
 		display: block;
+		/* Keep the image from blowing past the canvas's intrinsic
+		   ratio when the viewport is wider than the canvas itself. */
+		background: var(--color-surface-muted);
+	}
+
+	.body {
+		padding: var(--spacing-6) var(--spacing-4) var(--spacing-4);
+		text-align: center;
 	}
 
 	h1 {
-		margin: 1.5rem 1.5rem 0.5rem;
-		font-size: 1.5rem;
+		margin: 0 0 var(--spacing-2);
+		font-size: var(--text-xl);
+		font-weight: 600;
+		color: var(--color-text);
+		line-height: 1.3;
+		/* Long titles on narrow viewports — wrap aggressively rather
+		   than horizontally scrolling. */
+		overflow-wrap: anywhere;
 	}
 
-	p {
-		margin: 0 1.5rem 1rem;
-		color: #6b7280;
+	.description {
+		margin: 0 0 var(--spacing-4);
+		font-size: var(--text-md);
+		color: var(--color-text-muted);
+		line-height: 1.5;
+		overflow-wrap: anywhere;
+	}
+
+	/* Continue-to CTA. Sized for thumb reach: min 44px tall (Apple HIG
+	   minimum touch target). Full-width on mobile so the entire CTA
+	   row is tappable without precision aim. */
+	.continue {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: var(--spacing-2);
+		width: 100%;
+		min-height: 44px;
+		padding: var(--spacing-3) var(--spacing-4);
+		margin-block: var(--spacing-2) var(--spacing-4);
+		background: var(--color-primary);
+		color: var(--color-bg);
+		font-size: var(--text-md);
+		font-weight: 600;
+		text-decoration: none;
+		border-radius: var(--radius-md);
+		transition:
+			background 0.15s ease,
+			transform 0.05s ease;
+		/* Long redirect hosts (e.g. ".onion" addresses, IP literals)
+		   should ellipsize rather than overflow. */
+		overflow: hidden;
+	}
+
+	.continue span {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		min-width: 0;
+	}
+
+	.continue:hover {
+		background: var(--color-primary-hover);
+	}
+
+	.continue:active {
+		transform: translateY(1px);
+	}
+
+	.continue:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
 	}
 
 	.meta {
-		font-size: 0.875rem;
-		padding-bottom: 1.5rem;
+		margin: 0;
+		font-size: var(--text-sm);
+		color: var(--color-text-subtle);
 	}
 
-	a {
-		color: #2563eb;
+	.brand {
+		color: var(--color-primary);
+		text-decoration: none;
+	}
+
+	.brand:hover {
+		text-decoration: underline;
+	}
+
+	/* Wider viewports — restore breathing room. */
+	@media (min-width: 640px) {
+		.landing {
+			padding: var(--spacing-8);
+		}
+
+		.body {
+			padding: var(--spacing-6);
+		}
+
+		h1 {
+			font-size: var(--text-2xl);
+		}
+
+		.continue {
+			/* On larger screens an inline-auto-width button reads less
+			   like a primary action banner and more like a CTA chip. */
+			width: auto;
+			min-width: 14rem;
+		}
 	}
 </style>

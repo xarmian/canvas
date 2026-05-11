@@ -27,44 +27,12 @@
  * See `src/lib/server/slug.ts` for the format rules and uniqueness
  * resolver this route depends on.
  */
-import { redirect, error } from '@sveltejs/kit';
+import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { db } from '$lib/server/db';
 import { canvases } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { resolveContentVersion } from '$lib/server/content-version';
-
-const BOT_USER_AGENTS = [
-	'twitterbot',
-	'facebookexternalhit',
-	'linkedinbot',
-	'slackbot',
-	'discordbot',
-	'telegrambot',
-	'whatsapp',
-	'googlebot',
-	'bingbot',
-	'yandexbot',
-	'baiduspider',
-	'duckduckbot',
-	'embedly',
-	'quora link preview',
-	'showyoubot',
-	'outbrain',
-	'pinterestbot',
-	'applebot',
-	'redditbot',
-	'rogerbot',
-	'vkshare',
-	'w3c_validator',
-	'tumblr',
-	'skypeuripreview'
-];
-
-function isBot(userAgent: string): boolean {
-	const ua = userAgent.toLowerCase();
-	return BOT_USER_AGENTS.some((bot) => ua.includes(bot));
-}
 
 /** Match a single `{{paramName}}` placeholder. Allows `[\w-]` so a
  *  user binding `utm-source` works the same as `utmSource`. */
@@ -94,7 +62,7 @@ function findUnsubstitutedPlaceholders(template: string, params: Record<string, 
 	return [...missing];
 }
 
-export const load: PageServerLoad = async ({ params, url, request }) => {
+export const load: PageServerLoad = async ({ params, url }) => {
 	// Load canvas by slug (must be published)
 	const [canvas] = await db.select().from(canvases).where(eq(canvases.slug, params.slug));
 
@@ -140,28 +108,33 @@ export const load: PageServerLoad = async ({ params, url, request }) => {
 		? substituteParams(canvas.ogDescription, queryParams)
 		: `Created with Canvas`;
 
-	// Check if this is a bot/crawler
-	const userAgent = request.headers.get('user-agent') ?? '';
-
-	if (!isBot(userAgent)) {
-		// Human visitor — redirect to configured destination or show landing page
-		if (canvas.redirectUrl) {
-			const redirectTo = substituteParams(canvas.redirectUrl, queryParams);
-			// Structured warning log when a placeholder couldn't be
-			// substituted: ops should be able to spot misconfigured
-			// canvases without grepping access logs (TASK-96). Substitution
-			// still proceeds — the missing placeholder collapses to '',
-			// which is preferable to either failing the redirect or
-			// leaking literal `{{name}}` into the destination URL.
-			const missing = findUnsubstitutedPlaceholders(canvas.redirectUrl, queryParams);
-			if (missing.length > 0) {
-				console.warn(
-					`[redirect] unsubstituted placeholders slug=${canvas.slug} missing=${missing.join(',')}`
-				);
-			}
-			redirect(302, redirectTo);
+	// Resolve the redirect destination (post-substitution) when one is
+	// configured. We render an explicit "Continue to {host}" CTA on the
+	// landing rather than auto-302'ing humans (TASK-139). Two reasons:
+	//
+	//   1. The most-trafficked path is a tap from a mobile social app.
+	//      An instant 302 shows a brief Canvas-branded flash before
+	//      bouncing, which reads as sketchy / loading-failure. A
+	//      branded interstitial with the visible destination host
+	//      reassures the user that the link is going where they expect.
+	//
+	//   2. Bots already skip the redirect — they need the landing for
+	//      OG meta scrape. Removing the user-agent branch keeps the
+	//      response shape uniform and removes a UA-sniffing path.
+	//
+	// Substitution still folds `{{param}}` placeholders into the URL
+	// using the request's query params, and we still emit the warning
+	// log when a placeholder isn't satisfied (TASK-96) — that signal is
+	// useful regardless of whether the redirect is auto or interstitial.
+	let redirectUrl: string | null = null;
+	if (canvas.redirectUrl) {
+		redirectUrl = substituteParams(canvas.redirectUrl, queryParams);
+		const missing = findUnsubstitutedPlaceholders(canvas.redirectUrl, queryParams);
+		if (missing.length > 0) {
+			console.warn(
+				`[redirect] unsubstituted placeholders slug=${canvas.slug} missing=${missing.join(',')}`
+			);
 		}
-		// No redirect configured — fall through to landing page
 	}
 
 	// Canonical share URL emitted as `og:url` (TASK-97). Strips the
@@ -190,6 +163,7 @@ export const load: PageServerLoad = async ({ params, url, request }) => {
 		canonicalShareUrl,
 		ogTitle,
 		ogDescription,
+		redirectUrl,
 		queryParams
 	};
 };
