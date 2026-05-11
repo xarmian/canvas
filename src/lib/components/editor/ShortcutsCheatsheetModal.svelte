@@ -20,19 +20,24 @@
 
 	const groups = [
 		{
-			title: 'Edit',
+			title: 'Editing',
 			items: [
 				{ keys: ['Cmd / Ctrl', 'Z'], label: 'Undo' },
 				{ keys: ['Cmd / Ctrl', 'Shift', 'Z'], label: 'Redo' },
 				{ keys: ['Cmd / Ctrl', 'D'], label: 'Duplicate selected' },
-				{ keys: ['Cmd / Ctrl', 'S'], label: 'Save now (also auto-saves)' },
-				{ keys: ['Delete'], label: 'Delete selected' },
-				{ keys: ['Esc'], label: 'Deselect' }
+				// Cmd/Ctrl+S blurs the active element before saving so any
+				// property-panel input that commits on `change` (X/Y/W/H,
+				// font size, etc.) flushes its pending value into Fabric
+				// before serialize. Worth surfacing because "save"
+				// otherwise feels surprising when an input is focused.
+				{ keys: ['Cmd / Ctrl', 'S'], label: 'Save (flushes input + auto-saves)' },
+				{ keys: ['Delete'], label: 'Delete selected' }
 			]
 		},
 		{
-			title: 'Move',
+			title: 'Selection',
 			items: [
+				{ keys: ['Esc'], label: 'Deselect' },
 				{ keys: ['Arrow keys'], label: 'Nudge selected by 1px' },
 				{ keys: ['Shift', 'Arrow keys'], label: 'Nudge selected by 10px' }
 			]
@@ -44,6 +49,23 @@
 				{ keys: ['Cmd / Ctrl', '['], label: 'Send backward' },
 				{ keys: ['Cmd / Ctrl', 'Shift', ']'], label: 'Bring to front' },
 				{ keys: ['Cmd / Ctrl', 'Shift', '['], label: 'Send to back' }
+			]
+		},
+		{
+			// TASK-133 — Alt+Shift was chosen because it's unbound on
+			// Chrome/Firefox/Safari across macOS/Windows/Linux. Align
+			// requires 2+ selected objects; distribute requires 3+
+			// (matches the toolbar's gating).
+			title: 'Alignment',
+			items: [
+				{ keys: ['Alt', 'Shift', 'L'], label: 'Align left' },
+				{ keys: ['Alt', 'Shift', 'C'], label: 'Align horizontal center' },
+				{ keys: ['Alt', 'Shift', 'R'], label: 'Align right' },
+				{ keys: ['Alt', 'Shift', 'T'], label: 'Align top' },
+				{ keys: ['Alt', 'Shift', 'M'], label: 'Align vertical center' },
+				{ keys: ['Alt', 'Shift', 'B'], label: 'Align bottom' },
+				{ keys: ['Alt', 'Shift', 'H'], label: 'Distribute horizontally' },
+				{ keys: ['Alt', 'Shift', 'V'], label: 'Distribute vertically' }
 			]
 		},
 		{
