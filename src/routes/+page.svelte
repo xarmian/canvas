@@ -49,11 +49,58 @@
 	let range = $state<'in_range' | 'edge' | 'out_of_range'>('in_range');
 	let boosted = $state(true);
 
+	/**
+	 * Small set of token-symbol → logo data URLs. The crypto-lp-card
+	 * template's `Image` layers fall back to a gray-circle-with-?
+	 * placeholder when no `tokenALogoUrl` / `tokenBLogoUrl` is supplied
+	 * (TASK-118). For the headline demo tokens we ship a real-looking
+	 * mark so first-time visitors don't see two question marks.
+	 *
+	 * Inlined as data URLs rather than `/static/...` paths because the
+	 * renderer's SSRF guard (`isUrlSafe` in src/lib/engine/images.ts)
+	 * rejects every non-http(s) URL, and an http URL pointing at
+	 * `localhost` is blocked too — so a relative path can't survive the
+	 * round-trip through the public render endpoint. Data URLs skip the
+	 * fetch path entirely via the inline decoder.
+	 *
+	 * Each glyph is ~250 bytes URL-encoded, so the demo URL grows
+	 * modestly even with both logos set. Visitors don't share the demo
+	 * URL itself (it's not the canonical share URL), so the bloat is
+	 * cosmetic at worst.
+	 */
+	const TOKEN_LOGOS: Record<string, string> = {
+		USDC:
+			'data:image/svg+xml;utf8,' +
+			encodeURIComponent(
+				'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#2775ca"/><text x="32" y="42" font-size="28" font-family="sans-serif" font-weight="700" text-anchor="middle" fill="#ffffff">$</text></svg>'
+			),
+		ETH:
+			'data:image/svg+xml;utf8,' +
+			encodeURIComponent(
+				'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#627eea"/><text x="32" y="42" font-size="28" font-family="sans-serif" font-weight="700" text-anchor="middle" fill="#ffffff">Ξ</text></svg>'
+			)
+	};
+
+	/** Case-insensitive lookup so a visitor typing `eth` still gets the
+	 *  matched logo. Returns null when the symbol isn't in the table —
+	 *  the template's GENERIC_TOKEN_FALLBACK (gray circle + ?) renders
+	 *  in that case, which is intentional signalling rather than a
+	 *  broken-looking missing asset. */
+	function logoFor(symbol: string): string | null {
+		return TOKEN_LOGOS[symbol.toUpperCase()] ?? null;
+	}
+
 	/** Build the live image URL from the demo state. Reactivity flows
 	 *  state → derived URL → <img src>; changing any input refetches the
-	 *  image, which is exactly the production code path. */
+	 *  image, which is exactly the production code path.
+	 *
+	 *  Param object is built as a plain record first, then handed to
+	 *  URLSearchParams in one shot — the `svelte/prefer-svelte-reactivity`
+	 *  lint rule flags mutable URLSearchParams usage, and we don't need
+	 *  the reactive variant here because the whole $derived recomputes
+	 *  on state change anyway. */
 	let imageUrl = $derived.by(() => {
-		const params = new URLSearchParams({
+		const fields: Record<string, string> = {
 			tokenA,
 			tokenB,
 			gainPercent: gainPercent.toFixed(3),
@@ -68,8 +115,16 @@
 			mark: (0.1 * (1 + gainPercent)).toFixed(4),
 			volume: '1234567',
 			timeframe: '24h'
-		});
-		return `/c/crypto-lp-card/image.png?${params.toString()}`;
+		};
+		// Set the logo URLs only when we have a match — leaving them
+		// absent lets the template's static placeholder render unchanged
+		// for unknown symbols. Setting them to '' would override the
+		// placeholder with an empty src and produce a broken image.
+		const aLogo = logoFor(tokenA);
+		if (aLogo) fields.tokenALogoUrl = aLogo;
+		const bLogo = logoFor(tokenB);
+		if (bLogo) fields.tokenBLogoUrl = bLogo;
+		return `/c/crypto-lp-card/image.png?${new URLSearchParams(fields).toString()}`;
 	});
 
 	/** Pretty-print the URL for the "this is what you'd tweet" copy. We
