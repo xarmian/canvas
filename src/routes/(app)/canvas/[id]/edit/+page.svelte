@@ -1911,6 +1911,12 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		max-width: 200px;
+		/* Prevent the flex layout from shrinking the canvas name to zero
+		   width when the toolbar gets crowded (e.g. with the TASK-150
+		   zoom widget added). `overflow: hidden` here would otherwise
+		   let flex collapse the element entirely, hiding the canvas
+		   name and breaking E2E selectors that target it (TASK-156). */
+		flex-shrink: 0;
 	}
 
 	.toolbar-actions {

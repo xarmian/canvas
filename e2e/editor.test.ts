@@ -67,7 +67,12 @@ test.describe('Editor UX', () => {
 
 	test('add text layer + inline edit content via property panel', async ({ page }) => {
 		await addTextLayer(page, 'First version');
-		const content = page.getByLabel('Content');
+		// Exact-match role lookup — `getByLabel('Content')` is ambiguous
+		// after TASK-148's inline ⚡ binding affordance (the sibling
+		// button's aria-label "Make Text Content dynamic" matches the
+		// substring). Same fix as the helpers/addTextLayer locator
+		// (TASK-156).
+		const content = page.getByRole('textbox', { name: 'Content', exact: true });
 		await expect(content).toHaveValue('First version');
 
 		// Edit again — the property panel should commit and keep the new

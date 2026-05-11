@@ -163,7 +163,18 @@ export async function addTextLayer(page: Page, text?: string): Promise<void> {
 	await page.getByTestId('toolbar-add-text').click();
 	// The new text object is auto-selected, so the property panel renders
 	// immediately. Wait for the Content textarea to appear before typing.
-	const contentField = page.getByLabel('Content');
+	//
+	// `getByRole('textbox', { name: 'Content', exact: true })` rather than
+	// `getByLabel('Content')` — TASK-156. The inline ⚡ binding affordance
+	// shipped in TASK-148 added a sibling `<button aria-label="Make Text
+	// Content dynamic">` on the same row as this textarea. `getByLabel`
+	// does substring matching of accessible names, so it matched BOTH the
+	// textarea (label "Content") and the bind button (aria-label contains
+	// "Content"), tripping Playwright's strict-mode "resolved to 2
+	// elements" error and silently breaking every spec that called this
+	// helper (3 in editor.test.ts, 1 in binding.test.ts, 1 in
+	// keyboard-shortcuts.test.ts). Exact-match role lookup is unambiguous.
+	const contentField = page.getByRole('textbox', { name: 'Content', exact: true });
 	await expect(contentField).toBeVisible({ timeout: 5_000 });
 	if (text !== undefined) {
 		await contentField.fill(text);
