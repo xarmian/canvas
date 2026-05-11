@@ -119,7 +119,11 @@ async function expectNoA11yViolations(
 test.describe('A11y smoke (axe-core)', () => {
 	test('public landing /', async ({ page }) => {
 		await page.goto('/');
-		await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+		// Route-specific readiness check (Codex round 2 P3) — matching
+		// the landing's hero copy rather than `level: 1` so a
+		// rendered SvelteKit error page (which also has an H1) can't
+		// satisfy the gate.
+		await expect(page.getByRole('heading', { name: /Tweet a dynamic image/i })).toBeVisible();
 		await expectNoA11yViolations(page, 'landing');
 	});
 
@@ -138,7 +142,11 @@ test.describe('A11y smoke (axe-core)', () => {
 	test('/dashboard (authed, empty)', async ({ page }) => {
 		await signupAndLogin(page);
 		// signupAndLogin already lands on /dashboard. Empty-state surface.
-		await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
+		// Route-specific readiness check (Codex round 2 P3) — the shared
+		// nav also renders on the app's error boundary, so we wait on
+		// the dashboard's own H1 to confirm we're actually on the
+		// dashboard page (not an error fallback).
+		await expect(page.getByRole('heading', { name: 'Your Canvases' })).toBeVisible();
 		await expectNoA11yViolations(page, 'dashboard-empty');
 	});
 
@@ -148,6 +156,9 @@ test.describe('A11y smoke (axe-core)', () => {
 		// Navigate back to dashboard to render the populated state.
 		await page.getByTestId('nav-dashboard').click();
 		await page.waitForURL('/dashboard');
+		// Route-specific readiness — the H1 confirms we're on the
+		// dashboard route, and the card confirms the populated state.
+		await expect(page.getByRole('heading', { name: 'Your Canvases' })).toBeVisible();
 		await expect(page.locator('[data-testid="canvas-card"]').first()).toBeVisible();
 		await expectNoA11yViolations(page, 'dashboard-populated');
 	});
