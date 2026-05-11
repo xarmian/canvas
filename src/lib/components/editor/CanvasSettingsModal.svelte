@@ -322,6 +322,19 @@
 		color: var(--color-primary-hover);
 	}
 
+	/*
+	 * TASK-146: the visible chrome here is the .preset label box, but
+	 * the focusable element is the radio input nested inside. Use
+	 * :focus-within so the outline appears on the styled label when
+	 * the radio receives focus — without this, keyboard nav lands on
+	 * the radio with no obvious indicator that the preset card is
+	 * "active".
+	 */
+	.preset:focus-within {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+
 	.preset input[type='radio'] {
 		margin: 0;
 	}
