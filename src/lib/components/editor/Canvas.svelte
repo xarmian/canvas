@@ -42,11 +42,12 @@
 	/** Visual zoom for the canvas — CSS transform on .canvas-wrapper,
 	 *  NOT Fabric's setZoom. The Fabric canvas keeps its authored
 	 *  dimensions (e.g. 1200×630) regardless, so exports / hit-testing
-	 *  / save serialization stay oblivious. Mirrored to editorState.zoom
-	 *  via setZoomState() so the toolbar zoom widget can read it.
-	 *  Default 1 = 100%; auto-fit on mount recomputes if the canvas
-	 *  exceeds the visible container. (TASK-150) */
-	let zoom = $state(1);
+	 *  / save serialization stay oblivious. Derived from
+	 *  `editorState.zoom` so the canvas-id change path in the editor
+	 *  route (which doesn't remount this component on SPA navigation)
+	 *  can reset zoom for the new canvas in one place. All writes from
+	 *  inside this component go through `setZoomState()`. (TASK-150) */
+	let zoom = $derived(editorState.zoom);
 
 	/** Resolve the scroll container that holds this canvas. The editor
 	 *  route wraps Canvas.svelte in `.canvas-container { overflow: auto }`
@@ -81,9 +82,7 @@
 	 *  mode — the user has chosen a scale and we don't override on resize. */
 	function applyFitIfTracking() {
 		if (editorState.zoomMode !== 'fit') return;
-		const next = computeFitScale();
-		zoom = next;
-		setZoomState(next, 'fit');
+		setZoomState(computeFitScale(), 'fit');
 	}
 
 	/** Set zoom to exactly `value` (clamped) and switch to manual mode.
@@ -91,18 +90,14 @@
 	 *  shortcuts. Does NOT adjust scroll position — appropriate for
 	 *  "fit to known scale" actions where there's no cursor anchor. */
 	export function zoomToActual(value = 1) {
-		const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value));
-		zoom = next;
-		setZoomState(next, 'manual');
+		setZoomState(value, 'manual');
 	}
 
 	/** Switch back to auto-fit mode. Computes the fit scale immediately
 	 *  so the canvas snaps into view without waiting for the next
 	 *  ResizeObserver tick. */
 	export function zoomToFit() {
-		const next = computeFitScale();
-		zoom = next;
-		setZoomState(next, 'fit');
+		setZoomState(computeFitScale(), 'fit');
 	}
 
 	/** Multiply current zoom by `factor`, clamped. Toolbar +/− call this
@@ -136,7 +131,6 @@
 		const wrapperRect = wrapperEl.getBoundingClientRect();
 		const canvasX = (e.clientX - wrapperRect.left) / oldZoom;
 		const canvasY = (e.clientY - wrapperRect.top) / oldZoom;
-		zoom = nextZoom;
 		setZoomState(nextZoom, 'manual');
 		// Wait for Svelte to flush the transform-driven layout change
 		// before computing the scroll correction — otherwise we'd read

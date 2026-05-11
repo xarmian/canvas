@@ -85,6 +85,17 @@
 			canvasBgType = data.canvas.backgroundType as 'color' | 'image';
 			canvasBgValue = data.canvas.backgroundValue;
 			showSettingsModal = false;
+			// Reset zoom state for the newly loaded canvas. CanvasEditor is
+			// reused across SPA navigations within /canvas/[id]/edit, so
+			// `setFabricCanvas()` (which also resets zoom) doesn't fire on
+			// param changes. Without this, canvas B would open at canvas
+			// A's manual zoom level and skip auto-fit. The dimension props
+			// change above flows to Canvas.svelte's width/height $effect,
+			// which runs `applyFitIfTracking()` and — because we're back in
+			// 'fit' mode — recomputes the right scale for canvas B.
+			// (TASK-150 follow-up — Codex round 2 P2.)
+			editorState.zoom = 1;
+			editorState.zoomMode = 'fit';
 			// Reset save-failure state so a stale failure from canvas A doesn't
 			// bleed into canvas B (wrong red pill + wrong retry toast).
 			lastSaveFailed = false;
