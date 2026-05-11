@@ -135,6 +135,7 @@
 					required
 					autocomplete="name"
 					invalid={!!nameHint}
+					describedBy={nameHint ? 'signup-name-hint' : undefined}
 				/>
 				{#if nameHint}
 					<span id="signup-name-hint" class="hint hint-error">{nameHint}</span>
@@ -150,6 +151,7 @@
 					required
 					autocomplete="email"
 					invalid={!!emailHint}
+					describedBy={emailHint ? 'signup-email-hint' : undefined}
 				/>
 				{#if emailHint}
 					<span id="signup-email-hint" class="hint hint-error">{emailHint}</span>
