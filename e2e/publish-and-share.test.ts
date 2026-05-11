@@ -64,7 +64,13 @@ test('full happy path — signup to share URL, bot meta, image render', async ({
 	await expect(page.getByRole('button', { name: 'Close Preview' })).toBeVisible({
 		timeout: 10_000
 	});
-	const testParam = page.getByLabel('title');
+	// Target the preview-param input by id. After TASK-148's inline-⚡
+	// binding refactor, `getByLabel('title')` matches 5 elements in the
+	// PropertyPanel (bind button, type select, default input, required
+	// checkbox, and this preview-param input) and trips strict-mode.
+	// The `id="test-param-{name}"` hook is the stable contract from
+	// `edit/+page.svelte`'s preview-param row.
+	const testParam = page.locator('#test-param-title');
 	await expect(testParam).toBeVisible();
 
 	// 6. Publish via the toolbar → 'Using this template' panel renders.
