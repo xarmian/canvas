@@ -3,6 +3,7 @@
 	import { ConfirmDialog, EmptyState } from '$lib/components/ui';
 	import { SearchX } from '@lucide/svelte';
 	import { toast } from '$lib/stores/toast.svelte';
+	import { copyToClipboard } from '$lib/share-clipboard';
 	import { getTemplate } from '$lib/templates/gallery';
 	import EditOrganizationModal from '$lib/components/dashboard/EditOrganizationModal.svelte';
 
@@ -242,29 +243,6 @@
 		return `${shareUrlFor(slug)}/image.png`;
 	}
 
-	/**
-	 * Write `text` to the clipboard and surface success / failure as a
-	 * toast. Uses `navigator.clipboard.writeText` (gated to a
-	 * user-gesture click handler — Safari requires this). Returns true
-	 * on success so callers can keep their UI logic small. */
-	async function copyToClipboard(text: string, successMessage: string): Promise<boolean> {
-		try {
-			if (!navigator.clipboard) {
-				toast.error('Clipboard API unavailable. Copy the URL manually from the editor.');
-				return false;
-			}
-			await navigator.clipboard.writeText(text);
-			toast.success(successMessage);
-			return true;
-		} catch {
-			// User rejected the permission prompt, or the API threw.
-			// Either way the URL didn't make it to the clipboard, so
-			// surface a recovery hint instead of silently no-oping.
-			toast.error('Could not copy to clipboard. Check browser permissions and try again.');
-			return false;
-		}
-	}
-
 	function copyShareUrl(canvas: { slug: string; published: boolean; name: string }) {
 		// Defensive: button is disabled when !published, but a stray
 		// programmatic click (DevTools, screen-reader workaround) still
@@ -273,7 +251,9 @@
 			toast.info(`Publish "${canvas.name}" first to copy a share URL.`);
 			return;
 		}
-		void copyToClipboard(shareUrlFor(canvas.slug), `Share URL for "${canvas.name}" copied`);
+		void copyToClipboard(shareUrlFor(canvas.slug), {
+			success: `Share URL for "${canvas.name}" copied`
+		});
 	}
 
 	function copyImageUrl(canvas: { slug: string; published: boolean; name: string }) {
@@ -281,7 +261,9 @@
 			toast.info(`Publish "${canvas.name}" first to copy an image URL.`);
 			return;
 		}
-		void copyToClipboard(imageUrlFor(canvas.slug), `Image URL for "${canvas.name}" copied`);
+		void copyToClipboard(imageUrlFor(canvas.slug), {
+			success: `Image URL for "${canvas.name}" copied`
+		});
 	}
 </script>
 
