@@ -28,7 +28,8 @@
 	 * for reactive recomputation as the user edits bindings — same trick
 	 * the property panel uses.
 	 */
-	import { Modal } from '$lib/components/ui';
+	import { Modal, LoadingSkeleton, EmptyState, ErrorState } from '$lib/components/ui';
+	import { Sliders } from '@lucide/svelte';
 	import { editorState, markDirty } from './state.svelte.ts';
 	import type { FabricObject } from 'fabric';
 	import { toast } from '$lib/stores/toast.svelte';
@@ -50,6 +51,10 @@
 	}
 	let schemaRows = $state<SchemaRow[]>([]);
 	let schemaLoaded = $state(false);
+	/** Set when the GET /params fetch returns non-OK or the network call
+	 *  itself rejects. Drives the inline ErrorState retry surface so the
+	 *  failure isn't silently swallowed (TASK-136). */
+	let schemaError = $state(false);
 	/** Tracks an in-flight GET so a parent re-render doesn't fire a
 	 *  second load while the first is still landing. Without this, the
 	 *  second response could overwrite the first's freshly-edited rows
@@ -206,6 +211,7 @@
 		}
 		if (!open) {
 			schemaLoaded = false;
+			schemaError = false;
 			schemaRows = [];
 			schemaCanvasId = null;
 			// Bump the generation so any in-flight load is treated as
@@ -218,8 +224,19 @@
 		}
 	});
 
+	/** Reset and re-run loadSchema, used by the inline ErrorState retry
+	 *  button. Clears the loaded flag so the $effect's gate re-arms,
+	 *  and clears the error flag so the loading skeleton replaces the
+	 *  error surface immediately rather than overlapping. */
+	function retryLoadSchema(): void {
+		schemaLoaded = false;
+		schemaError = false;
+		void loadSchema();
+	}
+
 	async function loadSchema(): Promise<void> {
 		schemaPending = true;
+		schemaError = false;
 		// Bump + capture the generation token so a stale completion can't
 		// clear the pending flag for a newer in-flight request, and so
 		// a stale response can't overwrite freshly-loaded rows. Codex
@@ -238,16 +255,17 @@
 				if (isStale()) return;
 				schemaRows = rows;
 				schemaCanvasId = requestCanvasId;
+			} else {
+				// Surface non-OK responses (5xx, 4xx) via the visible
+				// ErrorState retry surface (TASK-136). The previous
+				// behavior was a silent fail with the type/required
+				// cells stuck in their default-disabled state.
+				schemaError = true;
 			}
-			// Even on a non-OK response we flip schemaLoaded below so the
-			// effect doesn't refire in a tight retry loop. The user can
-			// close+reopen the modal (which resets schemaLoaded) to retry,
-			// matching the rest-of-app pattern (PublishModal sharing).
-			// Codex round 1 P2.
 		} catch {
-			// Best-effort: a transient network failure leaves the type/
-			// required cells in their default-disabled state. See above
-			// re. retry mechanics.
+			// Network rejections also surface as a retryable error
+			// rather than silently leaving the cells disabled.
+			schemaError = true;
 		} finally {
 			// Only the LATEST request's generation may clear `schemaPending`
 			// or flip `schemaLoaded` — a stale completion that lost the
@@ -346,13 +364,37 @@
 		{/if}
 	</div>
 
+	{#if published && schemaError}
+		<!--
+			Server-side schema fetch failed (5xx, network error, etc.).
+			ErrorState keeps the user in the modal with a retry instead
+			of silently leaving the type/required cells disabled.
+			Derived params from the live canvas are still shown below.
+		-->
+		<div class="params-error" data-testid="params-schema-error">
+			<ErrorState
+				title="Couldn't load saved type / required"
+				message="The server-side schema for this canvas didn't load. The bindings below still work, but Type and Required can't be edited until the schema reaches the editor."
+				onRetry={retryLoadSchema}
+			/>
+		</div>
+	{:else if published && !schemaLoaded}
+		<!--
+			Loading skeleton matches the params-row grid layout so the
+			table chrome doesn't shift when real rows render.
+		-->
+		<div class="params-skeleton" data-testid="params-skeleton" aria-label="Loading parameters">
+			<LoadingSkeleton lines={3} />
+		</div>
+	{/if}
+
 	{#if derivedParams.length === 0}
 		<div class="params-empty" data-testid="params-empty">
-			<p>No URL parameters yet.</p>
-			<p class="params-empty-hint">
-				Bind a property in the property panel to add one — every binding becomes a parameter the
-				viewer can override via the share URL.
-			</p>
+			<EmptyState
+				icon={Sliders}
+				title="No URL parameters yet"
+				description="Bind a property in the property panel to add one — every binding becomes a parameter the viewer can override via the share URL."
+			/>
 		</div>
 	{:else}
 		<div class="params-table" role="table" aria-label="Canvas parameter schema">
@@ -454,24 +496,23 @@
 		font-size: 0.8125rem;
 	}
 
+	/*
+	 * Empty / skeleton / error wrappers — the underlying primitives
+	 * already supply the visual; we just give them a comfortable
+	 * vertical padding inside the modal body. The skeleton wrapper
+	 * mirrors the table area's padding so the loading height feels
+	 * close to the eventual real content.
+	 */
 	.params-empty {
-		padding: 1.5rem 1rem;
-		background: var(--color-surface-muted);
-		border: 1px dashed var(--color-border-strong);
-		border-radius: 6px;
-		text-align: center;
-		color: var(--color-text-subtle);
+		padding: var(--spacing-4) 0;
 	}
 
-	.params-empty p {
-		margin: 0;
-		font-size: 0.875rem;
+	.params-skeleton {
+		padding: var(--spacing-3) var(--spacing-2) var(--spacing-4);
 	}
 
-	.params-empty-hint {
-		margin-top: 0.25rem;
-		font-size: 0.8125rem;
-		color: var(--color-text-subtle);
+	.params-error {
+		padding: var(--spacing-2) 0 var(--spacing-4);
 	}
 
 	.params-table {
