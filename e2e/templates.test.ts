@@ -74,6 +74,47 @@ test.describe('Template gallery', () => {
 				{ timeout: 5_000, message: 'template background not painted on editor canvas' }
 			)
 			.toBe('#0f172a');
+
+		// Fabric v7 origin-default regression: the v7 default originX/Y
+		// is 'center', not v6's 'left'/'top'. Without overriding it, a
+		// textbox authored at `left:110, width:1020` would render with
+		// its CENTER at x=110 — extending from canvas-x=-400 to 620 —
+		// and the headline text would appear mostly off-canvas to the
+		// left, with most of "Hello from Canvas" invisible. Verify that
+		// the headline's pixels land in the LEFT half of the canvas
+		// where the authored left-aligned text "Hello from Canvas"
+		// should begin. Sample canvas-coord (250, 220), which sits
+		// inside the "Hello" word at fontSize 72 after the fix and is
+		// background (text ended at ~0) in the broken case. Average the
+		// red channel across a 20×20 patch so antialiasing variance
+		// doesn't make the assertion flaky.
+		await expect
+			.poll(
+				async () =>
+					page.evaluate(() => {
+						const lower = document.querySelector(
+							'.canvas-wrapper .lower-canvas'
+						) as HTMLCanvasElement | null;
+						if (!lower) return null;
+						const ctx = lower.getContext('2d', { willReadFrequently: true });
+						if (!ctx) return null;
+						const w = lower.width;
+						const h = lower.height;
+						const sx = Math.round((w * 250) / 1200) - 10;
+						const sy = Math.round((h * 220) / 630) - 10;
+						const { data } = ctx.getImageData(sx, sy, 20, 20);
+						let total = 0;
+						for (let i = 0; i < data.length; i += 4) total += data[i];
+						return total / (data.length / 4);
+					}),
+				{
+					timeout: 5_000,
+					message:
+						'expected headline text glyphs in the left-half of the canvas; ' +
+						'Fabric v7 center-origin default would shift them off-canvas-left'
+				}
+			)
+			.toBeGreaterThan(40);
 	});
 
 	test('zoom: auto-fits oversized canvas, scales to 100% on toolbar click, preview bytes stay at intrinsic dims (TASK-150)', async ({
