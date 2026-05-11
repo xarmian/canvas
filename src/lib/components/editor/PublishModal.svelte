@@ -1024,7 +1024,7 @@
 				<Button variant="copy" onclick={() => copy(imageUrl, 'Image URL')}>Copy</Button>
 			</div>
 			<p class="help">
-				Returns the rendered PNG directly. Append your dynamic parameters as query strings, e.g.
+				Returns the rendered PNG directly. Append dynamic values as query strings, e.g.
 				<code>?title=Hello</code>.
 			</p>
 		</div>
@@ -1124,7 +1124,7 @@
 				/>
 				<p class="help">
 					Visitors see a "Continue to {'{host}'}" button pointing here. Bots see the OG card. Use
-					<code>{'{{paramName}}'}</code> to substitute query parameters into the destination.
+					<code>{'{{valueName}}'}</code> to substitute dynamic values into the destination.
 				</p>
 
 				<!--
@@ -1137,7 +1137,7 @@
 				{#if sharing.redirectUrl}
 					{#if redirectUnknownParams.length > 0}
 						<p class="redirect-warning" data-testid="redirect-unknown-params" role="alert">
-							⚠️ {redirectUnknownParams.length === 1 ? 'Unknown parameter:' : 'Unknown parameters:'}
+							⚠️ {redirectUnknownParams.length === 1 ? 'Unknown value:' : 'Unknown values:'}
 							{#each redirectUnknownParams as p, i (p.name)}<!--
 								Render each unknown placeholder + its optional "did
 								you mean X?" suggestion inline. Suggestions use the
@@ -1151,7 +1151,7 @@
 										>(did you mean <code>{p.suggestion}</code>?)</span
 									>{/if}{i < redirectUnknownParams.length - 1 ? ', ' : ''}{/each}.
 							{bindings.length === 0
-								? 'This canvas has no bound parameters yet.'
+								? 'This canvas has no dynamic values yet.'
 								: `Available: ${bindings.map((b) => b.name).join(', ')}.`}
 						</p>
 					{:else if redirectKnownParams.length > 0}
@@ -1174,7 +1174,7 @@
 				{#if bindings.length > 0}
 					<label class="embed-toggle">
 						<input type="checkbox" bind:checked={includeParams} />
-						<span>Include example params</span>
+						<span>Include example values</span>
 					</label>
 				{/if}
 			</header>
@@ -1276,8 +1276,8 @@
 
 			{#if bindingsStale}
 				<p class="docs-warning">
-					⚠️ This canvas has unsaved edits. The parameters below may not yet be live on the public
-					URL. Save the canvas, then reopen this dialog for the authoritative docs.
+					⚠️ This canvas has unsaved edits. The dynamic values below may not yet be live on the
+					public URL. Save the canvas, then reopen this dialog for the authoritative docs.
 				</p>
 			{/if}
 
@@ -1293,7 +1293,7 @@
 				<div class="docs-error" data-testid="docs-schema-error">
 					<ErrorState
 						title="Couldn't load Type / Required"
-						message="The server-side parameter schema didn't reach the editor. Bindings still show below; Type and Required can't be edited until the schema loads."
+						message="The saved type/required settings didn't reach the editor. The dynamic values still show below; Type and Required can't be edited until they load."
 						onRetry={retryLoadParamSchema}
 					/>
 				</div>
@@ -1305,7 +1305,7 @@
 				<div
 					class="docs-skeleton"
 					data-testid="docs-skeleton"
-					aria-label="Loading parameter schema"
+					aria-label="Loading saved type and required"
 				>
 					<LoadingSkeleton lines={3} />
 				</div>
@@ -1313,21 +1313,19 @@
 
 			{#if bindings.length === 0}
 				<p class="docs-empty">
-					This canvas has no dynamic parameters. Bind properties in the editor (⚡ Dynamic
-					Parameters in the property panel) to make the shared URL change based on query string
-					values.
+					This canvas has no dynamic values yet. Make properties dynamic in the editor (⚡ Dynamic
+					values in the property panel) to make the shared URL change based on query string values.
 				</p>
 			{:else}
 				<p class="docs-hint">
-					{bindings.length === 1 ? 'This canvas accepts' : 'This canvas accepts'}
-					{bindings.length}
-					{bindings.length === 1 ? 'parameter' : 'parameters'}. Omit any of them to fall back to the
-					binding's default.
+					This canvas accepts {bindings.length}
+					{bindings.length === 1 ? 'dynamic value' : 'dynamic values'}. Omit any to use its default
+					value.
 				</p>
 
 				<div class="docs-table">
 					<div class="docs-row docs-row-header">
-						<span>Parameter</span>
+						<span>Name</span>
 						<span>Default</span>
 						<span>Type</span>
 						<span>Required</span>

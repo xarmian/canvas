@@ -94,7 +94,7 @@ test('OG embed snippet og:url tracks the og:image params toggle (Codex round 1)'
 
 	// Flip the toggle. og:image picks up `?title=Hello`; og:url should
 	// match so a parameterized variant canonicalizes to itself.
-	await page.getByLabel('Include example params').check();
+	await page.getByLabel('Include example values').check();
 	await expect.poll(async () => snippet.inputValue()).toContain('?title=Hello');
 	const withParams = await snippet.inputValue();
 	const paramedOgUrl = (withParams.match(/og:url"\s+content="([^"]+)"/) || [])[1];
