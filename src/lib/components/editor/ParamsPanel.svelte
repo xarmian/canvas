@@ -355,17 +355,16 @@
 	}
 </script>
 
-<Modal {open} {onClose} title="Parameters" width="48rem">
+<Modal {open} {onClose} title="Dynamic values" width="48rem">
 	<div class="params-intro">
 		<p>
-			All URL parameters used by this canvas. Edit the default to change what renders when a viewer
-			omits the parameter. Type and Required apply once the canvas is published — they show up in
-			the API docs and gate strict-mode renders.
+			Dynamic values this canvas accepts. Edit the default to change what renders when a viewer
+			omits the value. Type and Required apply once the canvas is published — they show up in the
+			API docs and gate strict-mode renders.
 		</p>
 		{#if !published}
 			<p class="params-unpublished-note">
-				Type and Required become editable once the canvas is published. Defaults and bindings are
-				editable now.
+				Type and Required become editable once the canvas is published. Defaults are editable now.
 			</p>
 		{/if}
 	</div>
@@ -380,7 +379,7 @@
 		<div class="params-error" data-testid="params-schema-error">
 			<ErrorState
 				title="Couldn't load saved type / required"
-				message="The server-side schema for this canvas didn't load. The bindings below still work, but Type and Required can't be edited until the schema reaches the editor."
+				message="The saved settings for this canvas didn't load. The dynamic values below still work, but Type and Required can't be edited until they reach the editor."
 				onRetry={retryLoadSchema}
 			/>
 		</div>
@@ -398,12 +397,12 @@
 		<div class="params-empty" data-testid="params-empty">
 			<EmptyState
 				icon={Sliders}
-				title="No URL parameters yet"
-				description="Bind a property in the property panel to add one — every binding becomes a parameter the viewer can override via the share URL."
+				title="No dynamic values yet"
+				description="Make a property dynamic from the property panel — each dynamic property becomes a URL value the viewer can override via the share URL."
 			/>
 		</div>
 	{:else}
-		<div class="params-table" role="table" aria-label="Canvas parameter schema">
+		<div class="params-table" role="table" aria-label="What this canvas accepts">
 			<div class="params-row params-row-header" role="row">
 				<span role="columnheader">Name</span>
 				<span role="columnheader">Type</span>
@@ -417,7 +416,7 @@
 					<div class="params-cell params-cell-name" role="cell">
 						<code>{p.name}</code>
 						{#if p.formatter}
-							<span class="params-formatter" title="Formatter applied at render">
+							<span class="params-formatter" title="Formatted before rendering">
 								{p.formatter}
 							</span>
 						{/if}
