@@ -297,7 +297,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: 1rem 1.5rem;
+		/* Mobile: 1rem horizontal padding gives the brand + 3-item nav
+		   ~343px of usable width at a 375px viewport — fits comfortably
+		   without horizontal scroll. The desktop 1.5rem reads better
+		   on wider viewports and is restored below the breakpoint. */
+		padding: 0.85rem 1rem;
 		max-width: 1180px;
 		margin: 0 auto;
 		width: 100%;
@@ -315,13 +319,25 @@
 	.topnav {
 		display: flex;
 		align-items: center;
-		gap: 1rem;
+		/* Mobile-first: tight gap keeps the 3-item nav from wrapping at
+		   375px. Restored to 1rem at lg via the breakpoint block. */
+		gap: 0.6rem;
 	}
 
 	.topnav-link {
+		display: inline-flex;
+		align-items: center;
+		/* min-height: 44px ensures the tap target hits Apple HIG's
+		   minimum on mobile even though the visible text is small.
+		   Padding stays small so desktop reads as a nav link, not
+		   a button — the height is reached via min-height alone. */
+		min-height: 44px;
+		padding: 0 0.25rem;
 		color: #475569;
 		text-decoration: none;
-		font-size: 0.9rem;
+		/* Mobile-first: 0.85rem keeps 3 nav items + the brand on one
+		   row at 375px. Restored to 0.9rem at lg. */
+		font-size: 0.85rem;
 		font-weight: 500;
 	}
 
@@ -330,7 +346,10 @@
 	}
 
 	.topnav-cta {
-		padding: 0.45rem 0.9rem;
+		display: inline-flex;
+		align-items: center;
+		min-height: 44px;
+		padding: 0.5rem 1rem;
 		background: #0f172a;
 		color: #fff;
 		border-radius: 6px;
@@ -344,16 +363,23 @@
 		max-width: 1180px;
 		margin: 0 auto;
 		width: 100%;
-		padding: 0 1.5rem;
+		/* 1rem horizontal padding leaves 343px of usable width at a
+		   375px viewport — comfortable for the demo controls and
+		   tweet card without horizontal scroll. Desktop pads to
+		   1.5rem via the breakpoint below for visual balance. */
+		padding: 0 1rem;
 		box-sizing: border-box;
 	}
 
 	.hero {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-		gap: 3rem;
+		/* Mobile-first: single column stacks copy above the demo
+		   panel. Splits into the side-by-side 2-column layout at
+		   ≥880px (see the breakpoint block below). */
+		grid-template-columns: minmax(0, 1fr);
+		gap: 2rem;
 		align-items: center;
-		padding: 3rem 0 4rem;
+		padding: 2rem 0 3rem;
 	}
 
 	.hero-copy h1 {
@@ -394,7 +420,14 @@
 	.btn {
 		display: inline-flex;
 		align-items: center;
-		padding: 0.65rem 1.1rem;
+		justify-content: center;
+		/* TASK-138 acceptance: all landing CTAs hit a 44px touch
+		   target on mobile. The old padding produced a ~38px button
+		   — usable on desktop, sub-Apple-HIG on a phone. min-height
+		   keeps the visual proportions stable across viewports
+		   while guaranteeing the target. */
+		min-height: 44px;
+		padding: 0.75rem 1.25rem;
 		border-radius: 7px;
 		font-size: 0.95rem;
 		font-weight: 600;
@@ -476,9 +509,14 @@
 		color: #94a3b8;
 	}
 
+	/* Mobile-first per TASK-138: at narrow viewports two text inputs
+	   side-by-side leave ~120px each, too cramped for 6-char ticker
+	   symbols + label. Single-column on mobile gives each control
+	   full breathing room; the 2-col layout kicks in at 768px+
+	   where horizontal space stops being precious. */
 	.demo-controls {
 		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-template-columns: minmax(0, 1fr);
 		gap: 0.65rem;
 	}
 
@@ -496,7 +534,11 @@
 
 	.ctrl input[type='text'],
 	.ctrl select {
-		padding: 0.45rem 0.55rem;
+		/* min-height: 44px so demo inputs are tappable on mobile —
+		   the audit's CTA touch-target rule applies to interactive
+		   controls too, not just buttons. */
+		min-height: 44px;
+		padding: 0.55rem 0.65rem;
 		border: 1px solid #cbd5e1;
 		border-radius: 6px;
 		font-size: 0.875rem;
@@ -515,19 +557,29 @@
 		width: 100%;
 	}
 
+	/* On mobile (single-column grid) the wide-spanning controls just
+	   take the only column. Their span-2 layout matters at md+ where
+	   the grid splits into two columns — see the media query below. */
 	.ctrl-wide {
-		grid-column: span 2;
+		grid-column: span 1;
 	}
 
 	.ctrl-checkbox {
 		flex-direction: row;
 		align-items: center;
 		gap: 0.5rem;
-		grid-column: span 2;
+		grid-column: span 1;
 	}
 
 	.ctrl-checkbox > span {
 		font-weight: 600;
+	}
+
+	.ctrl-checkbox input[type='checkbox'] {
+		/* Bigger hit area for the checkbox — the visible square stays
+		   the browser default but the click region expands. */
+		width: 1.15rem;
+		height: 1.15rem;
 	}
 
 	.demo-url {
@@ -690,7 +742,10 @@
 
 	.steps-list {
 		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
+		/* Mobile-first: stack the three steps vertically at narrow
+		   viewports — 3-up only kicks in at ≥880px where each card
+		   gets enough width to keep its copy on 2–3 lines. */
+		grid-template-columns: minmax(0, 1fr);
 		gap: 1.5rem;
 		list-style: none;
 		padding: 0;
@@ -752,34 +807,57 @@
 		text-decoration: underline;
 	}
 
-	@media (max-width: 880px) {
-		.hero {
-			grid-template-columns: minmax(0, 1fr);
-			gap: 2rem;
-			padding: 2rem 0 3rem;
-		}
+	/*
+	 * Mobile-first responsive rules. The base CSS above targets the
+	 * narrowest viewport (375px reference); these media queries layer
+	 * in the wider-viewport refinements as space allows.
+	 *
+	 *   sm  ≥ 640px  — restore the loose horizontal padding on main /
+	 *                   topbar and let secondary surfaces breathe.
+	 *   md  ≥ 768px  — split demo-controls into the 2-column layout;
+	 *                   restore .ctrl-wide / .ctrl-checkbox span-2.
+	 *   lg  ≥ 880px  — hero splits to copy + demo side-by-side; steps
+	 *                   grid splits into 3 columns.
+	 *
+	 * The 880px hero breakpoint preserves the existing visual target
+	 * (the demo column needs ~520px before it stops feeling cramped
+	 * next to the copy). 768px and 640px match Tailwind's md/sm tokens
+	 * so future work that does adopt utility classes lines up cleanly.
+	 */
 
-		.steps-list {
-			grid-template-columns: minmax(0, 1fr);
+	@media (min-width: 640px) {
+		.topbar {
+			padding: 1rem 1.5rem;
 		}
-
-		.topnav {
-			gap: 0.6rem;
-		}
-
-		.topnav-link {
-			font-size: 0.85rem;
+		main {
+			padding: 0 1.5rem;
 		}
 	}
 
-	@media (max-width: 480px) {
+	@media (min-width: 768px) {
 		.demo-controls {
-			grid-template-columns: minmax(0, 1fr);
+			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
-
 		.ctrl-wide,
 		.ctrl-checkbox {
-			grid-column: span 1;
+			grid-column: span 2;
+		}
+	}
+
+	@media (min-width: 880px) {
+		.hero {
+			grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+			gap: 3rem;
+			padding: 3rem 0 4rem;
+		}
+		.steps-list {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+		}
+		.topnav {
+			gap: 1rem;
+		}
+		.topnav-link {
+			font-size: 0.9rem;
 		}
 	}
 </style>
