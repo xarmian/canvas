@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { Canvas, IText, FabricImage, Rect, ActiveSelection, type FabricObject } from 'fabric';
 	import {
 		editorState,
@@ -8,7 +8,10 @@
 		setActiveObjects,
 		syncObjects,
 		markDirty,
-		setSnapshotCallback
+		setSnapshotCallback,
+		setZoomState,
+		ZOOM_MIN,
+		ZOOM_MAX
 	} from './state.svelte.ts';
 	import { saveSnapshot, undo, redo, resetHistory, historyState } from './history.svelte.ts';
 	import { setupSnapping } from './snapping.js';
@@ -36,6 +39,118 @@
 	 * page. The skeleton at least signals "loading" during that gap. */
 	let fabricMounted = $state(false);
 
+	/** Visual zoom for the canvas — CSS transform on .canvas-wrapper,
+	 *  NOT Fabric's setZoom. The Fabric canvas keeps its authored
+	 *  dimensions (e.g. 1200×630) regardless, so exports / hit-testing
+	 *  / save serialization stay oblivious. Mirrored to editorState.zoom
+	 *  via setZoomState() so the toolbar zoom widget can read it.
+	 *  Default 1 = 100%; auto-fit on mount recomputes if the canvas
+	 *  exceeds the visible container. (TASK-150) */
+	let zoom = $state(1);
+
+	/** Resolve the scroll container that holds this canvas. The editor
+	 *  route wraps Canvas.svelte in `.canvas-container { overflow: auto }`
+	 *  — that element is what we scroll for cursor-anchored zoom and
+	 *  what we observe for auto-fit. `.closest()` avoids prop-drilling
+	 *  the element through. Returns null until after mount. */
+	function getScrollContainer(): HTMLElement | null {
+		return wrapperEl?.closest('.canvas-container') ?? null;
+	}
+
+	/** "Fit" scale for the current container size — the largest scale
+	 *  ≤ 1 at which both axes fit, with 5% breathing room. Caps at 1
+	 *  so a small canvas never gets stretched up. Returns 1 if the
+	 *  container hasn't been measured yet (initial render). */
+	function computeFitScale(): number {
+		const container = getScrollContainer();
+		if (!container) return 1;
+		// Subtract padding from the inner width/height the canvas can
+		// actually occupy. getBoundingClientRect includes padding so
+		// the math stays correct regardless of border-box vs content-box.
+		const styles = getComputedStyle(container);
+		const padX = parseFloat(styles.paddingLeft || '0') + parseFloat(styles.paddingRight || '0');
+		const padY = parseFloat(styles.paddingTop || '0') + parseFloat(styles.paddingBottom || '0');
+		const availW = Math.max(0, container.clientWidth - padX);
+		const availH = Math.max(0, container.clientHeight - padY);
+		if (availW === 0 || availH === 0) return 1;
+		const scale = Math.min(availW / width, availH / height) * 0.95;
+		return Math.min(1, Math.max(ZOOM_MIN, scale));
+	}
+
+	/** Apply the auto-fit scale if zoomMode is 'fit'. No-op in 'manual'
+	 *  mode — the user has chosen a scale and we don't override on resize. */
+	function applyFitIfTracking() {
+		if (editorState.zoomMode !== 'fit') return;
+		const next = computeFitScale();
+		zoom = next;
+		setZoomState(next, 'fit');
+	}
+
+	/** Set zoom to exactly `value` (clamped) and switch to manual mode.
+	 *  Used by the toolbar's 100% / +/− buttons and the keyboard
+	 *  shortcuts. Does NOT adjust scroll position — appropriate for
+	 *  "fit to known scale" actions where there's no cursor anchor. */
+	export function zoomToActual(value = 1) {
+		const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value));
+		zoom = next;
+		setZoomState(next, 'manual');
+	}
+
+	/** Switch back to auto-fit mode. Computes the fit scale immediately
+	 *  so the canvas snaps into view without waiting for the next
+	 *  ResizeObserver tick. */
+	export function zoomToFit() {
+		const next = computeFitScale();
+		zoom = next;
+		setZoomState(next, 'fit');
+	}
+
+	/** Multiply current zoom by `factor`, clamped. Toolbar +/− call this
+	 *  with 1.25 / 0.8. Bumps to manual mode so a +/− press doesn't get
+	 *  immediately overridden by the next ResizeObserver fire. */
+	export function zoomBy(factor: number) {
+		zoomToActual(zoom * factor);
+	}
+
+	/** Cmd/Ctrl + wheel: zoom anchored at the cursor. Computes the
+	 *  canvas-coord point under the cursor before the scale change,
+	 *  applies the new scale, then adjusts the scroll container so
+	 *  the same canvas-coord point ends up under the cursor again.
+	 *  Standard "zoom to pointer" pattern; tick() to let Svelte flush
+	 *  the transform before reading the post-zoom layout. */
+	export async function applyWheelZoom(e: WheelEvent) {
+		// Translate wheel delta into a multiplicative scale step. The
+		// 0.0015 constant tunes the rate; tested to feel like Figma at
+		// medium-precision trackpads + ordinary mousewheels. Sign of
+		// deltaY: positive = scroll down = zoom out (matches macOS /
+		// Figma). preventDefault before any state changes so the
+		// browser doesn't also start its own page zoom on Ctrl+wheel.
+		e.preventDefault();
+		const container = getScrollContainer();
+		if (!container) return;
+		const oldZoom = zoom;
+		const factor = Math.exp(-e.deltaY * 0.0015);
+		const nextZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, oldZoom * factor));
+		if (nextZoom === oldZoom) return;
+		// Canvas-space point under the cursor BEFORE the zoom change.
+		const wrapperRect = wrapperEl.getBoundingClientRect();
+		const canvasX = (e.clientX - wrapperRect.left) / oldZoom;
+		const canvasY = (e.clientY - wrapperRect.top) / oldZoom;
+		zoom = nextZoom;
+		setZoomState(nextZoom, 'manual');
+		// Wait for Svelte to flush the transform-driven layout change
+		// before computing the scroll correction — otherwise we'd read
+		// stale rects and the anchor would drift.
+		await tick();
+		const newRect = wrapperEl.getBoundingClientRect();
+		// Where the wrapper's top-left WOULD need to be for the canvas
+		// point to land under the cursor:
+		const targetLeft = e.clientX - canvasX * nextZoom;
+		const targetTop = e.clientY - canvasY * nextZoom;
+		container.scrollLeft += newRect.left - targetLeft;
+		container.scrollTop += newRect.top - targetTop;
+	}
+
 	onMount(() => {
 		const canvas = new Canvas(canvasEl, {
 			width,
@@ -47,6 +162,23 @@
 		setFabricCanvas(canvas);
 		resetHistory();
 		fabricMounted = true;
+
+		// Auto-fit observer: when the scroll container resizes (window
+		// resize, sidebar collapse, mobile keyboard appearance), re-run
+		// the fit calc IF the user hasn't manually zoomed. Skipped in
+		// 'manual' mode so a user-chosen scale isn't reset behind their
+		// back. Initial fit on the next frame so getBoundingClientRect
+		// sees the laid-out container, not the pre-mount one.
+		const container = getScrollContainer();
+		let resizeObserver: ResizeObserver | null = null;
+		if (container && typeof ResizeObserver !== 'undefined') {
+			resizeObserver = new ResizeObserver(() => applyFitIfTracking());
+			resizeObserver.observe(container);
+		}
+		// One-shot initial fit. ResizeObserver fires on first observe,
+		// but the container's layout may not be final yet (font load,
+		// flex flushing) — a deferred frame catches the settled size.
+		requestAnimationFrame(() => applyFitIfTracking());
 
 		// Register snapshot callback so markDirty() from any component records history
 		setSnapshotCallback(() => {
@@ -93,7 +225,19 @@
 			setFabricCanvas(null);
 			resetHistory();
 			fabricMounted = false;
+			resizeObserver?.disconnect();
 		};
+	});
+
+	// Width/height props can change mid-mount (settings modal → resize
+	// canvas). Re-fit when they do so the new dimensions still fit the
+	// visible container. Skipped in 'manual' mode for the same reason
+	// the ResizeObserver is.
+	$effect(() => {
+		// Touch reactive deps so the effect re-runs on size changes.
+		void width;
+		void height;
+		applyFitIfTracking();
 	});
 
 	export function addText() {
@@ -509,44 +653,76 @@
 	}
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+<!--
+	Two-layer structure for CSS-transform zoom (TASK-150):
+	- `.canvas-stage` sizes the layout footprint to canvas × zoom so the
+	  scroll container's scrollable area matches what's visible. It
+	  carries the visual frame (border/shadow) so the chrome stays
+	  crisp at any zoom level.
+	- `.canvas-wrapper` keeps its authored width/height (so Fabric's
+	  intrinsic coords are untouched) and applies `transform: scale()`
+	  with top-left origin so the math is predictable.
+-->
 <div
-	class="canvas-wrapper"
-	style="--canvas-w:{width}px; --canvas-h:{height}px"
-	bind:this={wrapperEl}
-	tabindex="0"
-	role="application"
-	aria-label="Visual editor canvas"
-	onkeydown={handleKeydown}
+	class="canvas-stage"
+	style="--canvas-w:{width}px; --canvas-h:{height}px; --canvas-scale:{zoom}"
 >
-	{#if !fabricMounted}
-		<!-- Skeleton overlay during the 1-2s Fabric init window. Sized to
-			the canvas so layout doesn't jump when fabric mounts. -->
-		<div class="canvas-skeleton" role="status" aria-live="polite" aria-label="Loading editor"></div>
-	{/if}
-	<canvas bind:this={canvasEl}></canvas>
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+	<div
+		class="canvas-wrapper"
+		bind:this={wrapperEl}
+		tabindex="0"
+		role="application"
+		aria-label="Visual editor canvas"
+		onkeydown={handleKeydown}
+	>
+		{#if !fabricMounted}
+			<!-- Skeleton overlay during the 1-2s Fabric init window. Sized to
+				the canvas so layout doesn't jump when fabric mounts. -->
+			<div
+				class="canvas-skeleton"
+				role="status"
+				aria-live="polite"
+				aria-label="Loading editor"
+			></div>
+		{/if}
+		<canvas bind:this={canvasEl}></canvas>
+	</div>
 </div>
 
 <style>
-	.canvas-wrapper {
-		position: relative;
-		display: inline-block;
-		/* Reserve space for the actual canvas dimensions BEFORE Fabric
-		   mounts. Without this, the wrapper is sized to the bare
-		   <canvas> default (300x150), the skeleton is clipped, and
-		   layout jumps when Fabric sets real dimensions on mount.
-		   No max-width — the parent .canvas-container in the editor
-		   route is overflow:auto and is supposed to scroll for large
-		   canvases (1080x1080, custom up to 4096). Capping width here
-		   would shrink the wrapper, leave Fabric's inner canvas full
-		   size, and (with overflow:hidden below) clip rather than
-		   scroll. */
-		width: var(--canvas-w);
-		height: var(--canvas-h);
+	.canvas-stage {
+		/* Footprint that the scroll container sees. By sizing the stage
+		   to (canvas × scale) we make the scrollable region match what
+		   the user can actually see, so native overflow scrolling pans
+		   correctly at any zoom level. `flex-shrink: 0` keeps the stage
+		   at its declared size inside the flex parent — without it the
+		   stage gets shrunk to fit the container and the wrapper's
+		   transformed visual content extends past the layout box,
+		   reproducing the original TASK-150 clipping bug. */
+		flex-shrink: 0;
+		width: calc(var(--canvas-w) * var(--canvas-scale));
+		height: calc(var(--canvas-h) * var(--canvas-scale));
 		border: 1px solid var(--color-border);
 		border-radius: 4px;
 		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-		overflow: hidden;
+		background: #ffffff;
+	}
+
+	.canvas-wrapper {
+		position: relative;
+		/* Authored canvas dimensions — Fabric draws here at intrinsic
+		   coordinates. The visual size on screen is driven by the
+		   `transform: scale()` below; layout footprint comes from the
+		   parent `.canvas-stage` (sized to canvas × scale). */
+		width: var(--canvas-w);
+		height: var(--canvas-h);
+		transform: scale(var(--canvas-scale));
+		transform-origin: top left;
+		/* No border / shadow / overflow:hidden here — those moved to
+		   `.canvas-stage` so the visual chrome stays crisp and we no
+		   longer clip the inner <canvas> when something unexpectedly
+		   resizes the wrapper. */
 		outline: none;
 	}
 
@@ -582,7 +758,10 @@
 		}
 	}
 
-	.canvas-wrapper:focus-within {
+	/* Focus ring goes on the stage now (which carries the visual frame),
+	   not the wrapper — putting it on the wrapper would render through
+	   the `transform: scale()` and either bloat or shrink with zoom. */
+	.canvas-stage:focus-within {
 		border-color: var(--color-text-subtle);
 		box-shadow:
 			0 1px 3px rgba(0, 0, 0, 0.1),

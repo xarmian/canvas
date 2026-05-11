@@ -1485,6 +1485,57 @@
 			{/if}
 		</button>
 
+		<!--
+			Zoom controls (TASK-150). Editor-only chrome — Fabric's intrinsic
+			coordinate system is untouched, so undo/redo/save/export all
+			ignore this. The "value" button toggles between 100% and Fit so
+			a user who's zoomed mid-edit has one click to either escape.
+		-->
+		<div class="zoom-controls" role="group" aria-label="Zoom">
+			<button
+				type="button"
+				class="tool-btn icon-only"
+				data-testid="toolbar-zoom-out"
+				onclick={() => editorRef?.zoomBy(0.8)}
+				aria-label="Zoom out"
+				title="Zoom out (Cmd/Ctrl + scroll)"
+			>
+				−
+			</button>
+			<button
+				type="button"
+				class="tool-btn zoom-value"
+				data-testid="toolbar-zoom-value"
+				onclick={() => {
+					// Click cycles Fit → 100% → Fit. If we're already at 100%
+					// in manual mode, the obvious next step is back to Fit;
+					// otherwise jump to 100%. Most users want one of the two
+					// canonical zoom levels.
+					if (editorState.zoomMode === 'manual' && Math.abs(editorState.zoom - 1) < 0.005) {
+						editorRef?.zoomToFit();
+					} else {
+						editorRef?.zoomToActual(1);
+					}
+				}}
+				aria-label="Toggle 100% / Fit"
+				title="Click to toggle 100% / Fit"
+			>
+				{editorState.zoomMode === 'fit' && Math.abs(editorState.zoom - 1) >= 0.005
+					? 'Fit'
+					: `${Math.round(editorState.zoom * 100)}%`}
+			</button>
+			<button
+				type="button"
+				class="tool-btn icon-only"
+				data-testid="toolbar-zoom-in"
+				onclick={() => editorRef?.zoomBy(1.25)}
+				aria-label="Zoom in"
+				title="Zoom in (Cmd/Ctrl + scroll)"
+			>
+				+
+			</button>
+		</div>
+
 		<div class="spacer"></div>
 
 		<button
@@ -1573,6 +1624,17 @@
 			ondragover={onDragOver}
 			ondragleave={onDragLeave}
 			ondrop={onDrop}
+			onwheel={(e) => {
+				// Cmd/Ctrl + wheel = zoom (anchored at cursor). Trackpad
+				// pinch on macOS/Windows arrives as `wheel` with ctrlKey
+				// synthesized by the browser, so this handler covers both
+				// modifier-wheel and pinch gestures with one branch.
+				// Plain wheel falls through to native scroll on this
+				// `overflow:auto` container — that's the canvas pan.
+				if (e.ctrlKey || e.metaKey) {
+					void editorRef?.applyWheelZoom(e);
+				}
+			}}
 			role="region"
 			aria-label="Canvas — drop an image here to add it"
 		>
@@ -1892,6 +1954,52 @@
 		align-self: center;
 	}
 
+	/* TASK-150: zoom control cluster. Three buttons share a single
+	   border so the group reads as a single segmented control instead
+	   of three loose buttons. The "value" button in the middle is wider
+	   to fit "100%" / "Fit" / "400%" without reflowing on every step.
+	   `flex-shrink: 0` keeps the cluster at its natural size — without
+	   it, a crowded toolbar shrinks the flex item below its content and
+	   `overflow: hidden` clips the inner buttons, leading to clicks
+	   landing on the parent div instead of the intended button. */
+	.zoom-controls {
+		display: inline-flex;
+		align-items: center;
+		flex-shrink: 0;
+		border: 1px solid #d1d5db;
+		border-radius: 4px;
+		overflow: hidden;
+		background: #fff;
+	}
+
+	.zoom-controls .tool-btn {
+		border: none;
+		border-radius: 0;
+		background: transparent;
+	}
+
+	.zoom-controls .tool-btn + .tool-btn {
+		border-left: 1px solid #e5e7eb;
+	}
+
+	.zoom-controls .tool-btn.icon-only {
+		padding: 4px 8px;
+		font-size: 14px;
+		font-weight: 600;
+		line-height: 1;
+		color: #475569;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.zoom-controls .zoom-value {
+		min-width: 3.5rem;
+		justify-content: center;
+		font-size: 12px;
+		font-weight: 500;
+		color: #1e293b;
+		font-variant-numeric: tabular-nums;
+	}
+
 	.delete-btn {
 		color: #dc2626;
 		border-color: #fca5a5;
@@ -2198,8 +2306,15 @@
 	.canvas-container {
 		flex: 1;
 		display: flex;
-		align-items: center;
-		justify-content: center;
+		/* TASK-150: `place-content: safe center` centers the canvas stage
+		   when it fits, but falls back to start-aligned when the stage
+		   overflows — so the top-left of an oversized canvas stays
+		   reachable via scroll. Bare `center` (the previous value) put
+		   the stage's overflow off the start edge of the scrollable
+		   area, which is exactly the "can't scroll left/up" bug users
+		   reported. The `safe` keyword is supported in every browser
+		   we target (Chrome 93+, Firefox 63+, Safari 11+). */
+		place-content: safe center;
 		background: #f1f5f9;
 		overflow: auto;
 		padding: 24px;
