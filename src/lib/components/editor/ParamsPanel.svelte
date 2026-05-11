@@ -259,13 +259,19 @@
 				// Surface non-OK responses (5xx, 4xx) via the visible
 				// ErrorState retry surface (TASK-136). The previous
 				// behavior was a silent fail with the type/required
-				// cells stuck in their default-disabled state.
+				// cells stuck in their default-disabled state. Stale-
+				// guarded so a late completion from a prior canvas /
+				// session can't paint a false error on the current
+				// panel (Codex round 1 P2).
 				schemaError = true;
 			}
 		} catch {
-			// Network rejections also surface as a retryable error
-			// rather than silently leaving the cells disabled.
-			schemaError = true;
+			// Network rejections take the same retryable path. Same
+			// stale guard applies — a stale rejection must not paint
+			// an error on a newer in-flight request (Codex round 1).
+			if (!isStale()) {
+				schemaError = true;
+			}
 		} finally {
 			// Only the LATEST request's generation may clear `schemaPending`
 			// or flip `schemaLoaded` — a stale completion that lost the

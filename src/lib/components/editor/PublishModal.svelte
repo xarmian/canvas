@@ -74,6 +74,12 @@
 	 *  the inline ErrorState in the docs section so the failure isn't
 	 *  silently swallowed (TASK-136). */
 	let paramRowsError = $state(false);
+	/** Monotonic generation counter for loadParamSchema requests. Bumped
+	 *  at request start; the stale-guard checks the captured token so
+	 *  a late completion from canvas A (or a closed modal) can't write
+	 *  schema rows / errors over canvas B's live state. Mirrors the
+	 *  pattern used by loadSharing (Codex round 1 of TASK-136 P2). */
+	let paramRowsGen = 0;
 
 	// --- Sharing & redirect (TASK-95) ---
 	// OG title / description / redirect URL are first-class shareable
@@ -116,11 +122,13 @@
 		}
 		if (!open) {
 			// Reset so reopening for a different canvas refetches. Bump
-			// the generation so any in-flight `loadSharing` from this
-			// session is treated as stale on completion.
+			// both generation counters so any in-flight `loadSharing` /
+			// `loadParamSchema` from this session is treated as stale on
+			// completion.
 			paramRowsLoaded = false;
 			paramRowsError = false;
 			paramRows = [];
+			paramRowsGen++;
 			versionToken = null;
 			sharingLoaded = false;
 			sharingError = false;
@@ -192,8 +200,15 @@
 
 	async function loadParamSchema(): Promise<void> {
 		paramRowsError = false;
+		// Snapshot canvasId + bump-and-capture the generation token so a
+		// stale completion can't write rows / errors onto a newer
+		// in-flight request or a different canvas (Codex round 1 P2).
+		const requestCanvasId = canvasId;
+		const requestGen = ++paramRowsGen;
+		const isStale = () => requestCanvasId !== canvasId || requestGen !== paramRowsGen;
 		try {
 			const res = await fetch(`/api/canvas/${canvasId}/params`);
+			if (isStale()) return;
 			if (!res.ok) {
 				// Surface a retryable error in the docs section instead of
 				// the previous silent fail. The bindings table still
@@ -202,10 +217,16 @@
 				return;
 			}
 			const rows = (await res.json()) as ParamRow[];
+			if (isStale()) return;
 			paramRows = rows;
 			paramRowsLoaded = true;
 		} catch {
-			paramRowsError = true;
+			// Stale-guarded so a rejected request from a previous
+			// canvas / session can't paint a false error banner over
+			// freshly-loaded rows.
+			if (!isStale()) {
+				paramRowsError = true;
+			}
 		}
 	}
 
