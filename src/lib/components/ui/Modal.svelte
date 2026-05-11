@@ -181,6 +181,14 @@
 		max-height: calc(100vh - 2rem);
 		background: var(--color-bg);
 		color: var(--color-text);
+		/* The user-agent stylesheet centers a `<dialog>` opened via
+		   `showModal()` with `margin: auto` (combined with the top-layer
+		   `position: fixed; inset: 0`). Tailwind 4's Preflight zeroes
+		   margins on dialog, so without this explicit restoration the
+		   modal sits at top-left of the viewport (TASK-151). The browser
+		   does the centering math; we just need to keep `margin: auto`
+		   so the remaining space distributes evenly on both axes. */
+		margin: auto;
 	}
 
 	.modal::backdrop {
