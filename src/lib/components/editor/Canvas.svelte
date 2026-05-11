@@ -1,6 +1,29 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { Canvas, IText, FabricImage, Rect, ActiveSelection, type FabricObject } from 'fabric';
+	import { Canvas, IText, FabricImage, Rect, ActiveSelection, FabricObject } from 'fabric';
+
+	// Fabric v7 changed FabricObject.ownDefaults.originX/originY from
+	// 'left'/'top' (v6) to 'center'/'center'
+	// (node_modules/fabric/dist/index.mjs:5166-5167). Every gallery
+	// template in src/lib/templates/gallery.ts (and every
+	// addText/addRect/addBadge call below) is authored against v6
+	// semantics: `left: 110` means "the LEFT edge of the box is at
+	// x=110", not "the CENTER is at x=110". And the server-side
+	// renderer (src/lib/engine/renderer.ts:181-182) treats missing
+	// originX as 'left'. So at the v7 default, the editor disagrees
+	// with both the templates and the renderer — gallery cards load
+	// "cropped" because their text gets center-anchored and drifts
+	// off-canvas to the left. Restore v6 defaults here. Subclasses
+	// (Rect, IText, Textbox, Image, Badge) inherit via
+	// super.getDefaults() and do not redeclare originX/originY, so the
+	// base-class override propagates everywhere. Existing user
+	// canvases are unaffected because Fabric serializes originX/Y
+	// explicitly (includeDefaultValues defaults to true) — the
+	// override only changes the default for objects whose JSON omits
+	// originX/Y, i.e. fresh gallery templates and any future code
+	// that constructs objects without spelling the origin out.
+	FabricObject.ownDefaults.originX = 'left';
+	FabricObject.ownDefaults.originY = 'top';
 	import {
 		editorState,
 		setFabricCanvas,
