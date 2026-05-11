@@ -33,7 +33,16 @@
 	 * its own task (gallery + "Use this template" both need an
 	 * unauthenticated entry point that drops users at `/signup` with
 	 * intent — out of scope for the landing-page slice).
+	 *
+	 * The brand + nav header itself lives in `$lib/components/layout/
+	 * PublicHeader.svelte` so the login + signup pages can render the
+	 * same chrome (BT-155). The `.topbar` / `.brand` / `.topnav` CSS
+	 * that used to live in this component's style block moved with
+	 * it; the responsive rules at the bottom no longer mention those
+	 * selectors.
 	 */
+
+	import PublicHeader from '$lib/components/layout/PublicHeader.svelte';
 
 	const GITHUB_URL = 'https://github.com/xarmian/canvas';
 
@@ -155,14 +164,7 @@
 </svelte:head>
 
 <div class="page">
-	<header class="topbar">
-		<a href="/" class="brand" aria-label="Canvas home">Canvas</a>
-		<nav class="topnav" aria-label="Primary">
-			<a href={GITHUB_URL} rel="noopener" class="topnav-link">GitHub</a>
-			<a href="/login" class="topnav-link">Log in</a>
-			<a href="/signup" class="topnav-cta">Sign up</a>
-		</nav>
-	</header>
+	<PublicHeader />
 
 	<main>
 		<section class="hero">
@@ -348,70 +350,12 @@
 			sans-serif;
 	}
 
-	.topbar {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		/* Mobile: 1rem horizontal padding gives the brand + 3-item nav
-		   ~343px of usable width at a 375px viewport — fits comfortably
-		   without horizontal scroll. The desktop 1.5rem reads better
-		   on wider viewports and is restored below the breakpoint. */
-		padding: 0.85rem 1rem;
-		max-width: 1180px;
-		margin: 0 auto;
-		width: 100%;
-		box-sizing: border-box;
-	}
-
-	.brand {
-		font-weight: 700;
-		font-size: 1.25rem;
-		text-decoration: none;
-		color: #0f172a;
-		letter-spacing: -0.01em;
-	}
-
-	.topnav {
-		display: flex;
-		align-items: center;
-		/* Mobile-first: tight gap keeps the 3-item nav from wrapping at
-		   375px. Restored to 1rem at lg via the breakpoint block. */
-		gap: 0.6rem;
-	}
-
-	.topnav-link {
-		display: inline-flex;
-		align-items: center;
-		/* min-height: 44px ensures the tap target hits Apple HIG's
-		   minimum on mobile even though the visible text is small.
-		   Padding stays small so desktop reads as a nav link, not
-		   a button — the height is reached via min-height alone. */
-		min-height: 44px;
-		padding: 0 0.25rem;
-		color: #475569;
-		text-decoration: none;
-		/* Mobile-first: 0.85rem keeps 3 nav items + the brand on one
-		   row at 375px. Restored to 0.9rem at lg. */
-		font-size: 0.85rem;
-		font-weight: 500;
-	}
-
-	.topnav-link:hover {
-		color: #0f172a;
-	}
-
-	.topnav-cta {
-		display: inline-flex;
-		align-items: center;
-		min-height: 44px;
-		padding: 0.5rem 1rem;
-		background: #0f172a;
-		color: #fff;
-		border-radius: 6px;
-		text-decoration: none;
-		font-size: 0.875rem;
-		font-weight: 600;
-	}
+	/*
+	 * Topbar styles (.topbar / .brand / .topnav / .topnav-link /
+	 * .topnav-cta) moved to `$lib/components/layout/PublicHeader.svelte`
+	 * (BT-155). The responsive blocks below also no longer mention them
+	 * — the component carries its own breakpoint rules.
+	 */
 
 	main {
 		flex: 1;
@@ -881,9 +825,6 @@
 	 */
 
 	@media (min-width: 640px) {
-		.topbar {
-			padding: 1rem 1.5rem;
-		}
 		main {
 			padding: 0 1.5rem;
 		}
@@ -907,12 +848,6 @@
 		}
 		.steps-list {
 			grid-template-columns: repeat(3, minmax(0, 1fr));
-		}
-		.topnav {
-			gap: 1rem;
-		}
-		.topnav-link {
-			font-size: 0.9rem;
 		}
 	}
 </style>
