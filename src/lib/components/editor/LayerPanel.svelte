@@ -9,10 +9,12 @@
 		Lock,
 		Unlock,
 		ChevronUp,
-		ChevronDown
+		ChevronDown,
+		Layers
 	} from '@lucide/svelte';
 	import type { Component } from 'svelte';
 	import { editorState, syncObjects, setSelectedObject, markDirty } from './state.svelte.ts';
+	import { LoadingSkeleton, EmptyState } from '$lib/components/ui';
 
 	function getIconComponent(obj: FabricObject): Component {
 		const t = obj.type?.toLowerCase() ?? '';
@@ -104,85 +106,107 @@
 		<span class="count">{editorState.objects.length}</span>
 	</header>
 
-	<div class="layer-list" role="listbox" aria-label="Canvas layers">
-		{#each reversed as obj (obj)}
-			{@const LayerIcon = getIconComponent(obj)}
-			<div
-				class="layer-row"
-				class:selected={isSelectedRow(obj)}
-				onclick={(e) => selectLayer(obj, e)}
-				onkeydown={(e) => {
-					if (e.key === 'Enter' || e.key === ' ') selectLayer(obj, e);
-				}}
-				tabindex="0"
-				role="option"
-				aria-selected={isSelectedRow(obj)}
-			>
-				<span class="icon" aria-hidden="true">
-					<LayerIcon size={14} strokeWidth={2} />
-				</span>
-				<span class="label">{getLabel(obj)}</span>
+	{#if !editorState.fabricCanvas || !editorState.hydrationComplete}
+		<!--
+			Loading state — Fabric is mounting OR a stored template is
+			still hydrating into the canvas. Render layer-row skeletons so
+			the chrome doesn't flash "No layers yet" during the brief gap
+			between fabricCanvas becoming truthy and loadFromJSON
+			resolving (Codex round 1 P2). Three lines roughly matches a
+			typical opened canvas.
+		-->
+		<div class="layer-skeleton" aria-label="Loading layers">
+			<LoadingSkeleton lines={3} />
+		</div>
+	{:else if editorState.objects.length === 0}
+		<div class="layer-empty">
+			<EmptyState
+				icon={Layers}
+				title="No layers yet"
+				description="Add an image, text, or shape from the toolbar to get started."
+			/>
+		</div>
+	{:else}
+		<div class="layer-list" role="listbox" aria-label="Canvas layers">
+			{#each reversed as obj (obj)}
+				{@const LayerIcon = getIconComponent(obj)}
+				<div
+					class="layer-row"
+					class:selected={isSelectedRow(obj)}
+					onclick={(e) => selectLayer(obj, e)}
+					onkeydown={(e) => {
+						if (e.key === 'Enter' || e.key === ' ') selectLayer(obj, e);
+					}}
+					tabindex="0"
+					role="option"
+					aria-selected={isSelectedRow(obj)}
+				>
+					<span class="icon" aria-hidden="true">
+						<LayerIcon size={14} strokeWidth={2} />
+					</span>
+					<span class="label">{getLabel(obj)}</span>
 
-				<span class="actions">
-					<button
-						class="action-btn"
-						title={obj.visible ? 'Hide' : 'Show'}
-						aria-label={obj.visible ? 'Hide layer' : 'Show layer'}
-						onclick={(e) => {
-							e.stopPropagation();
-							toggleVisibility(obj);
-						}}
-					>
-						{#if obj.visible}
-							<Eye size={14} />
-						{:else}
-							<EyeOff size={14} />
-						{/if}
-					</button>
+					<span class="actions">
+						<button
+							class="action-btn"
+							title={obj.visible ? 'Hide' : 'Show'}
+							aria-label={obj.visible ? 'Hide layer' : 'Show layer'}
+							onclick={(e) => {
+								e.stopPropagation();
+								toggleVisibility(obj);
+							}}
+						>
+							{#if obj.visible}
+								<Eye size={14} />
+							{:else}
+								<EyeOff size={14} />
+							{/if}
+						</button>
 
-					<button
-						class="action-btn"
-						title={obj.selectable ? 'Lock' : 'Unlock'}
-						aria-label={obj.selectable ? 'Lock layer' : 'Unlock layer'}
-						onclick={(e) => {
-							e.stopPropagation();
-							toggleLock(obj);
-						}}
-					>
-						{#if obj.selectable}
-							<Unlock size={14} />
-						{:else}
-							<Lock size={14} />
-						{/if}
-					</button>
+						<button
+							class="action-btn"
+							title={obj.selectable ? 'Lock' : 'Unlock'}
+							aria-label={obj.selectable ? 'Lock layer' : 'Unlock layer'}
+							onclick={(e) => {
+								e.stopPropagation();
+								toggleLock(obj);
+							}}
+						>
+							{#if obj.selectable}
+								<Unlock size={14} />
+							{:else}
+								<Lock size={14} />
+							{/if}
+						</button>
 
-					<button
-						class="action-btn"
-						title="Move up"
-						aria-label="Move layer up"
-						onclick={(e) => {
-							e.stopPropagation();
-							moveUp(obj);
-						}}
-					>
-						<ChevronUp size={14} />
-					</button>
+						<button
+							class="action-btn"
+							title="Move up"
+							aria-label="Move layer up"
+							onclick={(e) => {
+								e.stopPropagation();
+								moveUp(obj);
+							}}
+						>
+							<ChevronUp size={14} />
+						</button>
 
-					<button
-						class="action-btn"
-						title="Move down"
-						aria-label="Move layer down"
-						onclick={(e) => {
-							e.stopPropagation();
-							moveDown(obj);
-						}}
-					>
-						<ChevronDown size={14} />
-					</button>
-				</span>
-			</div>
-		{/each}
-	</div>
+						<button
+							class="action-btn"
+							title="Move down"
+							aria-label="Move layer down"
+							onclick={(e) => {
+								e.stopPropagation();
+								moveDown(obj);
+							}}
+						>
+							<ChevronDown size={14} />
+						</button>
+					</span>
+				</div>
+			{/each}
+		</div>
+	{/if}
 </aside>
 
 <style>
@@ -224,6 +248,22 @@
 	.layer-list {
 		flex: 1;
 		overflow-y: auto;
+	}
+
+	.layer-skeleton {
+		flex: 1;
+		padding: var(--spacing-3);
+		display: flex;
+		flex-direction: column;
+		gap: var(--spacing-3);
+	}
+
+	.layer-empty {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: var(--spacing-4);
 	}
 
 	.layer-row {
