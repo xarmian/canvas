@@ -39,14 +39,30 @@ export class S3StorageAdapter implements StorageAdapter {
 		this.client = new S3Client(clientConfig);
 		this.bucket = config.bucket;
 		// Only opt INTO direct serving when an operator explicitly
-		// configures `S3_PUBLIC_URL`. The previous fallback of
-		// `${endpoint}/${bucket}` (e.g. `http://localhost:9002/canvas`)
-		// leaked the storage hostname into every `<img>` URL the editor
-		// rendered, which broke whenever the dev server was reached
-		// from anything other than localhost AND required public CORS
-		// on the bucket (BT-154). Default is to proxy through the app
-		// — same-origin, no CORS surface, no hostname dependency.
-		this.publicBaseUrl = config.publicUrl ?? null;
+		// configures `S3_PUBLIC_URL` to point at something OTHER than
+		// the endpoint+bucket the app itself talks to. Reasoning:
+		//
+		//   - Pre-BT-154 `.env.example` shipped with
+		//     `S3_PUBLIC_URL="http://localhost:9002/canvas"`, which the
+		//     old `getUrl()` would mirror back into every `<img>` src.
+		//     Anyone who copied that .env (or whose dotfile already has
+		//     it set to the legacy default) still has the URL leak we
+		//     just fixed, because their explicit value bypasses the
+		//     proxy default we just introduced (Codex round 3 P1).
+		//   - A legitimate production opt-in points at a CDN / Cloudflare
+		//     / publicly-reachable host that is NOT the same as the
+		//     server-side S3 endpoint. The endpoint here is what the
+		//     app uses internally (often `http://minio:9000` inside
+		//     Docker); if the operator's "public URL" matches that
+		//     internal address verbatim, it's almost certainly the
+		//     legacy buggy default, not a deliberate CDN.
+		//
+		// So: treat `${endpoint}/${bucket}` as a sentinel that signals
+		// "no real public host configured" and route through the proxy
+		// in that case. Anything else is treated as a real CDN opt-in.
+		const legacyBuggyDefault = `${config.endpoint.replace(/\/+$/, '')}/${config.bucket}`;
+		const configured = config.publicUrl?.replace(/\/+$/, '') ?? null;
+		this.publicBaseUrl = configured && configured !== legacyBuggyDefault ? configured : null;
 	}
 
 	async upload(key: string, body: Buffer, contentType: string): Promise<string> {

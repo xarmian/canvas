@@ -52,26 +52,36 @@ test.describe('Asset proxy (BT-154)', () => {
 		await expect(card).toBeVisible({ timeout: 5_000 });
 
 		const img = card.locator('img');
-		const probe = await img.evaluate((el) => {
-			const i = el as HTMLImageElement;
-			return {
-				src: i.currentSrc || i.src,
-				naturalWidth: i.naturalWidth,
-				naturalHeight: i.naturalHeight
-			};
-		});
 
-		// Same-origin proxy URL. Storage hostname must NOT leak into the
-		// page — pre-fix this would have been
-		// `http://localhost:9002/canvas/public/images/.../...`.
-		expect(probe.src).toMatch(/\/api\/assets\/public\/images\//);
-		expect(probe.src).not.toMatch(/localhost:9002/);
+		// `<img loading="lazy">` may not have finished fetching the moment
+		// the card becomes visible. Poll for `naturalWidth > 0` — the
+		// canonical signal that the image actually loaded — instead of
+		// reading once and risking a flake on slow CI (Codex round 3 P2).
+		// `naturalWidth === 0` is also the placeholder-on-load state that
+		// is the user-reported BT-154 symptom, so the same poll covers
+		// both the regression and the flake mitigation.
+		await expect
+			.poll(
+				async () =>
+					img.evaluate((el) => {
+						const i = el as HTMLImageElement;
+						return i.naturalWidth > 0 && i.complete ? i.naturalWidth : null;
+					}),
+				{
+					timeout: 5_000,
+					message: 'asset library <img> failed to load bytes (BT-154 symptom)'
+				}
+			)
+			.toBeGreaterThan(0);
 
-		// `naturalWidth > 0` is the canonical signal that an <img> actually
-		// loaded its bytes — placeholder-on-load (the user's BT-154 symptom)
-		// leaves this at 0.
-		expect(probe.naturalWidth).toBeGreaterThan(0);
-		expect(probe.naturalHeight).toBeGreaterThan(0);
+		// Once we know the image loaded, snapshot the URL it actually
+		// resolved to. Same-origin proxy path is the BT-154 contract —
+		// storage hostname must NOT leak.
+		const src = await img.evaluate(
+			(el) => (el as HTMLImageElement).currentSrc || (el as HTMLImageElement).src
+		);
+		expect(src).toMatch(/\/api\/assets\/public\/images\//);
+		expect(src).not.toMatch(/localhost:9002/);
 	});
 });
 
