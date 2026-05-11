@@ -237,7 +237,15 @@ test.describe('Canvas MVP E2E', () => {
 			expect(html).toContain('twitter:card');
 		});
 
-		test('human with redirect gets 302', async ({ request }) => {
+		// TASK-139: humans no longer auto-302 when a redirectUrl is
+		// configured. Instead, the share page renders a visible
+		// "Continue to {host}" CTA pointing at the substituted URL,
+		// so users tapping a tweeted link can verify the destination
+		// before bouncing. Bots still get the landing for OG scrape
+		// (unchanged). The CTA's `href` is the post-substitution URL,
+		// so any `{{param}}` placeholders in the configured redirect
+		// resolve against the incoming query params.
+		test('human with redirect sees Continue CTA pointing at destination', async ({ request }) => {
 			const signupRes = await request.post('/api/auth/sign-up/email', {
 				data: {
 					name: 'Redirect Tester',
@@ -254,14 +262,50 @@ test.describe('Canvas MVP E2E', () => {
 			const canvas = await createRes.json();
 
 			await request.patch(`/api/canvas/${canvas.id}`, {
-				data: { published: true, redirectUrl: 'https://example.com' },
+				data: { published: true, redirectUrl: 'https://example.com/landing' },
 				headers: { cookie: cookies }
 			});
 
 			const res = await request.get(`/c/${canvas.slug}`, {
 				maxRedirects: 0
 			});
-			expect(res.status()).toBe(302);
+			expect(res.status()).toBe(200);
+			const html = await res.text();
+			// Continue CTA anchored at the substituted destination URL.
+			expect(html).toContain('href="https://example.com/landing"');
+			// Label shows the host so users can scan trust signal at a glance.
+			expect(html).toContain('Continue to example.com');
+		});
+
+		test('human without redirect sees the share landing without a Continue CTA', async ({
+			request
+		}) => {
+			const signupRes = await request.post('/api/auth/sign-up/email', {
+				data: {
+					name: 'No-Redirect Tester',
+					email: `no-redirect-${Date.now()}@test.com`,
+					password: 'testpass123456'
+				}
+			});
+			const cookies = signupRes.headers()['set-cookie'] || '';
+
+			const createRes = await request.post('/api/canvas', {
+				data: { name: 'No Redirect Test' },
+				headers: { cookie: cookies }
+			});
+			const canvas = await createRes.json();
+
+			await request.patch(`/api/canvas/${canvas.id}`, {
+				data: { published: true },
+				headers: { cookie: cookies }
+			});
+
+			const res = await request.get(`/c/${canvas.slug}`);
+			expect(res.status()).toBe(200);
+			const html = await res.text();
+			expect(html).not.toContain('Continue to');
+			// Landing still renders the canvas metadata.
+			expect(html).toContain('Created with');
 		});
 	});
 

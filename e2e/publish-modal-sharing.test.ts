@@ -4,7 +4,11 @@
  * The OG title / OG description / redirect URL fields existed in the
  * canvases schema and PATCH endpoint but had no UI surface before
  * TASK-95. These tests assert the round-trip: enter a value → blur →
- * the share page (bot UA) reflects it / human UA gets the 302.
+ * the share page reflects it. As of TASK-139 the human UA no longer
+ * auto-302s when `redirectUrl` is configured — instead the landing
+ * renders a visible "Continue to {host}" CTA anchored at the
+ * substituted destination, so the assertion below checks for that
+ * CTA in the rendered HTML.
  *
  * Use `page.request` (not the standalone `request` fixture) so calls
  * carry the signed-in browser-context cookies.
@@ -48,7 +52,7 @@ test('OG title and description from PublishModal land on the share page', async 
 	expect(html).toContain('A description for crawlers');
 });
 
-test('Redirect URL set in PublishModal sends humans to the configured destination', async ({
+test('Redirect URL set in PublishModal surfaces a Continue CTA on the share page', async ({
 	page
 }) => {
 	const request = page.request;
@@ -69,14 +73,18 @@ test('Redirect URL set in PublishModal sends humans to the configured destinatio
 		expect(data.redirectUrl).toBe(target);
 	}).toPass({ timeout: 5_000 });
 
-	// Human UA gets a 302 to the configured target. Disable redirect
-	// following so we can assert on the redirect itself.
+	// TASK-139: humans land on the share page (200) and see a visible
+	// Continue CTA pointing at the configured destination. The anchor
+	// is a plain `<a>` so middle-click / new-tab semantics work and
+	// screen readers announce it as a link.
 	const human = await request.get(shareUrl, {
 		headers: { 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64)' },
 		maxRedirects: 0
 	});
-	expect(human.status()).toBe(302);
-	expect(human.headers()['location']).toBe(target);
+	expect(human.status()).toBe(200);
+	const html = await human.text();
+	expect(html).toContain(`href="${target}"`);
+	expect(html).toContain('Continue to example.com');
 });
 
 test('Reopening the modal pre-fills the saved sharing values', async ({ page }) => {
