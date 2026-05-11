@@ -224,13 +224,18 @@
 	});
 
 	// Width/height props can change mid-mount (settings modal → resize
-	// canvas). Re-fit when they do so the new dimensions still fit the
-	// visible container. Skipped in 'manual' mode for the same reason
-	// the ResizeObserver is.
+	// canvas, or SPA navigation between canvases of different sizes).
+	// Re-fit when they do so the new dimensions still fit the visible
+	// container. We also depend on `editorState.zoomMode` so a 'manual
+	// → fit' transition (e.g. canvas-switch in the editor route) reruns
+	// applyFitIfTracking — without this, a same-dimensions switch from
+	// a fit-mode canvas to another fit-mode canvas would leave the fit
+	// untouched while the route swung mode back to 'fit' (Codex round 3
+	// P2). Skipped at the start of applyFitIfTracking in 'manual' mode.
 	$effect(() => {
-		// Touch reactive deps so the effect re-runs on size changes.
 		void width;
 		void height;
+		void editorState.zoomMode;
 		applyFitIfTracking();
 	});
 

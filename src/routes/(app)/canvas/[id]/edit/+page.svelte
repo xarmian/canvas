@@ -85,16 +85,19 @@
 			canvasBgType = data.canvas.backgroundType as 'color' | 'image';
 			canvasBgValue = data.canvas.backgroundValue;
 			showSettingsModal = false;
-			// Reset zoom state for the newly loaded canvas. CanvasEditor is
-			// reused across SPA navigations within /canvas/[id]/edit, so
-			// `setFabricCanvas()` (which also resets zoom) doesn't fire on
-			// param changes. Without this, canvas B would open at canvas
-			// A's manual zoom level and skip auto-fit. The dimension props
-			// change above flows to Canvas.svelte's width/height $effect,
-			// which runs `applyFitIfTracking()` and — because we're back in
-			// 'fit' mode — recomputes the right scale for canvas B.
-			// (TASK-150 follow-up — Codex round 2 P2.)
-			editorState.zoom = 1;
+			// Switch zoom mode back to auto-fit for the newly loaded canvas.
+			// CanvasEditor is reused across SPA navigations within
+			// /canvas/[id]/edit, so `setFabricCanvas()` (which also resets
+			// zoom) doesn't fire on param changes. Canvas.svelte's $effect
+			// watches `zoomMode` so this 'manual → fit' write triggers a
+			// refit when dimensions change OR stay the same. We DON'T
+			// pre-write zoom to 1 here — that would be visible as a flash
+			// to 100% before the effect re-fits, and (Codex round 3 P2)
+			// would leave a same-dimensions fit→fit switch stuck at 100%
+			// because no other dep changes to retrigger the effect.
+			// Letting applyFitIfTracking compute the right scale keeps the
+			// fit-correct invariant: editorState.zoom always matches what
+			// fit + current dims says, modulo manual overrides.
 			editorState.zoomMode = 'fit';
 			// Reset save-failure state so a stale failure from canvas A doesn't
 			// bleed into canvas B (wrong red pill + wrong retry toast).
