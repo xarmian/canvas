@@ -207,42 +207,74 @@ export async function addImageLayer(
 }
 
 /**
- * Bind a property of the currently-selected layer to a URL parameter via
- * the property panel's "Dynamic Parameters" section. `bindableLabel` is
- * the visible row label (e.g. "Text Content", "Fill Color", "Image Source").
+ * Bind a property of the currently-selected layer to a URL value via the
+ * inline ⚡ affordance on the property panel. `bindableLabel` is the meta
+ * label for the property (e.g. "Text Content", "Fill Color", "Image
+ * Source", "Visibility", "Opacity", "Width", "Height").
+ *
+ * History — TASK-104 replaced the original "Dynamic Parameters" expandable
+ * section + "Bind <Label> to a URL parameter" button pattern with the
+ * inline ⚡ per-row affordance. TASK-141 renamed the bind editor's
+ * "Param name" input label to "URL value name". This helper was rewritten
+ * for the current UI in TASK-148.
+ *
+ * Flow:
+ *   1. If the bindable lives inside the (collapsed-by-default) Position
+ *      & size section, expand it so the property's ⚡ button is reachable.
+ *   2. Click the ⚡ button (aria-label `Make <Label> dynamic`).
+ *   3. Fill the bind editor's "URL value name" input.
+ *   4. Optionally fill "Default".
  */
+const POSITION_SECTION_LABELS = new Set([
+	'Position X',
+	'Position Y',
+	'Width',
+	'Height',
+	'Opacity',
+	'Visibility'
+]);
+
 export async function bindParam(
 	page: Page,
 	bindableLabel: string,
 	paramName: string,
 	defaultValue?: string
 ): Promise<void> {
-	// Expand the Dynamic Parameters section if it's collapsed. The header
-	// is a button with aria-expanded; click only when collapsed so we
-	// don't accidentally toggle it closed when the section is already open.
-	const dynamicHeader = page.getByRole('button', { name: /Dynamic Parameters/ });
-	const expanded = await dynamicHeader.getAttribute('aria-expanded');
-	if (expanded !== 'true') {
-		await dynamicHeader.click();
+	// Properties in the Position & size section need the section
+	// expanded before their ⚡ button is in the DOM. The section
+	// header is a button with aria-expanded; click only when
+	// collapsed so we don't accidentally toggle it closed when a
+	// previous helper call already opened it.
+	if (POSITION_SECTION_LABELS.has(bindableLabel)) {
+		const positionHeader = page.getByRole('button', { name: /^Position & size/ });
+		const expanded = await positionHeader.getAttribute('aria-expanded');
+		if (expanded !== 'true') {
+			await positionHeader.click();
+		}
 	}
 
-	// Each bindable property is its own row. The Bind button has an
-	// accessible name that varies by state ("Bind <Label> to a URL parameter"
-	// when off, "Stop binding <Label>" when on). Match the off-state name
-	// to find the right row, regardless of whether the user has bound
-	// other properties already.
-	const bindBtn = page.getByRole('button', {
-		name: `Bind ${bindableLabel} to a URL parameter`
-	});
+	// The ⚡ button has aria-label `Make <Label> dynamic` while unbound.
+	// (When already bound it's `Edit dynamic value for <Label> …`, but
+	// this helper is for the unbound case — re-binding through the same
+	// path isn't a current caller need.) The button is `opacity: 0` until
+	// row hover, but Playwright treats opacity:0 as visible for
+	// actionability so the click still lands.
+	const bindBtn = page.getByRole('button', { name: `Make ${bindableLabel} dynamic` });
 	await bindBtn.click();
 
-	// After clicking Bind, the panel renders the param-name input.
-	const paramInput = page.getByLabel('Param name').first();
+	// Only one bind editor is open at a time, so the label query is
+	// unambiguous. `exact: true` avoids matching the conditional-rule
+	// editor's `Rule {i} URL value name` aria-label (which contains
+	// "URL value name" as a substring).
+	const paramInput = page.getByLabel('URL value name', { exact: true });
 	await expect(paramInput).toBeVisible({ timeout: 3_000 });
 	await paramInput.fill(paramName);
 
 	if (defaultValue !== undefined) {
-		const defaultInput = page.getByLabel('Default').first();
+		// Exact match for the bind editor's `<label>Default</label>`.
+		// Defensive `.first()` against a future change that adds another
+		// "Default" label to the panel.
+		const defaultInput = page.getByLabel('Default', { exact: true }).first();
 		await defaultInput.fill(defaultValue);
 	}
 }
