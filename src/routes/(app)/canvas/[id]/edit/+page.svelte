@@ -2306,15 +2306,19 @@
 	.canvas-container {
 		flex: 1;
 		display: flex;
-		/* TASK-150: `place-content: safe center` centers the canvas stage
+		/* TASK-150: `safe center` on both axes centers the canvas stage
 		   when it fits, but falls back to start-aligned when the stage
 		   overflows — so the top-left of an oversized canvas stays
 		   reachable via scroll. Bare `center` (the previous value) put
 		   the stage's overflow off the start edge of the scrollable
 		   area, which is exactly the "can't scroll left/up" bug users
-		   reported. The `safe` keyword is supported in every browser
-		   we target (Chrome 93+, Firefox 63+, Safari 11+). */
-		place-content: safe center;
+		   reported. Single-line flex needs `align-items` for cross-axis
+		   centering — `place-content` would map to `align-content`,
+		   which has no effect on a single-line flex (Codex round 1 P3).
+		   The `safe` keyword is supported in every browser we target
+		   (Chrome 93+, Firefox 63+, Safari 11+). */
+		align-items: safe center;
+		justify-content: safe center;
 		background: #f1f5f9;
 		overflow: auto;
 		padding: 24px;

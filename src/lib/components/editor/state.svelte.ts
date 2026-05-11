@@ -101,6 +101,14 @@ export function setFabricCanvas(canvas: Canvas | null) {
 	// flight. The editor page will flip this false again if/when it
 	// kicks off `loadFromJSON` for a stored template.
 	editorState.hydrationComplete = true;
+	// Reset zoom + zoomMode so a fresh canvas mount starts in auto-fit
+	// at 100%. Without this, navigating between canvases in the same
+	// SPA session would carry over a previous canvas's manual zoom —
+	// Canvas.svelte's local `zoom` starts at 1, but applyFitIfTracking
+	// short-circuits in 'manual' mode and the new canvas never re-fits.
+	// (TASK-150 follow-up — Codex round 1 P2.)
+	editorState.zoom = 1;
+	editorState.zoomMode = 'fit';
 }
 
 /**
