@@ -19,6 +19,8 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import TemplatePreview from '$lib/components/templates/TemplatePreview.svelte';
 	import type { TemplateDefinition } from '$lib/templates/gallery';
+	import { Button, EmptyState } from '$lib/components/ui';
+	import { LayoutTemplate } from '@lucide/svelte';
 
 	let { data } = $props();
 
@@ -67,32 +69,55 @@
 		<a href="/dashboard" class="btn btn-secondary">Back to dashboard</a>
 	</header>
 
-	<div class="grid">
-		{#each data.templates as template (template.id)}
-			<article class="card" data-testid="template-card" data-template-id={template.id}>
-				<div class="preview">
-					<TemplatePreview {template} />
-				</div>
-				<div class="body">
-					<h2 class="name">{template.name}</h2>
-					<p class="meta">
-						{template.canvas.width} &times; {template.canvas.height} ·
-						<span class="category">{template.category}</span>
-					</p>
-					<p class="description">{template.description}</p>
-					<button
-						type="button"
-						class="btn btn-primary"
-						onclick={() => useTemplate(template)}
-						disabled={creatingId !== null}
-						data-testid="template-use"
-					>
-						{creatingId === template.id ? 'Creating…' : 'Use this template'}
-					</button>
-				</div>
-			</article>
-		{/each}
-	</div>
+	{#if data.templates.length === 0}
+		<!--
+			Empty state — the templates collection ships with the build,
+			so this only fires if the gallery export is empty (e.g. a
+			refactor unintentionally clears it). EmptyState gives that
+			a designed surface instead of a blank grid.
+		-->
+		<div class="empty-wrapper">
+			<EmptyState
+				icon={LayoutTemplate}
+				title="No templates available"
+				description="Templates will appear here as they're added to the gallery. In the meantime you can start a blank canvas."
+			/>
+		</div>
+	{:else}
+		<div class="grid">
+			{#each data.templates as template (template.id)}
+				<article class="card" data-testid="template-card" data-template-id={template.id}>
+					<div class="preview">
+						<TemplatePreview {template} />
+					</div>
+					<div class="body">
+						<h2 class="name">{template.name}</h2>
+						<p class="meta">
+							{template.canvas.width} &times; {template.canvas.height} ·
+							<span class="category">{template.category}</span>
+						</p>
+						<p class="description">{template.description}</p>
+						<!--
+							Per-card creation indicator: Button's `loading` prop
+							supplies the spinner + aria-busy. Other cards' buttons
+							are still `disabled` (via the `creatingId !== null`
+							check) so a slow network can't queue duplicate POSTs,
+							but only the in-flight card shows the spinner.
+						-->
+						<Button
+							variant="primary"
+							onclick={() => useTemplate(template)}
+							disabled={creatingId !== null && creatingId !== template.id}
+							loading={creatingId === template.id}
+							data-testid="template-use"
+						>
+							{creatingId === template.id ? 'Creating…' : 'Use this template'}
+						</Button>
+					</div>
+				</article>
+			{/each}
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -191,42 +216,36 @@
 		line-height: 1.45;
 	}
 
+	/*
+	 * "Back to dashboard" stays an anchor so it navigates without JS.
+	 * The remaining .btn / .btn-secondary rules size the link to match
+	 * the canonical Button primitive's md size.
+	 */
 	.btn {
 		display: inline-flex;
 		justify-content: center;
 		align-items: center;
-		padding: 0.55rem 1rem;
+		padding: 0.5rem 1rem;
 		border-radius: 6px;
 		font-size: 0.875rem;
 		font-weight: 500;
 		text-decoration: none;
-		border: none;
-		cursor: pointer;
-		transition: opacity 0.15s;
-	}
-
-	.btn:hover {
-		opacity: 0.85;
-	}
-
-	.btn:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
-	.btn-primary {
-		background: #111;
-		color: #fff;
+		border: 1px solid transparent;
 	}
 
 	.btn-secondary {
-		background: #fff;
-		color: #111;
-		border: 1px solid #d1d5db;
-		padding: 0.5rem 1rem;
+		background: var(--color-bg);
+		color: var(--color-text);
+		border-color: var(--color-border-strong);
 	}
 
 	.btn-secondary:hover {
-		background: #f3f4f6;
+		background: var(--color-surface-muted);
+	}
+
+	.empty-wrapper {
+		display: flex;
+		justify-content: center;
+		padding: var(--spacing-8) var(--spacing-4);
 	}
 </style>
