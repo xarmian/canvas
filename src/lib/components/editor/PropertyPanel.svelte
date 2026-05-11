@@ -153,7 +153,11 @@
 		const next = [...conditionalStyles];
 		next.push({
 			when: { param: '', op: '<', value: '0' },
-			then: { property: 'fill', value: 'var(--color-danger)' }
+			// JS-side data default — must be a concrete hex; this value is
+			// serialized into Fabric and consumed by `<input type="color">`,
+			// neither of which resolve CSS custom properties. Kept verbatim
+			// rather than tokenized (Codex round 1 P1).
+			then: { property: 'fill', value: '#dc2626' }
 		});
 		setRules(next);
 	}
@@ -164,10 +168,12 @@
 
 	/** Default `then.value` for each conditional target property. Used when the
 	 *  user switches the target property so the input doesn't carry stale data
-	 *  (e.g. `'var(--color-danger)'` left over from a fill rule when switching to opacity).
+	 *  (e.g. `'#dc2626'` left over from a fill rule when switching to opacity).
+	 *  Same data-vs-styling distinction as `addRule` — `#dc2626` here is a Fabric
+	 *  fill value, not CSS, so the token isn't appropriate.
 	 */
 	const conditionalPropertyDefaults: Record<ConditionalProperty, string> = {
-		fill: 'var(--color-danger)',
+		fill: '#dc2626',
 		opacity: '0.5',
 		visible: 'false'
 	};
