@@ -80,6 +80,15 @@
 	 *  schema rows / errors over canvas B's live state. Mirrors the
 	 *  pattern used by loadSharing (Codex round 1 of TASK-136 P2). */
 	let paramRowsGen = 0;
+	/** In-flight gate: while a /params request is pending, the $effect
+	 *  must NOT kick off a second one. Without this, a re-render
+	 *  triggered by a sibling state change (sharingLoaded /
+	 *  versionToken / sharingPending) while `paramRowsLoaded` is still
+	 *  false would re-enter loadParamSchema, and a slow late completion
+	 *  could stale out the earlier successful response and then fail —
+	 *  surfacing an error banner over freshly-loaded rows. Mirrors
+	 *  ParamsPanel's `schemaPending` (Codex round 2 of TASK-136 P2). */
+	let paramRowsPending = $state(false);
 
 	// --- Sharing & redirect (TASK-95) ---
 	// OG title / description / redirect URL are first-class shareable
@@ -111,7 +120,7 @@
 	let sharingGen = 0;
 
 	$effect(() => {
-		if (open && published && !paramRowsLoaded) {
+		if (open && published && !paramRowsLoaded && !paramRowsPending) {
 			void loadParamSchema();
 		}
 		if (open && published && versionToken === null) {
@@ -129,6 +138,7 @@
 			paramRowsError = false;
 			paramRows = [];
 			paramRowsGen++;
+			paramRowsPending = false;
 			versionToken = null;
 			sharingLoaded = false;
 			sharingError = false;
@@ -200,6 +210,7 @@
 
 	async function loadParamSchema(): Promise<void> {
 		paramRowsError = false;
+		paramRowsPending = true;
 		// Snapshot canvasId + bump-and-capture the generation token so a
 		// stale completion can't write rows / errors onto a newer
 		// in-flight request or a different canvas (Codex round 1 P2).
@@ -226,6 +237,14 @@
 			// freshly-loaded rows.
 			if (!isStale()) {
 				paramRowsError = true;
+			}
+		} finally {
+			// Only the LATEST request may clear the pending flag — a
+			// stale completion that lost the race must remain a no-op
+			// so the still-in-flight newer request keeps the effect's
+			// !paramRowsPending gate armed.
+			if (requestGen === paramRowsGen) {
+				paramRowsPending = false;
 			}
 		}
 	}
