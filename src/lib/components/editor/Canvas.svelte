@@ -698,10 +698,23 @@
 		   at its declared size inside the flex parent — without it the
 		   stage gets shrunk to fit the container and the wrapper's
 		   transformed visual content extends past the layout box,
-		   reproducing the original TASK-150 clipping bug. */
+		   reproducing the original TASK-150 clipping bug.
+
+		   `overflow: hidden` is load-bearing despite the transformed
+		   content already visually fitting inside the stage: per the
+		   CSS Overflow spec, scrollable overflow is computed from
+		   descendant *layout* boxes, NOT post-transform visual boxes.
+		   The wrapper inside is `width: var(--canvas-w)` (e.g. 1200px)
+		   even when scaled down to 600px, so without this clip the
+		   unscaled 1200px layout box would propagate up to
+		   `.canvas-container` and create empty scroll space at fit zoom
+		   (Codex round 4). The transformed visual content always fits
+		   the stage exactly (origin top-left, stage = canvas × scale),
+		   so the clip itself is invisible. */
 		flex-shrink: 0;
 		width: calc(var(--canvas-w) * var(--canvas-scale));
 		height: calc(var(--canvas-h) * var(--canvas-scale));
+		overflow: hidden;
 		border: 1px solid var(--color-border);
 		border-radius: 4px;
 		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
