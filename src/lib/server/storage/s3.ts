@@ -20,7 +20,10 @@ export interface S3StorageConfig {
 export class S3StorageAdapter implements StorageAdapter {
 	private client: S3Client;
 	private bucket: string;
-	private publicBaseUrl: string;
+	/** When set, public URLs point directly at this base (e.g. a
+	 *  CloudFront / Cloudflare / public MinIO host). When unset, public
+	 *  URLs are routed through the app's `/api/assets/{key}` proxy. */
+	private publicBaseUrl: string | null;
 
 	constructor(config: S3StorageConfig) {
 		const clientConfig: S3ClientConfig = {
@@ -35,7 +38,15 @@ export class S3StorageAdapter implements StorageAdapter {
 
 		this.client = new S3Client(clientConfig);
 		this.bucket = config.bucket;
-		this.publicBaseUrl = config.publicUrl || `${config.endpoint}/${config.bucket}`;
+		// Only opt INTO direct serving when an operator explicitly
+		// configures `S3_PUBLIC_URL`. The previous fallback of
+		// `${endpoint}/${bucket}` (e.g. `http://localhost:9002/canvas`)
+		// leaked the storage hostname into every `<img>` URL the editor
+		// rendered, which broke whenever the dev server was reached
+		// from anything other than localhost AND required public CORS
+		// on the bucket (BT-154). Default is to proxy through the app
+		// — same-origin, no CORS surface, no hostname dependency.
+		this.publicBaseUrl = config.publicUrl ?? null;
 	}
 
 	async upload(key: string, body: Buffer, contentType: string): Promise<string> {
@@ -52,7 +63,11 @@ export class S3StorageAdapter implements StorageAdapter {
 	}
 
 	getUrl(key: string): string {
-		return `${this.publicBaseUrl}/${key}`;
+		// When an operator has configured a public base (CDN or
+		// publicly-reachable MinIO), use it directly. Otherwise route
+		// through the app proxy — see constructor for rationale.
+		if (this.publicBaseUrl) return `${this.publicBaseUrl}/${key}`;
+		return `/api/assets/${key}`;
 	}
 
 	async read(key: string): Promise<Buffer> {
