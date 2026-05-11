@@ -1511,6 +1511,18 @@
 		cursor: not-allowed;
 	}
 
+	/*
+	 * TASK-146: previously the chip rendered no visible focus ring on
+	 * keyboard nav — a click-to-fix surface that keyboard users
+	 * couldn't see they were aiming at. Outline matches the Button
+	 * primitive's focus token so the indicator reads consistent
+	 * across modal surfaces.
+	 */
+	.slug-suggestion-btn:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+
 	.help code {
 		background: var(--color-surface-muted);
 		padding: 0 0.25rem;
@@ -1725,6 +1737,19 @@
 		color: var(--color-text);
 		border-bottom-color: var(--color-text);
 		font-weight: 600;
+	}
+
+	/*
+	 * TASK-146: keyboard nav across the embed tablist had no visible
+	 * focus state — the active-tab underline doesn't double as a
+	 * focus indicator because it only shows on the active tab, not
+	 * the focused-but-unselected one. Matches the AddImageModal tab
+	 * pattern (outline-offset: -2px so the ring sits inside the
+	 * border-bottom track rather than blowing out the row layout).
+	 */
+	.embed-tab:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
 	}
 
 	/*
