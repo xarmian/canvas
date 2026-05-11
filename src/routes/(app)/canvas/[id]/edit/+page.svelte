@@ -417,6 +417,15 @@
 						.loadFromJSON(hydratedJson)
 						.then(() => {
 							if (hydrationToken !== thisToken) return;
+							// Fabric v7's loadFromJSON internally calls canvas.clear()
+							// (which resets backgroundColor to '') and then re-sets the
+							// canvas from the JSON. Our templateJson carries
+							// {version, objects} only — background lives on the canvas
+							// row (data.canvas.backgroundType/Value), not in the JSON
+							// — so the pre-load assignment above gets wiped and nothing
+							// restores it. Re-apply here before render so the editor
+							// matches the gallery preview + the rendered output.
+							canvas.backgroundColor = backgroundColor;
 							canvas.renderAll();
 						})
 						.finally(() => {

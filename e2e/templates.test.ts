@@ -42,5 +42,37 @@ test.describe('Template gallery', () => {
 		// the layers list, proving templateJson.objects round-tripped.
 		const layers = page.getByRole('listbox', { name: 'Canvas layers' });
 		await expect(layers.locator('[role="option"]')).toHaveCount(3);
+
+		// TASK-149 regression: the OG card template defines
+		// backgroundValue: '#0f172a'. Fabric v7's loadFromJSON internally
+		// calls canvas.clear() which resets backgroundColor — so unless the
+		// editor re-applies the background after hydration, the template
+		// renders on a default (transparent/white) canvas and looks nothing
+		// like the gallery preview. Read pixel (0,0) of Fabric's lower
+		// canvas: the OG card has its content offset from the top-left, so
+		// (0,0) is pure background paint with no overlapping layers.
+		// expect.poll handles the post-hydration paint timing without an
+		// arbitrary sleep.
+		await expect
+			.poll(
+				async () =>
+					page.evaluate(() => {
+						const lower = document.querySelector(
+							'.canvas-wrapper .lower-canvas'
+						) as HTMLCanvasElement | null;
+						if (!lower) return null;
+						const ctx = lower.getContext('2d', { willReadFrequently: true });
+						if (!ctx) return null;
+						const { data } = ctx.getImageData(0, 0, 1, 1);
+						// Skip while the pixel is still transparent — Fabric paints the
+						// background synchronously during renderAll, so transparent means
+						// hydration's renderAll hasn't run yet.
+						if (data[3] === 0) return null;
+						const hex = (n: number) => n.toString(16).padStart(2, '0');
+						return `#${hex(data[0])}${hex(data[1])}${hex(data[2])}`;
+					}),
+				{ timeout: 5_000, message: 'template background not painted on editor canvas' }
+			)
+			.toBe('#0f172a');
 	});
 });
