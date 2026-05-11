@@ -19,6 +19,7 @@ on:
     paths:
       # Public surfaces — landing + share page + their server loaders.
       - 'src/routes/+page.svelte'
+      - 'src/routes/+page.server.ts'
       - 'src/routes/+layout.svelte'
       - 'src/routes/c/**'
       # Anything that affects the shipped bundle.

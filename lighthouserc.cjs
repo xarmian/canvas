@@ -42,11 +42,28 @@ module.exports = {
 			startServerCommand: 'pnpm preview --port 4173 --host 127.0.0.1',
 			startServerReadyPattern: 'Local:',
 			url: ['http://127.0.0.1:4173/'],
-			numberOfRuns: 3
-			// Lighthouse's default form-factor is mobile (Moto G Power
-			// simulation, 4G throttling, 360x640 viewport) — exactly
-			// what TASK-138/139 were tuned for. No `settings` override
-			// needed; piecemeal overrides lead to inconsistent runs.
+			numberOfRuns: 3,
+			settings: {
+				// Block the live-demo image (`/c/crypto-lp-card/...`).
+				// That endpoint queries Postgres for the canvas record,
+				// and the LHCI workflow runs without a seeded DB — the
+				// page would otherwise audit with a real network 404
+				// docked against the Best Practices score (Codex round 1
+				// P1). With the URL blocked, the landing falls back to
+				// its `imageFailed` state — designed copy ("Live preview
+				// unavailable"), no broken request in the report. The
+				// guardrail still catches regressions in the chrome
+				// around the demo, which is what TASK-138 actually
+				// changed. Once the workflow grows a seed harness for
+				// the published canvas (tracked as a follow-up), drop
+				// this block so we audit the realistic UX.
+				blockedUrlPatterns: ['*/c/crypto-lp-card/*']
+				// Lighthouse's default form-factor is mobile (Moto G
+				// Power, 4G throttling, 360x640 viewport) — exactly
+				// what TASK-138/139 were tuned for. No `formFactor`
+				// override; piecemeal overrides lead to inconsistent
+				// runs.
+			}
 		},
 		assert: {
 			assertions: {
