@@ -164,6 +164,11 @@ test.describe('A11y smoke (axe-core)', () => {
 		await signupAndLogin(page);
 		await page.getByTestId('nav-assets').click();
 		await page.waitForURL('/assets');
+		// Route-specific readiness check (Codex round 1 P3) — a load
+		// failure could leave the URL at /assets while rendering the
+		// app's error boundary, which would let axe scan the error
+		// page instead of the actual route.
+		await expect(page.getByRole('heading', { name: 'Assets' })).toBeVisible();
 		await expectNoA11yViolations(page, 'assets');
 	});
 
@@ -171,6 +176,13 @@ test.describe('A11y smoke (axe-core)', () => {
 		// Sign up + create + publish a canvas via the API so we land
 		// directly on the public surface without going through the editor
 		// (whose canvas-heavy DOM is out of scope for this smoke).
+		//
+		// Each API call is asserted (Codex round 1 P2) so a setup
+		// failure surfaces immediately as a test failure — otherwise
+		// `canvas.slug` could land as `undefined`, the goto would hit
+		// the app's error page (which has its own H1), and axe would
+		// false-positive-pass against an unrelated route.
+		const shareName = `A11y share ${Date.now()}`;
 		const signupRes = await request.post('/api/auth/sign-up/email', {
 			data: {
 				name: 'A11y Share',
@@ -178,21 +190,29 @@ test.describe('A11y smoke (axe-core)', () => {
 				password: 'testpass123456'
 			}
 		});
+		expect(signupRes.status()).toBe(200);
 		const cookies = signupRes.headers()['set-cookie'] || '';
 
 		const createRes = await request.post('/api/canvas', {
-			data: { name: 'A11y share', width: 1200, height: 630 },
+			data: { name: shareName, width: 1200, height: 630 },
 			headers: { cookie: cookies }
 		});
-		const canvas = await createRes.json();
+		expect(createRes.status()).toBe(201);
+		const canvas = (await createRes.json()) as { id: string; slug: string };
+		expect(canvas.slug).toBeTruthy();
 
-		await request.patch(`/api/canvas/${canvas.id}`, {
+		const patchRes = await request.patch(`/api/canvas/${canvas.id}`, {
 			data: { published: true },
 			headers: { cookie: cookies }
 		});
+		expect(patchRes.status()).toBe(200);
 
 		await page.goto(`/c/${canvas.slug}`);
-		await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+		// Route-specific readiness assertion — the share landing renders
+		// the canvas name as its H1 (TASK-139). Matching by content
+		// rather than level=1 alone protects against a false pass when
+		// the app's error page (also has H1) is rendered instead.
+		await expect(page.getByRole('heading', { name: shareName })).toBeVisible();
 		await expectNoA11yViolations(page, 'share-landing');
 	});
 });
