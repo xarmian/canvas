@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { ConfirmDialog } from '$lib/components/ui';
+	import { ConfirmDialog, EmptyState } from '$lib/components/ui';
+	import { SearchX } from '@lucide/svelte';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { getTemplate } from '$lib/templates/gallery';
 	import EditOrganizationModal from '$lib/components/dashboard/EditOrganizationModal.svelte';
@@ -423,7 +424,21 @@
 
 			<div class="main">
 				{#if visibleCanvases.length === 0}
-					<p class="empty-results" data-testid="empty-results">No canvases match your filters.</p>
+					<!--
+						Filter-empty state — the user has canvases but the
+						current search / folder / tag filters returned no
+						matches. Use the EmptyState primitive for visual
+						consistency with the panel + form-page empty
+						surfaces shipped under PLAN-84. The data-testid is
+						preserved for the existing e2e selector.
+					-->
+					<div class="empty-results-wrap" data-testid="empty-results">
+						<EmptyState
+							icon={SearchX}
+							title="No canvases match your filters"
+							description="Try clearing the search box, picking a different folder, or removing the active tag."
+						/>
+					</div>
 				{:else}
 					<div class="grid">
 						{#each visibleCanvases as canvas (canvas.id)}
@@ -900,10 +915,9 @@
 		line-height: 1.5;
 	}
 
-	.empty-results {
-		text-align: center;
-		color: var(--color-text-subtle);
-		padding: 2rem 0;
+	/* Wrapper for the EmptyState primitive in the filter-empty branch. */
+	.empty-results-wrap {
+		padding: var(--spacing-8) 0;
 	}
 
 	.grid {

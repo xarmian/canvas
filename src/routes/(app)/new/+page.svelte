@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { Button, ErrorState } from '$lib/components/ui';
 
 	/**
 	 * New-canvas presets (TASK-102). The label + description teach
@@ -121,7 +122,21 @@
 		<h1>Create a new canvas</h1>
 
 		{#if error}
-			<div class="error" role="alert">{error}</div>
+			<!--
+				ErrorState gives the inline create-failure surface a
+				designed home with retry semantics. Retry just clears
+				the error so the user can hit Submit again — there's no
+				idempotent "rerun the last submit" shape here because
+				the inputs may have been edited since.
+			-->
+			<div class="error-wrapper">
+				<ErrorState
+					title="Couldn't create the canvas"
+					message={error}
+					retryLabel="Dismiss"
+					onRetry={() => (error = '')}
+				/>
+			</div>
 		{/if}
 
 		<label class="field">
@@ -185,13 +200,9 @@
 
 		<div class="actions">
 			<a href="/dashboard" class="btn btn-cancel">Cancel</a>
-			<button type="submit" class="btn btn-primary" disabled={loading}>
-				{#if loading}
-					Creating...
-				{:else}
-					Create Canvas
-				{/if}
-			</button>
+			<Button variant="primary" type="submit" {loading}>
+				{loading ? 'Creating…' : 'Create Canvas'}
+			</Button>
 		</div>
 	</form>
 </div>
@@ -214,13 +225,8 @@
 		margin: 0 0 1.5rem;
 	}
 
-	.error {
-		background: #fef2f2;
-		color: #b91c1c;
-		border: 1px solid #fecaca;
-		border-radius: 6px;
-		padding: 0.75rem 1rem;
-		font-size: 0.875rem;
+	/* Inline-error wrapper around the ErrorState primitive. */
+	.error-wrapper {
 		margin-bottom: 1.25rem;
 	}
 
@@ -416,16 +422,6 @@
 
 	.btn:hover {
 		opacity: 0.85;
-	}
-
-	.btn-primary {
-		background: #111;
-		color: #fff;
-	}
-
-	.btn-primary:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
 	}
 
 	.btn-cancel {
