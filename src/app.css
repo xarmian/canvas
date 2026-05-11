@@ -68,6 +68,7 @@
 	--color-primary: #2563eb;
 	--color-primary-hover: #1d4ed8;
 	--color-primary-surface: #eff6ff;
+	--color-primary-border: #bfdbfe;
 	--color-danger: #dc2626;
 	--color-danger-hover: #b91c1c;
 	--color-danger-surface: #fef2f2;
@@ -75,9 +76,11 @@
 	--color-success: #16a34a;
 	--color-success-hover: #15803d;
 	--color-success-surface: #f0fdf4;
+	--color-success-text: #166534;
 	--color-warning: #f59e0b;
 	--color-warning-surface: #fffbeb;
 	--color-warning-border: #fde68a;
+	--color-warning-text: #92400e;
 
 	/* Spacing scale */
 	--spacing-1: 0.25rem;
