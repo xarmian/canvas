@@ -437,7 +437,7 @@
 	.params-intro {
 		margin-bottom: 1rem;
 		font-size: 0.875rem;
-		color: #4b5563;
+		color: var(--color-text-muted);
 		line-height: 1.5;
 	}
 
@@ -447,20 +447,20 @@
 
 	.params-unpublished-note {
 		padding: 0.5rem 0.75rem;
-		background: #fef3c7;
-		border: 1px solid #fde68a;
+		background: var(--color-warning-surface);
+		border: 1px solid var(--color-warning-border);
 		border-radius: 4px;
-		color: #78350f;
+		color: var(--color-warning-text);
 		font-size: 0.8125rem;
 	}
 
 	.params-empty {
 		padding: 1.5rem 1rem;
-		background: #f9fafb;
-		border: 1px dashed #d1d5db;
+		background: var(--color-surface-muted);
+		border: 1px dashed var(--color-border-strong);
 		border-radius: 6px;
 		text-align: center;
-		color: #6b7280;
+		color: var(--color-text-subtle);
 	}
 
 	.params-empty p {
@@ -471,15 +471,15 @@
 	.params-empty-hint {
 		margin-top: 0.25rem;
 		font-size: 0.8125rem;
-		color: #9ca3af;
+		color: var(--color-text-subtle);
 	}
 
 	.params-table {
 		display: flex;
 		flex-direction: column;
 		gap: 1px;
-		background: #e5e7eb;
-		border: 1px solid #e5e7eb;
+		background: var(--color-border);
+		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		overflow: hidden;
 	}
@@ -488,17 +488,17 @@
 		display: grid;
 		grid-template-columns: minmax(120px, 1.4fr) 90px minmax(120px, 1.4fr) 80px minmax(140px, 1.6fr);
 		gap: 0;
-		background: #fff;
+		background: var(--color-bg);
 		align-items: center;
 	}
 
 	.params-row-header {
-		background: #f9fafb;
+		background: var(--color-surface-muted);
 		font-size: 0.75rem;
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
-		color: #6b7280;
+		color: var(--color-text-subtle);
 	}
 
 	.params-row-header span {
@@ -508,15 +508,15 @@
 	.params-cell {
 		padding: 0.5rem 0.75rem;
 		font-size: 0.8125rem;
-		color: #111827;
+		color: var(--color-text);
 		min-width: 0;
 	}
 
 	.params-cell-name code {
 		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 		font-size: 0.8125rem;
-		color: #1f2937;
-		background: #f3f4f6;
+		color: var(--color-text);
+		background: var(--color-surface-muted);
 		padding: 0.125rem 0.375rem;
 		border-radius: 3px;
 	}
@@ -527,8 +527,8 @@
 		padding: 0.0625rem 0.375rem;
 		font-size: 0.6875rem;
 		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-		background: #dbeafe;
-		color: #1e3a8a;
+		background: var(--color-primary-surface);
+		color: var(--color-primary-hover);
 		border-radius: 999px;
 	}
 
@@ -536,22 +536,22 @@
 		width: 100%;
 		min-width: 0;
 		padding: 0.25rem 0.5rem;
-		border: 1px solid #d1d5db;
+		border: 1px solid var(--color-border-strong);
 		border-radius: 4px;
 		font-family: inherit;
 		font-size: 0.8125rem;
-		background: #fff;
+		background: var(--color-bg);
 	}
 
 	.params-input:focus {
 		outline: none;
-		border-color: #2563eb;
+		border-color: var(--color-primary);
 		box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
 	}
 
 	.params-input:disabled {
-		background: #f3f4f6;
-		color: #9ca3af;
+		background: var(--color-surface-muted);
+		color: var(--color-text-subtle);
 		cursor: not-allowed;
 	}
 
@@ -572,7 +572,7 @@
 
 	.params-cell-sources {
 		font-size: 0.75rem;
-		color: #4b5563;
+		color: var(--color-text-muted);
 	}
 
 	.params-sources {
@@ -593,25 +593,25 @@
 
 	.params-source-layer {
 		font-weight: 500;
-		color: #111827;
+		color: var(--color-text);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
 	.params-source-arrow {
-		color: #9ca3af;
+		color: var(--color-text-subtle);
 	}
 
 	.params-source-prop {
-		color: #6b7280;
+		color: var(--color-text-subtle);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
 	.params-sources-empty {
-		color: #9ca3af;
+		color: var(--color-text-subtle);
 		font-style: italic;
 	}
 </style>
