@@ -18,6 +18,17 @@
 </script>
 
 <div class="app-shell">
+	<!--
+		Skip-link (TASK-145). Hidden off-screen until focused, then
+		slides into view at the top-left. Activating it jumps focus to
+		`<main id="main-content">` below so keyboard / screen-reader
+		users don't have to tab through the entire primary nav on
+		every page load. `tabindex="-1"` on the target ensures focus
+		actually lands there (some engines won't auto-focus a non-
+		interactive landmark on fragment navigation; the explicit
+		tabindex makes the behavior deterministic).
+	-->
+	<a href="#main-content" class="skip-link">Skip to main content</a>
 	<header class="app-header">
 		<div class="app-brand-row">
 			<a href="/dashboard" class="app-brand">Canvas</a>
@@ -56,7 +67,7 @@
 			<Button variant="secondary" size="sm" onclick={handleLogout}>Log out</Button>
 		</div>
 	</header>
-	<main class="app-main">
+	<main id="main-content" class="app-main" tabindex="-1">
 		{@render children()}
 	</main>
 </div>
@@ -120,5 +131,49 @@
 
 	.app-main {
 		padding: var(--spacing-8);
+	}
+
+	/*
+	 * Native programmatic-focus outline on a tabindex="-1" <main> is
+	 * a visible focus ring that lingers after the skip-link jump.
+	 * Removing it keeps the page chrome clean once the user has
+	 * landed; the actual focused content inside `<main>` still gets
+	 * its own focus indicator on the next Tab.
+	 */
+	.app-main:focus {
+		outline: none;
+	}
+
+	/*
+	 * Skip-link. Hidden off-screen by default — kept in the DOM (not
+	 * `display: none`) so it's reachable by Tab and announced by
+	 * screen readers as the first interactive element on the page.
+	 * Slides into view on focus.
+	 */
+	.skip-link {
+		position: absolute;
+		top: var(--spacing-2);
+		left: var(--spacing-2);
+		padding: var(--spacing-2) var(--spacing-4);
+		background: var(--color-primary);
+		color: var(--color-bg);
+		font-size: var(--text-base);
+		font-weight: 600;
+		text-decoration: none;
+		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-md);
+		z-index: 100;
+		/* Pull off-screen until focused. transform (not `top: -9999px`)
+		   so the slide-in transition reads as motion when keyboard
+		   users land on it, signalling that something appeared. */
+		transform: translateY(calc(-100% - var(--spacing-4)));
+		transition: transform 0.15s ease;
+	}
+
+	.skip-link:focus,
+	.skip-link:focus-visible {
+		transform: translateY(0);
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
 	}
 </style>
