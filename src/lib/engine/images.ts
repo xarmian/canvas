@@ -206,6 +206,24 @@ export async function loadRemoteImage(
 		return img;
 	}
 
+	// Reject `/api/assets/{key}` URLs that reach this point. After
+	// BT-154 these are the app's same-origin proxy paths, but the
+	// renderer should never need to fetch them via HTTP — owned
+	// `asset://` references take the preloaded-buffer path through
+	// `resolveAssetReferences` (TASK-89) and never call into here.
+	// A raw `/api/assets/...` URL surviving onto a layer would mean
+	// (a) a serialization bug bypassed the asset:// rewrite, or (b)
+	// param substitution forged the value from a query-string. Either
+	// way, blindly calling `storage.read(key)` here would bypass the
+	// HTTP route's auth / DB-existence / public-prefix / path-safety
+	// checks and expose arbitrary storage objects (path-traversal on
+	// LocalStorage, private-key reads on S3) to unauthenticated public
+	// renders (Codex round 1 P1). Bail with null — the renderer treats
+	// it as unfetchable and the layer falls through to its placeholder.
+	if (url.startsWith('/api/assets/') || url.startsWith('/')) {
+		return null;
+	}
+
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 

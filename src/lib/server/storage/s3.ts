@@ -20,7 +20,10 @@ export interface S3StorageConfig {
 export class S3StorageAdapter implements StorageAdapter {
 	private client: S3Client;
 	private bucket: string;
-	private publicBaseUrl: string;
+	/** When set, public URLs point directly at this base (e.g. a
+	 *  CloudFront / Cloudflare / public MinIO host). When unset, public
+	 *  URLs are routed through the app's `/api/assets/{key}` proxy. */
+	private publicBaseUrl: string | null;
 
 	constructor(config: S3StorageConfig) {
 		const clientConfig: S3ClientConfig = {
@@ -35,7 +38,31 @@ export class S3StorageAdapter implements StorageAdapter {
 
 		this.client = new S3Client(clientConfig);
 		this.bucket = config.bucket;
-		this.publicBaseUrl = config.publicUrl || `${config.endpoint}/${config.bucket}`;
+		// Only opt INTO direct serving when an operator explicitly
+		// configures `S3_PUBLIC_URL` to point at something OTHER than
+		// the endpoint+bucket the app itself talks to. Reasoning:
+		//
+		//   - Pre-BT-154 `.env.example` shipped with
+		//     `S3_PUBLIC_URL="http://localhost:9002/canvas"`, which the
+		//     old `getUrl()` would mirror back into every `<img>` src.
+		//     Anyone who copied that .env (or whose dotfile already has
+		//     it set to the legacy default) still has the URL leak we
+		//     just fixed, because their explicit value bypasses the
+		//     proxy default we just introduced (Codex round 3 P1).
+		//   - A legitimate production opt-in points at a CDN / Cloudflare
+		//     / publicly-reachable host that is NOT the same as the
+		//     server-side S3 endpoint. The endpoint here is what the
+		//     app uses internally (often `http://minio:9000` inside
+		//     Docker); if the operator's "public URL" matches that
+		//     internal address verbatim, it's almost certainly the
+		//     legacy buggy default, not a deliberate CDN.
+		//
+		// So: treat `${endpoint}/${bucket}` as a sentinel that signals
+		// "no real public host configured" and route through the proxy
+		// in that case. Anything else is treated as a real CDN opt-in.
+		const legacyBuggyDefault = `${config.endpoint.replace(/\/+$/, '')}/${config.bucket}`;
+		const configured = config.publicUrl?.replace(/\/+$/, '') ?? null;
+		this.publicBaseUrl = configured && configured !== legacyBuggyDefault ? configured : null;
 	}
 
 	async upload(key: string, body: Buffer, contentType: string): Promise<string> {
@@ -52,7 +79,11 @@ export class S3StorageAdapter implements StorageAdapter {
 	}
 
 	getUrl(key: string): string {
-		return `${this.publicBaseUrl}/${key}`;
+		// When an operator has configured a public base (CDN or
+		// publicly-reachable MinIO), use it directly. Otherwise route
+		// through the app proxy — see constructor for rationale.
+		if (this.publicBaseUrl) return `${this.publicBaseUrl}/${key}`;
+		return `/api/assets/${key}`;
 	}
 
 	async read(key: string): Promise<Buffer> {
