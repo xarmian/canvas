@@ -95,7 +95,7 @@
 	<title>Canvas — design dynamic images, share by URL</title>
 	<meta
 		name="description"
-		content="Canvas turns visual templates into shareable URLs. Design once, generate infinite variants by passing parameters. Open source and self-hostable."
+		content="Canvas turns visual templates into shareable URLs. Design once, generate infinite variants by passing dynamic values. Open source and self-hostable."
 	/>
 </svelte:head>
 
@@ -117,7 +117,7 @@
 				</h1>
 				<p class="lede">
 					Design a template once. Change the URL, change the image. Every social card, OG preview,
-					or embed becomes a parameterized URL you can share anywhere.
+					or embed becomes a dynamic URL you can share anywhere.
 				</p>
 				<div class="hero-ctas">
 					<a href="/signup" class="btn btn-primary" data-testid="hero-signup">Start designing</a>
@@ -207,7 +207,7 @@
 			<h2>This is what your followers see.</h2>
 			<p class="tweet-section-lede">
 				Drop the share URL into a tweet. Twitter, LinkedIn, Slack, and Discord crawl the link,
-				render the image with whatever parameters you passed, and show it inline.
+				render the image with whatever values you passed, and show it inline.
 			</p>
 
 			<div class="tweet-card" data-testid="tweet-mockup">

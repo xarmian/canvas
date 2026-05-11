@@ -62,8 +62,9 @@
 		<div>
 			<h1>Templates</h1>
 			<p class="lede">
-				Pick a starter, customize it in the editor, then publish. Every template is parameterized —
-				try changing the URL params on the published image to see dynamic generation in action.
+				Pick a starter, customize it in the editor, then publish. Every template has dynamic values
+				you can change — try editing the values in the published URL to see dynamic generation in
+				action.
 			</p>
 		</div>
 		<a href="/dashboard" class="btn btn-secondary">Back to dashboard</a>

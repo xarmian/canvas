@@ -305,7 +305,7 @@
 			<p class="empty-sample-url-label">Sample URL the LP card answers to:</p>
 			<code class="empty-sample-url" data-testid="empty-sample-url">{SAMPLE_LP_URL}</code>
 			<p class="empty-hint">
-				Each template ships with sensible defaults and named parameters — change one, the image
+				Each template ships with sensible defaults and named dynamic values — change one, the image
 				changes. No code, no rebuild.
 			</p>
 			<a href="/assets" class="empty-assets-link" data-testid="empty-assets-link">
