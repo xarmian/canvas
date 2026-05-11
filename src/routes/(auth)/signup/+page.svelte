@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { authClient } from '$lib/auth-client';
+	import { Button, Input } from '$lib/components/ui';
 
 	let name = $state('');
 	let email = $state('');
@@ -125,51 +126,51 @@
 		{/if}
 
 		<form onsubmit={handleSubmit} novalidate>
-			<label class="field">
-				<span>Name</span>
-				<input
+			<div class="field">
+				<label for="signup-name">Name</label>
+				<Input
+					id="signup-name"
 					type="text"
 					bind:value={name}
 					required
 					autocomplete="name"
-					aria-invalid={nameHint ? 'true' : 'false'}
-					aria-describedby={nameHint ? 'name-hint' : undefined}
-					class:invalid={!!nameHint}
+					invalid={!!nameHint}
+					describedBy={nameHint ? 'signup-name-hint' : undefined}
 				/>
 				{#if nameHint}
-					<span id="name-hint" class="hint hint-error">{nameHint}</span>
+					<span id="signup-name-hint" class="hint hint-error">{nameHint}</span>
 				{/if}
-			</label>
+			</div>
 
-			<label class="field">
-				<span>Email</span>
-				<input
+			<div class="field">
+				<label for="signup-email">Email</label>
+				<Input
+					id="signup-email"
 					type="email"
 					bind:value={email}
 					required
 					autocomplete="email"
-					aria-invalid={emailHint ? 'true' : 'false'}
-					aria-describedby={emailHint ? 'email-hint' : undefined}
-					class:invalid={!!emailHint}
+					invalid={!!emailHint}
+					describedBy={emailHint ? 'signup-email-hint' : undefined}
 				/>
 				{#if emailHint}
-					<span id="email-hint" class="hint hint-error">{emailHint}</span>
+					<span id="signup-email-hint" class="hint hint-error">{emailHint}</span>
 				{/if}
-			</label>
+			</div>
 
-			<label class="field">
-				<span>Password</span>
-				<input
+			<div class="field">
+				<label for="signup-password">Password</label>
+				<Input
+					id="signup-password"
 					type="password"
 					bind:value={password}
 					required
 					autocomplete="new-password"
-					aria-invalid={passwordHint ? 'true' : 'false'}
-					aria-describedby="password-hint"
-					class:invalid={!!passwordHint}
+					invalid={!!passwordHint}
+					describedBy="signup-password-hint"
 				/>
 				<span
-					id="password-hint"
+					id="signup-password-hint"
 					class="hint"
 					class:hint-error={!!passwordHint}
 					class:hint-ok={password.length > 0 && passwordLong}
@@ -182,11 +183,17 @@
 						{passwordHint || `At least ${PASSWORD_MIN} characters.`}
 					{/if}
 				</span>
-			</label>
+			</div>
 
-			<button type="submit" class="submit-btn" disabled={loading || (submitted && !formValid)}>
+			<Button
+				variant="primary"
+				type="submit"
+				{loading}
+				disabled={submitted && !formValid}
+				class="submit-btn"
+			>
 				{loading ? 'Signing up…' : 'Sign up'}
-			</button>
+			</Button>
 		</form>
 
 		<p class="footer">
@@ -201,124 +208,96 @@
 		justify-content: center;
 		align-items: center;
 		min-height: 100vh;
-		padding: 1.5rem;
-		background: #f8fafc;
+		padding: var(--spacing-6);
+		background: var(--color-surface);
 	}
 
 	.signup-card {
 		width: 100%;
 		max-width: 420px;
-		padding: 2rem;
-		background: #fff;
-		border: 1px solid #e2e8f0;
-		border-radius: 10px;
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+		padding: var(--spacing-8);
+		background: var(--color-bg);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-xl);
+		box-shadow: var(--shadow-sm);
 	}
 
 	h1 {
-		margin: 0 0 1.25rem;
-		font-size: 1.4rem;
+		margin: 0 0 var(--spacing-6);
+		font-size: var(--text-xl);
 		text-align: center;
+		color: var(--color-text);
 	}
 
 	.alert {
 		display: flex;
 		flex-direction: column;
-		gap: 0.4rem;
-		margin-bottom: 1rem;
-		padding: 0.7rem 0.85rem;
-		background: #fef2f2;
-		border: 1px solid #fecaca;
-		border-radius: 6px;
-		color: #991b1b;
-		font-size: 0.875rem;
+		gap: var(--spacing-1);
+		margin-bottom: var(--spacing-4);
+		padding: var(--spacing-2) var(--spacing-3);
+		background: var(--color-danger-surface);
+		border: 1px solid var(--color-danger-border);
+		border-radius: var(--radius-md);
+		color: var(--color-danger-hover);
+		font-size: var(--text-base);
 		line-height: 1.45;
 	}
 
 	.alert-link {
 		font-weight: 600;
-		color: #b91c1c;
+		color: var(--color-danger-hover);
 		text-decoration: underline;
 	}
 
 	form {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: var(--spacing-4);
 	}
 
 	.field {
 		display: flex;
 		flex-direction: column;
-		gap: 0.3rem;
+		gap: var(--spacing-1);
 	}
 
-	.field > span:first-child {
-		font-size: 0.8125rem;
+	.field label {
+		font-size: var(--text-sm);
 		font-weight: 600;
-		color: #1e293b;
-	}
-
-	.field input {
-		padding: 0.55rem 0.7rem;
-		border: 1px solid #d1d5db;
-		border-radius: 6px;
-		font-size: 0.9rem;
-		background: #fff;
-	}
-
-	.field input:focus {
-		outline: none;
-		border-color: #2563eb;
-		box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
-	}
-
-	.field input.invalid {
-		border-color: #dc2626;
+		color: var(--color-text);
 	}
 
 	.hint {
-		font-size: 0.75rem;
-		color: #64748b;
+		font-size: var(--text-xs);
+		color: var(--color-text-subtle);
 	}
 
 	.hint-error {
-		color: #b91c1c;
+		color: var(--color-danger-hover);
 	}
 
 	.hint-ok {
-		color: #166534;
+		color: var(--color-success);
 	}
 
-	.submit-btn {
-		margin-top: 0.5rem;
-		padding: 0.7rem;
-		border: none;
-		border-radius: 6px;
-		background: #2563eb;
-		color: #fff;
-		font-size: 0.9rem;
-		font-weight: 500;
-		cursor: pointer;
-	}
-
-	.submit-btn:hover:not(:disabled) {
-		background: #1d4ed8;
-	}
-
-	.submit-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
+	/*
+	 * Submit Button is full-width on the auth surface — same column rule
+	 * as login. `:global` reaches through the primitive's scoped styles
+	 * so variant + focus rules from the canonical Button stay intact.
+	 */
+	form :global(.submit-btn) {
+		width: 100%;
+		margin-top: var(--spacing-2);
 	}
 
 	.footer {
-		margin: 1.25rem 0 0;
+		margin: var(--spacing-6) 0 0;
 		text-align: center;
-		font-size: 0.875rem;
-		color: #475569;
+		font-size: var(--text-base);
+		color: var(--color-text-muted);
 	}
 
 	.footer a {
-		color: #2563eb;
+		color: var(--color-primary);
 	}
 </style>
