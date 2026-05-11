@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { Modal, Button, Input, Textarea } from '$lib/components/ui';
+	import { Modal, Button, Input, Textarea, ErrorState, LoadingSkeleton } from '$lib/components/ui';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { nearestParamName } from './param-validation';
 
@@ -70,6 +70,25 @@
 	}
 	let paramRows = $state<ParamRow[]>([]);
 	let paramRowsLoaded = $state(false);
+	/** Set when the GET /params fetch returns non-OK or rejects. Drives
+	 *  the inline ErrorState in the docs section so the failure isn't
+	 *  silently swallowed (TASK-136). */
+	let paramRowsError = $state(false);
+	/** Monotonic generation counter for loadParamSchema requests. Bumped
+	 *  at request start; the stale-guard checks the captured token so
+	 *  a late completion from canvas A (or a closed modal) can't write
+	 *  schema rows / errors over canvas B's live state. Mirrors the
+	 *  pattern used by loadSharing (Codex round 1 of TASK-136 P2). */
+	let paramRowsGen = 0;
+	/** In-flight gate: while a /params request is pending, the $effect
+	 *  must NOT kick off a second one. Without this, a re-render
+	 *  triggered by a sibling state change (sharingLoaded /
+	 *  versionToken / sharingPending) while `paramRowsLoaded` is still
+	 *  false would re-enter loadParamSchema, and a slow late completion
+	 *  could stale out the earlier successful response and then fail —
+	 *  surfacing an error banner over freshly-loaded rows. Mirrors
+	 *  ParamsPanel's `schemaPending` (Codex round 2 of TASK-136 P2). */
+	let paramRowsPending = $state(false);
 
 	// --- Sharing & redirect (TASK-95) ---
 	// OG title / description / redirect URL are first-class shareable
@@ -85,6 +104,10 @@
 	}
 	let sharing = $state<SharingState>({ ogTitle: '', ogDescription: '', redirectUrl: '' });
 	let sharingLoaded = $state(false);
+	/** Same role as `paramRowsError` for the sharing-config fetch
+	 *  (GET /api/canvas/[id]). Surfaces the failure inline with a retry
+	 *  rather than silently leaving the inputs disabled (TASK-136). */
+	let sharingError = $state(false);
 	// In-flight guard so the same $effect re-running (e.g. when
 	// paramRowsLoaded or versionToken later changes) doesn't kick off
 	// a second concurrent GET that could land after the user has
@@ -97,7 +120,7 @@
 	let sharingGen = 0;
 
 	$effect(() => {
-		if (open && published && !paramRowsLoaded) {
+		if (open && published && !paramRowsLoaded && !paramRowsPending) {
 			void loadParamSchema();
 		}
 		if (open && published && versionToken === null) {
@@ -108,12 +131,17 @@
 		}
 		if (!open) {
 			// Reset so reopening for a different canvas refetches. Bump
-			// the generation so any in-flight `loadSharing` from this
-			// session is treated as stale on completion.
+			// both generation counters so any in-flight `loadSharing` /
+			// `loadParamSchema` from this session is treated as stale on
+			// completion.
 			paramRowsLoaded = false;
+			paramRowsError = false;
 			paramRows = [];
+			paramRowsGen++;
+			paramRowsPending = false;
 			versionToken = null;
 			sharingLoaded = false;
+			sharingError = false;
 			sharingPending = false;
 			sharingGen++;
 			sharing = { ogTitle: '', ogDescription: '', redirectUrl: '' };
@@ -181,16 +209,49 @@
 	let includeParams = $state(false);
 
 	async function loadParamSchema(): Promise<void> {
+		paramRowsError = false;
+		paramRowsPending = true;
+		// Snapshot canvasId + bump-and-capture the generation token so a
+		// stale completion can't write rows / errors onto a newer
+		// in-flight request or a different canvas (Codex round 1 P2).
+		const requestCanvasId = canvasId;
+		const requestGen = ++paramRowsGen;
+		const isStale = () => requestCanvasId !== canvasId || requestGen !== paramRowsGen;
 		try {
 			const res = await fetch(`/api/canvas/${canvasId}/params`);
-			if (!res.ok) return;
+			if (isStale()) return;
+			if (!res.ok) {
+				// Surface a retryable error in the docs section instead of
+				// the previous silent fail. The bindings table still
+				// renders below so the user can still inspect the params.
+				paramRowsError = true;
+				return;
+			}
 			const rows = (await res.json()) as ParamRow[];
+			if (isStale()) return;
 			paramRows = rows;
 			paramRowsLoaded = true;
 		} catch {
-			// Silent — schema row is best-effort metadata, not critical to
-			// the publish flow itself. The user can retry by reopening.
+			// Stale-guarded so a rejected request from a previous
+			// canvas / session can't paint a false error banner over
+			// freshly-loaded rows.
+			if (!isStale()) {
+				paramRowsError = true;
+			}
+		} finally {
+			// Only the LATEST request may clear the pending flag — a
+			// stale completion that lost the race must remain a no-op
+			// so the still-in-flight newer request keeps the effect's
+			// !paramRowsPending gate armed.
+			if (requestGen === paramRowsGen) {
+				paramRowsPending = false;
+			}
 		}
+	}
+
+	function retryLoadParamSchema(): void {
+		paramRowsError = false;
+		void loadParamSchema();
 	}
 
 	async function loadSharing(): Promise<void> {
@@ -202,6 +263,7 @@
 		const requestCanvasId = canvasId;
 		const requestGen = sharingGen;
 		sharingPending = true;
+		sharingError = false;
 		try {
 			const res = await fetch(`/api/canvas/${canvasId}`);
 			if (requestCanvasId !== canvasId || requestGen !== sharingGen) return;
@@ -223,16 +285,21 @@
 				};
 				if (etag) canvasVersion = etag;
 			}
-			// Even on a non-OK / network error, flip the loaded flag so
-			// the inputs unlock and the user can edit manually. Codex
-			// round 2 P3 — without this, a transient 5xx during open
-			// would leave the fields permanently disabled.
+			// On non-OK we still flip `sharingLoaded` (in finally) so
+			// inputs unlock and the user can manually type — but we ALSO
+			// surface an inline ErrorState with retry so the failure
+			// isn't silently swallowed (TASK-136). The user can choose
+			// to type fresh values OR retry.
+			if (requestCanvasId === canvasId && requestGen === sharingGen && !res.ok) {
+				sharingError = true;
+			}
 		} catch {
-			// Swallow network rejections. The `finally` block flips the
-			// loaded flag so the user can still type into the inputs.
-			// Codex round 3: without an explicit catch, the `void
-			// loadSharing()` call site would surface an unhandled
-			// promise rejection on transient network failure.
+			// Network rejections take the same retryable path as a
+			// non-OK response; the inputs still unlock so manual entry
+			// is also possible.
+			if (requestCanvasId === canvasId && requestGen === sharingGen) {
+				sharingError = true;
+			}
 		} finally {
 			// Only flip the flags if this request is still the live one;
 			// otherwise we'd resurrect a stale "loaded" state for an old
@@ -242,6 +309,14 @@
 				sharingPending = false;
 			}
 		}
+	}
+
+	function retryLoadSharing(): void {
+		sharingError = false;
+		// Clear `sharingLoaded` so the inputs lock again while the retry
+		// is in flight, mirroring first-open behavior.
+		sharingLoaded = false;
+		void loadSharing();
 	}
 
 	/**
@@ -962,6 +1037,37 @@
 				URL. Leave blank to use the canvas name / no redirect.
 			</p>
 
+			{#if sharingError}
+				<!--
+					GET /api/canvas/[id] failed (5xx, network). Surface
+					the error inline with retry instead of leaving the
+					inputs locked silently. Inputs unlock anyway via the
+					finally block so the user can also choose to type
+					values directly. (TASK-136)
+				-->
+				<div class="sharing-error" data-testid="sharing-error">
+					<ErrorState
+						title="Couldn't load sharing settings"
+						message="The current OG title, description, and redirect URL didn't load. You can retry the fetch, or type values directly into the inputs below."
+						onRetry={retryLoadSharing}
+					/>
+				</div>
+			{:else if !sharingLoaded}
+				<!--
+					Loading skeleton stack while loadSharing is in flight.
+					Three lines mirrors the eventual three input + label
+					rows so the section's height stays roughly stable
+					instead of jumping when the inputs render.
+				-->
+				<div
+					class="sharing-skeleton"
+					data-testid="sharing-skeleton"
+					aria-label="Loading sharing settings"
+				>
+					<LoadingSkeleton lines={3} />
+				</div>
+			{/if}
+
 			<!--
 				Inputs stay disabled until `loadSharing()` resolves.
 				Codex round 1 P2: without the gate, a user typing into a
@@ -1174,6 +1280,36 @@
 					⚠️ This canvas has unsaved edits. The parameters below may not yet be live on the public
 					URL. Save the canvas, then reopen this dialog for the authoritative docs.
 				</p>
+			{/if}
+
+			{#if paramRowsError}
+				<!--
+					GET /api/canvas/[id]/params failed. The bindings table
+					still renders below (those come from the in-memory
+					Fabric canvas), but Type / Required cells stay
+					disabled until the schema reaches the editor — so
+					surface the error inline with retry instead of
+					silently leaving them stuck. (TASK-136)
+				-->
+				<div class="docs-error" data-testid="docs-schema-error">
+					<ErrorState
+						title="Couldn't load Type / Required"
+						message="The server-side parameter schema didn't reach the editor. Bindings still show below; Type and Required can't be edited until the schema loads."
+						onRetry={retryLoadParamSchema}
+					/>
+				</div>
+			{:else if bindings.length > 0 && !paramRowsLoaded}
+				<!--
+					Skeleton fills the table area so it doesn't look
+					broken while the GET is in flight.
+				-->
+				<div
+					class="docs-skeleton"
+					data-testid="docs-skeleton"
+					aria-label="Loading parameter schema"
+				>
+					<LoadingSkeleton lines={3} />
+				</div>
 			{/if}
 
 			{#if bindings.length === 0}
@@ -1458,6 +1594,19 @@
 		font-size: 0.8125rem;
 		color: var(--color-text-muted);
 		line-height: 1.5;
+	}
+
+	.sharing-error,
+	.docs-error {
+		margin: 0 0 var(--spacing-3);
+	}
+
+	.sharing-skeleton,
+	.docs-skeleton {
+		margin: 0 0 var(--spacing-3);
+		display: flex;
+		flex-direction: column;
+		gap: var(--spacing-2);
 	}
 
 	/*
