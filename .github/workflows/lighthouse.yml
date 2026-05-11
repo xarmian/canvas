@@ -1,0 +1,95 @@
+# Lighthouse CI — mobile floor on the public landing page (TASK-140).
+#
+# Runs on every PR that touches the public surfaces (or the config
+# itself) plus on every push to main as a continuous health signal.
+# Fails the PR if Lighthouse scores fall below the floor declared in
+# `lighthouserc.cjs`.
+#
+# What this DOESN'T cover (intentionally, per TASK-140 scope):
+#   - `/c/{slug}` — needs a seeded published canvas in the test DB
+#     and a running render path. Tracked as a follow-up.
+#   - Authed routes — Lighthouse's auth story is finicky (cookies,
+#     CSRF) and our authed surfaces aren't the primary perf target
+#     for the mobile work this guardrail protects.
+
+name: Lighthouse
+
+on:
+  pull_request:
+    paths:
+      # Public surfaces — landing + share page + their server loaders.
+      - 'src/routes/+page.svelte'
+      - 'src/routes/+page.server.ts'
+      - 'src/routes/+layout.svelte'
+      - 'src/routes/c/**'
+      # Anything that affects the shipped bundle.
+      - 'src/app.html'
+      - 'src/app.css'
+      - 'src/lib/components/ui/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'svelte.config.js'
+      - 'vite.config.ts'
+      # The config itself.
+      - 'lighthouserc.cjs'
+      - '.github/workflows/lighthouse.yml'
+  push:
+    branches: [main]
+
+jobs:
+  lighthouse:
+    name: Lighthouse mobile
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # Pinned to match the `packageManager` field in package.json
+          # if/when one is added; until then, the lockfile's
+          # `lockfileVersion` field implies pnpm 9+.
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build production bundle
+        # The LHCI run starts `pnpm preview`, which serves the
+        # production output. Building here makes the audited bundle
+        # match what would actually ship — no dev-mode source maps,
+        # no HMR runtime, the real minified JS.
+        run: pnpm build
+        env:
+          # `pnpm build` should not need a live DB — the public landing
+          # is the only audited route and it's statically renderable.
+          # Provide a dummy DATABASE_URL so any module-load-time
+          # validation that requires the env var doesn't error out.
+          DATABASE_URL: postgresql://stub:stub@127.0.0.1:5432/stub
+
+      - name: Run Lighthouse CI
+        run: pnpm lh:mobile
+        env:
+          # Same rationale as the build step — `pnpm preview` boots
+          # the SvelteKit server and the landing route doesn't query
+          # the DB, but server-load code paths may still resolve the
+          # env on startup.
+          DATABASE_URL: postgresql://stub:stub@127.0.0.1:5432/stub
+
+      - name: Upload Lighthouse report
+        # Always upload so a failing run can be inspected without
+        # rerunning locally. Limited to PR runs since main pushes
+        # already have a green baseline and we don't want to grow
+        # the artifact bucket unbounded.
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-report
+          path: .lighthouseci/
+          retention-days: 14
