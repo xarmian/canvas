@@ -591,13 +591,16 @@
 {/snippet}
 
 <aside class="property-panel">
-	{#if !editorState.fabricCanvas}
+	{#if !editorState.fabricCanvas || !editorState.hydrationComplete}
 		<!--
-			Loading state — Fabric is still initializing. Skeleton rows
-			match the typical property-panel layout (label + input pairs)
-			so the perceived chrome doesn't shift when real properties
-			render. The Editor unmounts/remounts Fabric on canvas swap, so
-			this state can also re-appear briefly mid-session.
+			Loading state — Fabric is initializing OR a stored template is
+			still hydrating. Skeleton rows match the typical
+			property-panel layout (label + input pairs) so the perceived
+			chrome doesn't shift when real properties render. The Editor
+			unmounts/remounts Fabric on canvas swap, so this state can
+			re-appear briefly mid-session, and gating on hydration avoids
+			a flash of "No selection" while loadFromJSON is still
+			populating layers (Codex round 1 P2).
 		-->
 		<div class="panel-skeleton" aria-label="Loading properties">
 			<LoadingSkeleton width="50%" height="14px" />

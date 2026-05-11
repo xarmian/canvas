@@ -25,7 +25,19 @@ export const editorState = $state({
 	activeObjects: [] as FabricObject[],
 	objects: [] as FabricObject[],
 	isDirty: false,
-	editGeneration: 0
+	editGeneration: 0,
+	/**
+	 * True once the current canvas's stored template (if any) has finished
+	 * hydrating into Fabric via `loadFromJSON`. The editor page flips this
+	 * false at the start of hydration and true on completion. Default
+	 * `true` covers the common cases (new canvas with no template, or
+	 * the canvas not yet mounted) so panels don't get stuck showing a
+	 * loading state when there's nothing to wait for. Used by LayerPanel
+	 * to suppress the empty state during the brief window where
+	 * `fabricCanvas` exists but `objects` is still empty (TASK-135 Codex
+	 * round 1 P2).
+	 */
+	hydrationComplete: true
 });
 
 /** Register a callback to save undo snapshots (called by Canvas on mount) */
@@ -62,6 +74,21 @@ export function setFabricCanvas(canvas: Canvas | null) {
 	editorState.objects = [];
 	editorState.isDirty = false;
 	editorState.editGeneration = 0;
+	// Reset to the default — a brand-new mount has no hydration in
+	// flight. The editor page will flip this false again if/when it
+	// kicks off `loadFromJSON` for a stored template.
+	editorState.hydrationComplete = true;
+}
+
+/**
+ * Flip the hydration flag. The editor page calls this with `false` at
+ * the start of `loadFromJSON` and `true` on completion (or `true`
+ * immediately when there's no template to load), so panels know
+ * whether an empty `objects` array means "nothing yet" or "still
+ * hydrating". See LayerPanel's empty-state gate (TASK-135).
+ */
+export function setHydrationComplete(value: boolean) {
+	editorState.hydrationComplete = value;
 }
 
 /** Set the currently selected object */

@@ -106,12 +106,14 @@
 		<span class="count">{editorState.objects.length}</span>
 	</header>
 
-	{#if !editorState.fabricCanvas}
+	{#if !editorState.fabricCanvas || !editorState.hydrationComplete}
 		<!--
-			Loading state — Fabric is mounting. Render a stack of layer-row
-			skeletons so the chrome doesn't flash empty between mount and
-			first object. Three lines roughly matches a freshly-opened
-			canvas with one or two starter layers.
+			Loading state — Fabric is mounting OR a stored template is
+			still hydrating into the canvas. Render layer-row skeletons so
+			the chrome doesn't flash "No layers yet" during the brief gap
+			between fabricCanvas becoming truthy and loadFromJSON
+			resolving (Codex round 1 P2). Three lines roughly matches a
+			typical opened canvas.
 		-->
 		<div class="layer-skeleton" aria-label="Loading layers">
 			<LoadingSkeleton lines={3} />

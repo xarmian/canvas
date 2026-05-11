@@ -29,7 +29,11 @@
 	} from '$lib/components/editor/CanvasSettingsModal.svelte';
 	import AddImageModal from '$lib/components/editor/AddImageModal.svelte';
 	import ShortcutsCheatsheetModal from '$lib/components/editor/ShortcutsCheatsheetModal.svelte';
-	import { editorState, markClean } from '$lib/components/editor/state.svelte';
+	import {
+		editorState,
+		markClean,
+		setHydrationComplete
+	} from '$lib/components/editor/state.svelte';
 	import {
 		historyState,
 		saveSnapshot,
@@ -373,6 +377,10 @@
 		if (editorState.fabricCanvas && loadedCanvasId !== data.canvas.id) {
 			loadedCanvasId = data.canvas.id;
 			hydrationComplete = false;
+			// Mirror onto the shared editorState so panels (LayerPanel's
+			// empty-state gate) can read the same signal without prop-
+			// drilling. Re-flipped to true in every completion path below.
+			setHydrationComplete(false);
 			const thisToken = ++hydrationToken;
 			const canvas = editorState.fabricCanvas;
 
@@ -416,6 +424,7 @@
 							endSuppressSnapshots();
 							saveSnapshot(canvas);
 							hydrationComplete = true;
+							setHydrationComplete(true);
 						});
 				};
 				if (ids.length === 0) {
@@ -435,6 +444,7 @@
 				endSuppressSnapshots();
 				saveSnapshot(canvas);
 				hydrationComplete = true;
+				setHydrationComplete(true);
 			}
 		}
 	});
