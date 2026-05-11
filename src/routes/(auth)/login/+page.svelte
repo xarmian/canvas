@@ -70,13 +70,24 @@
 </div>
 
 <style>
+	/*
+	 * BT-155: the (auth) layout is now a flex column with the public
+	 * header above and `min-height: 100vh` on the shell. The login card
+	 * fills the remaining viewport via `flex: 1` and centers itself
+	 * inside that space — replaces the pre-BT-155 standalone
+	 * `min-height: 100vh` wrapper that left no room for a header.
+	 *
+	 * `background: transparent` defers to the layout's
+	 * landing-page-matching gradient. Hard-coded surface color here
+	 * would clash with the header's gradient at the seam.
+	 */
 	.login-page {
 		display: flex;
 		justify-content: center;
 		align-items: center;
-		min-height: 100vh;
+		flex: 1;
 		padding: var(--spacing-6);
-		background: var(--color-surface);
+		background: transparent;
 	}
 
 	.login-card {
