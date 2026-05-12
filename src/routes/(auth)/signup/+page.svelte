@@ -308,7 +308,14 @@
 		color: var(--color-text-muted);
 	}
 
+	/*
+	 * BT-159: inline link inside a `<p>` needs an underline (or ≥3:1
+	 * contrast vs surrounding text — we don't meet that with primary
+	 * blue on muted gray, 1.46:1). Tailwind 4's preflight resets
+	 * `<a>` text-decoration to inherit, so we opt in explicitly.
+	 */
 	.footer a {
 		color: var(--color-primary);
+		text-decoration: underline;
 	}
 </style>

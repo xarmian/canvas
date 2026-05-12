@@ -200,10 +200,19 @@
 		color: #0f172a;
 	}
 
+	/*
+	 * BT-159: was `#94a3b8` (slate-400), which gave ~2.85:1 contrast
+	 * against the white card background — fails WCAG AA's 4.5:1 floor
+	 * for body text. axe-core flagged this on every template card
+	 * (20 nodes). Switched to `--color-text-subtle` (#6b7280, slate-
+	 * 500) which lands at ~4.83:1 — clears the AA floor while keeping
+	 * the meta line visually subordinate to the card's `.name`
+	 * heading.
+	 */
 	.meta {
 		margin: 0;
 		font-size: 0.8rem;
-		color: #94a3b8;
+		color: var(--color-text-subtle);
 	}
 
 	.category {
