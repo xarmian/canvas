@@ -23,6 +23,15 @@ export async function handle({ event, resolve }) {
 	// `/i/{shortId}` share pages must remain anonymous-reachable, so we
 	// never 401 in the hook. Downstream `/api/v1/*` routes call
 	// `requireApiKey()` and emit the right status themselves.
+	//
+	// SECURITY (Codex review round 1, P1): bearer auth deliberately does NOT
+	// populate `locals.user`. The legacy session-gated layouts and `/api/*`
+	// handlers (`/(app)/+layout.server.ts`, `/api/canvas/*`, etc.) use
+	// `locals.user` as the auth gate. If bearer auth set `locals.user`, an
+	// API-key holder could browse `/dashboard` and call session-only mutation
+	// endpoints with no scope check. We expose API-key identity ONLY through
+	// `locals.apiKey`; routes that need the owning user read `apiKey.userId`
+	// after calling `requireApiKey()`.
 	if (!session) {
 		const authHeader = event.request.headers.get('authorization');
 		if (authHeader?.startsWith(`Bearer ${TOKEN_PREFIX}`)) {
@@ -30,7 +39,6 @@ export async function handle({ event, resolve }) {
 			const result = await authenticateBearer(token);
 			if (result) {
 				event.locals.apiKey = result.apiKey;
-				event.locals.user = result.user;
 			}
 		}
 	}

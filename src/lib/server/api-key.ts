@@ -19,6 +19,7 @@
 import { randomBytes } from 'node:crypto';
 import { hash, verify } from '@node-rs/argon2';
 import { eq, isNull, and } from 'drizzle-orm';
+import { error } from '@sveltejs/kit';
 import type { User } from 'better-auth';
 import { db } from './db';
 import { apiKeys, user as userTable } from './db/schema';
@@ -135,22 +136,20 @@ export async function authenticateBearer(
 
 /**
  * Route-handler guard. Returns the apiKey if present and scoped; otherwise
- * throws a SvelteKit `error()` with the right status. Routes should call
+ * throws a SvelteKit `HttpError` with the right status. Routes should call
  * this at the top of `POST` / `GET` / `DELETE` for `/api/v1/*` endpoints.
+ *
+ * IMPORTANT (Codex review round 1, P1): we throw via SvelteKit's `error()`
+ * helper — plain `Error` instances with a `status` property are NOT
+ * preserved by SvelteKit's error handler and surface as 500s, defeating
+ * the 401 / 403 contract.
  */
 export function requireApiKey(locals: App.Locals, requiredScope: string): AuthenticatedApiKey {
 	if (!locals.apiKey) {
-		// Use a plain Response thrown via SvelteKit's `error()` import in the
-		// callsite — kept agnostic here so this module has no SvelteKit
-		// dependency and stays unit-testable.
-		const err = new Error('Unauthorized') as Error & { status?: number };
-		err.status = 401;
-		throw err;
+		error(401, 'Unauthorized');
 	}
 	if (!locals.apiKey.scopes.includes(requiredScope)) {
-		const err = new Error(`Missing scope: ${requiredScope}`) as Error & { status?: number };
-		err.status = 403;
-		throw err;
+		error(403, `Missing scope: ${requiredScope}`);
 	}
 	return locals.apiKey;
 }
