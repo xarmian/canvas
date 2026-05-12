@@ -290,11 +290,18 @@
 
 	/** Derived UI state for the Save button. The button doubles as the
 	 * save-status indicator — there's no separate pill (BT-160).
-	 * Priority order: failed > saving > dirty > saved. */
+	 *
+	 * Priority order: saving > failed > dirty > saved. `isSaving` outranks
+	 * `lastSaveFailed` so a retry after a failure shows "Saving…"
+	 * (disabled) instead of leaving the button on "Retry save" (enabled)
+	 * while the PATCH is in-flight — without that order the user could
+	 * fire a second click that races the first request. `lastSaveFailed`
+	 * is intentionally only cleared on a successful save, so the failed
+	 * state re-appears if the retry itself errors out. */
 	type SaveButtonState = 'saved' | 'dirty' | 'saving' | 'failed';
 	let saveButtonState: SaveButtonState = $derived.by(() => {
-		if (lastSaveFailed) return 'failed';
 		if (isSaving) return 'saving';
+		if (lastSaveFailed) return 'failed';
 		if (editorState.isDirty) return 'dirty';
 		return 'saved';
 	});
