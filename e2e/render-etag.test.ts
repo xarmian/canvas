@@ -57,9 +57,17 @@ test.describe('Render: ETag + content-versioned URLs', () => {
 		expect(apiRes.status()).toBe(200);
 		const { updatedAt } = (await apiRes.json()) as { updatedAt: string };
 		const updatedAtMs = new Date(updatedAt).getTime().toString();
-		// fontSetVersion is empty for a fresh user. Token = sha256(`${ms}|`)
-		// truncated to 12 hex chars.
-		const versionToken = createHash('sha256').update(`${updatedAtMs}|`).digest('hex').slice(0, 12);
+		// Token = sha256(`${ms}|${fontSetVersion}|${assetSetVersion}`)
+		// truncated to 12 hex chars — see `buildContentVersionToken` in
+		// `src/lib/server/content-version.ts`. For a fresh user with no
+		// uploaded fonts the fontSetVersion is empty; the happy-path
+		// canvas published here has no `asset://` references so the
+		// assetSetVersion is empty too — leaving `${ms}||` (both
+		// separators present, both segments empty). TASK-117 added the
+		// trailing assetSetVersion segment; the test was previously
+		// computing the pre-TASK-117 shape (`${ms}|`) and failing the
+		// immutable-cache assertion.
+		const versionToken = createHash('sha256').update(`${updatedAtMs}||`).digest('hex').slice(0, 12);
 
 		// Stale `_v` falls back to short cache-control.
 		const stale = await ctx.get(imageUrl + (imageUrl.includes('?') ? '&' : '?') + '_v=999', {
