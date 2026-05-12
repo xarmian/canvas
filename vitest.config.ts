@@ -20,7 +20,12 @@ export default defineConfig({
 		alias: {
 			'$env/dynamic/private': fileURLToPath(
 				new URL('./src/test/env-private-stub.ts', import.meta.url)
-			)
+			),
+			// SvelteKit's `$lib` alias is normally provided by the vite-plugin-
+			// svelte build; vitest doesn't run that pipeline, so re-declare it
+			// here so server-side modules that walk into `$lib/engine` /
+			// `$lib/server/*` resolve identically in unit tests.
+			$lib: fileURLToPath(new URL('./src/lib', import.meta.url))
 		}
 	},
 	test: {

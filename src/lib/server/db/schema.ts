@@ -7,7 +7,8 @@ import {
 	integer,
 	boolean,
 	jsonb,
-	index
+	index,
+	uniqueIndex
 } from 'drizzle-orm/pg-core';
 import { user } from './auth-schema.js';
 
@@ -186,9 +187,16 @@ export const renderedImages = pgTable(
 	},
 	(table) => [
 		index('rendered_images_user_id_idx').on(table.userId),
-		// Dedup lookup: (userId, contentHash) is queried inside POST to short-
-		// circuit re-uploads.
-		index('rendered_images_user_content_hash_idx').on(table.userId, table.contentHash),
+		// Dedup constraint: (userId, contentHash) is unique among live rows.
+		// The POST endpoint does a select-then-insert to detect dedup; without
+		// this constraint two concurrent identical POSTs can both miss the
+		// select and create twin rows + twin blobs (Codex TASK-168 round 1
+		// P2). The partial WHERE means a soft-deleted row no longer blocks
+		// re-creation of the same render — the user genuinely wants a fresh
+		// shortId in that case.
+		uniqueIndex('rendered_images_user_content_hash_live_uidx')
+			.on(table.userId, table.contentHash)
+			.where(sql`${table.deletedAt} IS NULL`),
 		// Partial index for the expiresAt sweep — narrow to live rows so the
 		// sweeper's range scan ignores already-soft-deleted rows.
 		index('rendered_images_expires_at_live_idx')

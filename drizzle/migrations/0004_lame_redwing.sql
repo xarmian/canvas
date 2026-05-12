@@ -1,0 +1,2 @@
+DROP INDEX "rendered_images_user_content_hash_idx";--> statement-breakpoint
+CREATE UNIQUE INDEX "rendered_images_user_content_hash_live_uidx" ON "rendered_images" USING btree ("user_id","content_hash") WHERE "rendered_images"."deleted_at" IS NULL;
