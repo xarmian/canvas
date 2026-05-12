@@ -4,7 +4,7 @@
  * slug, starts as a draft, and lands the user in the new canvas's editor.
  */
 import { test, expect } from '@playwright/test';
-import { signupAndLogin, createCanvas, addTextLayer } from './helpers';
+import { signupAndLogin, createCanvas, addTextLayer, saveAndWait } from './helpers';
 
 test.describe('Canvas duplication', () => {
 	test('dashboard Duplicate clones the canvas as a draft and opens the new editor', async ({
@@ -14,8 +14,9 @@ test.describe('Canvas duplication', () => {
 		const original = await createCanvas(page, { name: 'Original Canvas' });
 		// Add a text layer so we have something to verify round-trips.
 		await addTextLayer(page, 'Hello duplicate');
-		// Wait for autosave so beforeNavigate doesn't block us.
-		await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 8_000 });
+		// Saves are manual since BT-160 — click Save explicitly so
+		// beforeNavigate doesn't block us when we leave the editor.
+		await saveAndWait(page);
 
 		// Back to dashboard, then click Duplicate on the original card.
 		await page.getByTestId('nav-dashboard').click();
@@ -37,11 +38,12 @@ test.describe('Canvas duplication', () => {
 		await expect(layers.locator('[role="option"]')).toHaveCount(1);
 
 		// Back to dashboard — both canvases should now exist, and the copy
-		// is a Draft (publish state is intentionally not copied). Wait for
-		// the editor's autosave to settle so beforeNavigate doesn't trap us
-		// in the leave-without-saving dialog (Fabric's hydrate triggers an
-		// initial dirty cycle on first load of a freshly-duplicated canvas).
-		await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 8_000 });
+		// is a Draft (publish state is intentionally not copied). Fabric's
+		// hydrate of a freshly-duplicated canvas can trigger an initial
+		// dirty cycle, so explicitly save before navigating to keep
+		// beforeNavigate from trapping us in the leave-without-saving
+		// dialog (saves are manual since BT-160).
+		await saveAndWait(page);
 		await page.getByTestId('nav-dashboard').click();
 		await page.waitForURL('/dashboard');
 		const copyCard = page.locator('.card').filter({ hasText: 'Original Canvas (copy)' });

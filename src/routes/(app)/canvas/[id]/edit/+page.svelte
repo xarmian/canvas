@@ -171,7 +171,7 @@
 		}
 		duplicating = true;
 		try {
-			// Flush any in-flight autosave first so a save() call here
+			// Flush any in-flight save first so a save() call here
 			// doesn't no-op due to isSaving=true and miss the latest edits.
 			await waitForSave();
 			// Then loop save while still dirty. A single save() can return
@@ -277,7 +277,6 @@
 	}
 
 	let editorRef: ReturnType<typeof CanvasEditor> | undefined = $state();
-	let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
 	let isSaving = $state(false);
 	/** True when the last save attempt errored out. Cleared on the next
 	 * successful save. Drives the persistent "Save failed" indicator and
@@ -289,80 +288,36 @@
 	let showPreview = $state(false);
 	let previewUrl = $state('');
 
-	/** Derived UI state for the persistent save-status indicator.
-	 * Priority order: failed > saving > dirty > saved. */
-	type SaveStatus = 'saved' | 'dirty' | 'saving' | 'failed';
-	let saveStatus: SaveStatus = $derived.by(() => {
-		if (lastSaveFailed) return 'failed';
+	/** Derived UI state for the Save button. The button doubles as the
+	 * save-status indicator — there's no separate pill (BT-160).
+	 *
+	 * Priority order: saving > failed > dirty > saved. `isSaving` outranks
+	 * `lastSaveFailed` so a retry after a failure shows "Saving…"
+	 * (disabled) instead of leaving the button on "Retry save" (enabled)
+	 * while the PATCH is in-flight — without that order the user could
+	 * fire a second click that races the first request. `lastSaveFailed`
+	 * is intentionally only cleared on a successful save, so the failed
+	 * state re-appears if the retry itself errors out. */
+	type SaveButtonState = 'saved' | 'dirty' | 'saving' | 'failed';
+	let saveButtonState: SaveButtonState = $derived.by(() => {
 		if (isSaving) return 'saving';
+		if (lastSaveFailed) return 'failed';
 		if (editorState.isDirty) return 'dirty';
 		return 'saved';
 	});
 
-	/**
-	 * Derived UI state for the live-render-sync indicator (TASK-108).
-	 *
-	 * Whereas `saveStatus` answers "are my edits persisted?", this
-	 * answers the next question: "does what's at /c/<slug> reflect
-	 * the canvas I'm currently looking at?"
-	 *
-	 * The render endpoint serves the freshly-saved canvas as soon as
-	 * the PATCH commits — the underlying contentVersion token bumps on
-	 * canvas.updatedAt. So in the editor's frame of reference the
-	 * answer is purely a function of saveStatus:
-	 *  - `saved`   → the current Fabric state matches what the server
-	 *                stores → the live render is in sync.
-	 *  - `dirty`   → unsaved local edits → the live render shows the
-	 *                LAST saved state, not what's on screen.
-	 *  - `saving`  → the PATCH is mid-flight → still showing last
-	 *                saved state, but about to flip back to in-sync.
-	 *  - `failed`  → the last save errored, so the live render is
-	 *                stuck on the last successful save.
-	 *
-	 * The deliberate gap this leaves (and why this is "stops short of
-	 * IDEA-59") is downstream CDN/social-cache caching of the OG image
-	 * URL. Those caches roll over on the contentVersion token bump,
-	 * but we can't observe their state from the editor — the indicator
-	 * therefore only describes the editor → render endpoint relationship,
-	 * not the editor → social-card-on-twitter relationship. The popover
-	 * copy says as much.
-	 */
-	type LiveRenderStatus = 'in-sync' | 'out-of-date' | 'saving' | 'failed';
-	let liveRenderStatus: LiveRenderStatus = $derived.by(() => {
-		if (saveStatus === 'failed') return 'failed';
-		if (saveStatus === 'saving') return 'saving';
-		if (saveStatus === 'dirty') return 'out-of-date';
-		return 'in-sync';
-	});
-
-	function liveRenderLabel(s: LiveRenderStatus): string {
+	function saveButtonLabel(s: SaveButtonState): string {
 		switch (s) {
-			case 'in-sync':
-				return 'Live render: in sync';
-			case 'out-of-date':
-				return 'Live render: out of date';
 			case 'saving':
-				return 'Live render: updating…';
+				return 'Saving…';
 			case 'failed':
-				return 'Live render: save failed';
+				return 'Retry save';
+			case 'saved':
+				return 'Saved';
+			case 'dirty':
+				return 'Save';
 		}
 	}
-
-	/** Toggle for the explanatory popover anchored to the indicator.
-	 *  Click-outside closes it (handled by the document-level
-	 *  pointerdown listener installed in $effect below). */
-	let liveRenderPopoverOpen = $state(false);
-
-	$effect(() => {
-		if (!liveRenderPopoverOpen) return;
-		function onPointerDown(e: PointerEvent) {
-			const target = e.target as Element | null;
-			if (target?.closest('[data-live-render]')) return;
-			liveRenderPopoverOpen = false;
-		}
-		document.addEventListener('pointerdown', onPointerDown, true);
-		return () => document.removeEventListener('pointerdown', onPointerDown, true);
-	});
 
 	// Locally-tracked canvas dimensions/background so the settings modal can
 	// update them live without a full route reload. Synced to `data` in the
@@ -400,7 +355,7 @@
 			const canvas = editorState.fabricCanvas;
 
 			// Suppress snapshots before clearing to prevent object:removed
-			// events from marking dirty and triggering autosave with empty canvas
+			// events from marking dirty on the empty-canvas transition.
 			beginSuppressSnapshots();
 
 			// Clear canvas and reset state before loading new content
@@ -409,7 +364,8 @@
 			canvas.backgroundColor = backgroundColor;
 			canvas.renderAll();
 			resetHistory();
-			// Reset dirty flag so autosave doesn't fire for the clear
+			// Reset dirty flag so the post-clear state isn't reported as
+			// unsaved edits by the navigation guard or the Save button.
 			markClean();
 
 			if (data.canvas.templateJson) {
@@ -447,6 +403,15 @@
 							if (hydrationToken !== thisToken) return;
 							endSuppressSnapshots();
 							saveSnapshot(canvas);
+							// Fabric's loadFromJSON fires an `object:added` per layer
+							// (Canvas.svelte wires it to markDirty), so a non-empty
+							// canvas finishes hydration with editorState.isDirty=true
+							// — i.e. no user input but the Save button reads 'dirty'
+							// and the beforeNavigate guard would trap the user on
+							// first load. Autosave used to mask this by PATCHing
+							// 2s later and clearing dirty in markClean(); with
+							// manual-only saves (BT-160) we have to do it here.
+							markClean();
 							hydrationComplete = true;
 							setHydrationComplete(true);
 						});
@@ -503,21 +468,10 @@
 		});
 	});
 
-	// Auto-save: debounce 2 seconds after any edit (watches editorState.editGeneration for re-triggers)
-	$effect(() => {
-		// Read editorState.editGeneration to re-run this effect on every new edit
-		void editorState.editGeneration;
-		if (editorState.isDirty) {
-			clearTimeout(autoSaveTimer);
-			autoSaveTimer = setTimeout(() => {
-				save();
-			}, 2000);
-		}
-
-		return () => {
-			clearTimeout(autoSaveTimer);
-		};
-	});
+	// Saving is fully manual (BT-160). The user persists via the Save
+	// button or Cmd/Ctrl+S; the beforeNavigate guard catches unsaved work
+	// on route changes, and the Duplicate / Preview / Publish flows each
+	// flush via save() before they act.
 
 	let showCheatsheet = $state(false);
 
@@ -778,19 +732,6 @@
 	function cancelLeave() {
 		pendingNavigationHref = null;
 		pendingNavigationIsExternal = false;
-	}
-
-	function saveStatusLabel(s: SaveStatus): string {
-		switch (s) {
-			case 'saved':
-				return 'All changes saved';
-			case 'dirty':
-				return 'Unsaved changes';
-			case 'saving':
-				return 'Saving…';
-			case 'failed':
-				return 'Save failed';
-		}
 	}
 
 	/** Flips false the moment the editor component starts tearing down.
@@ -1562,56 +1503,25 @@
 			<Keyboard size={14} />
 		</button>
 
-		<span class="save-indicator save-{saveStatus}" title={saveStatusLabel(saveStatus)}>
-			<span class="save-dot" aria-hidden="true"></span>
-			<span class="save-label">{saveStatusLabel(saveStatus)}</span>
-		</span>
-
 		<!--
-			Live-render-sync indicator (TASK-108). Surfaces the relationship
-			between the in-editor canvas state and what /c/<slug> would
-			render right now. Hidden for unpublished canvases — there's no
-			"live render" to be in sync with until the user clicks Publish.
-			The button DOUBLES as the popover trigger and as the visual
-			status pill, so click-anywhere-on-it opens the explainer.
+			BT-160: the Save button doubles as the save-status indicator.
+			It absorbs the role of the old "All changes saved" /
+			"Unsaved changes" / "Saving…" pill (which dynamically resized
+			the toolbar and reflowed neighbours) and of the
+			Live-render-sync pill from TASK-108 (whose state was a pure
+			function of save status anyway, since every save updates the
+			live render). One control, fixed footprint, manual saves only.
 		-->
-		{#if isPublished}
-			<div class="live-render-wrap" data-live-render>
-				<button
-					type="button"
-					class="live-render-indicator live-render-{liveRenderStatus}"
-					data-testid="live-render-indicator"
-					data-state={liveRenderStatus}
-					aria-expanded={liveRenderPopoverOpen}
-					aria-haspopup="dialog"
-					onclick={() => (liveRenderPopoverOpen = !liveRenderPopoverOpen)}
-					title={liveRenderLabel(liveRenderStatus)}
-				>
-					<span class="live-render-dot" aria-hidden="true"></span>
-					<span class="live-render-label">{liveRenderLabel(liveRenderStatus)}</span>
-				</button>
-				{#if liveRenderPopoverOpen}
-					<div
-						class="live-render-popover"
-						role="dialog"
-						aria-label="Live render sync explainer"
-						data-testid="live-render-popover"
-					>
-						<p>
-							Your saved canvas drives <code>/c/{canvasSlug}</code>. Edits go live the moment you
-							hit save — there's no separate "publish updates" step.
-						</p>
-						<p class="live-render-popover-secondary">
-							Heads-up: social platforms (Twitter, Bluesky, Discord) cache the share preview image.
-							Re-share the link or use a refresh tool to update the cached card.
-						</p>
-					</div>
-				{/if}
-			</div>
-		{/if}
-
-		<button class="save-btn" onclick={save} disabled={isSaving}>
-			{isSaving ? 'Saving...' : 'Save'}
+		<button
+			type="button"
+			class="save-btn save-btn-{saveButtonState}"
+			data-testid="toolbar-save"
+			data-state={saveButtonState}
+			onclick={save}
+			disabled={saveButtonState === 'saving' || saveButtonState === 'saved'}
+			title={saveButtonLabel(saveButtonState)}
+		>
+			{saveButtonLabel(saveButtonState)}
 		</button>
 
 		<button
@@ -1760,8 +1670,10 @@
 		onPublishedChange={(next) => (isPublished = next)}
 		onSlugChange={(next) => (canvasSlug = next)}
 		onBeforePublish={async () => {
-			// Flush pending autosave so the published URL renders the latest edits,
-			// not whatever was last committed before the user hit Publish.
+			// Flush any in-flight save and persist any pending edits so the
+			// published URL renders the latest state, not whatever was last
+			// committed before the user hit Publish. With manual-only saves
+			// (BT-160) this is the canonical path for pre-publish flushing.
 			await waitForSave();
 			if (!editorState.isDirty) return true;
 			return await save();
@@ -2070,202 +1982,73 @@
 		flex: 1;
 	}
 
-	.save-indicator {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		font-size: 12px;
-		font-weight: 500;
-		padding: 3px 10px;
-		border-radius: 9999px;
-		white-space: nowrap;
-		user-select: none;
-	}
-
-	.save-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-
-	.save-saved {
-		background: #dcfce7;
-		color: #15803d;
-	}
-	.save-saved .save-dot {
-		background: #16a34a;
-	}
-
-	.save-dirty {
-		background: #f1f5f9;
-		color: #475569;
-	}
-	.save-dirty .save-dot {
-		background: #94a3b8;
-	}
-
-	.save-saving {
-		background: #fef3c7;
-		color: #92400e;
-	}
-	.save-saving .save-dot {
-		background: #d97706;
-		animation: pulse 1s ease-in-out infinite;
-	}
-
-	.save-failed {
-		background: #fee2e2;
-		color: #991b1b;
-	}
-	.save-failed .save-dot {
-		background: #dc2626;
-	}
-
-	@keyframes pulse {
-		0%,
-		100% {
-			opacity: 1;
-		}
-		50% {
-			opacity: 0.4;
-		}
-	}
-
-	/* TASK-108: Live-render-sync indicator. Visually mirrors the
-	   save-indicator pill (pill shape, dot + label) so the toolbar's
-	   two status pills read as a related pair, but uses a distinct
-	   color palette so the user doesn't conflate "saved" with "live
-	   render in sync" — they describe different layers. The button
-	   itself is the popover trigger; the popover is positioned
-	   absolutely below it. */
-	.live-render-wrap {
-		position: relative;
-		display: inline-flex;
-	}
-
-	.live-render-indicator {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		font-size: 12px;
-		font-weight: 500;
-		padding: 3px 10px;
-		border-radius: 9999px;
-		white-space: nowrap;
-		user-select: none;
-		border: 1px solid transparent;
-		background: transparent;
-		font-family: inherit;
-		cursor: pointer;
-	}
-
-	.live-render-indicator:focus-visible {
-		outline: 2px solid #2563eb;
-		outline-offset: 1px;
-	}
-
-	.live-render-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-
-	.live-render-in-sync {
-		background: #ecfdf5;
-		color: #065f46;
-		border-color: #a7f3d0;
-	}
-	.live-render-in-sync .live-render-dot {
-		background: #10b981;
-	}
-
-	.live-render-out-of-date {
-		background: #fefce8;
-		color: #854d0e;
-		border-color: #fde68a;
-	}
-	.live-render-out-of-date .live-render-dot {
-		background: #ca8a04;
-	}
-
-	.live-render-saving {
-		background: #fefce8;
-		color: #854d0e;
-		border-color: #fde68a;
-	}
-	.live-render-saving .live-render-dot {
-		background: #ca8a04;
-		animation: pulse 1s ease-in-out infinite;
-	}
-
-	.live-render-failed {
-		background: #fef2f2;
-		color: #991b1b;
-		border-color: #fecaca;
-	}
-	.live-render-failed .live-render-dot {
-		background: #dc2626;
-	}
-
-	.live-render-popover {
-		position: absolute;
-		top: calc(100% + 6px);
-		right: 0;
-		min-width: 280px;
-		max-width: 340px;
-		padding: 10px 12px;
-		background: #fff;
-		border: 1px solid #e5e7eb;
-		border-radius: 6px;
-		box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
-		font-size: 12px;
-		color: #1f2937;
-		line-height: 1.45;
-		z-index: 50;
-	}
-
-	.live-render-popover p {
-		margin: 0 0 0.4rem;
-	}
-
-	.live-render-popover p:last-child {
-		margin-bottom: 0;
-	}
-
-	.live-render-popover code {
-		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 11.5px;
-		background: #f1f5f9;
-		padding: 0 0.25rem;
-		border-radius: 3px;
-	}
-
-	.live-render-popover-secondary {
-		color: #4b5563;
-		font-size: 11.5px;
-	}
-
+	/* BT-160: Save button doubles as the save-status indicator. A FIXED
+	   min-width keeps the toolbar from reflowing as the label changes
+	   between "Save" / "Saving…" / "Saved" / "Retry save" — the previous
+	   pill-driven layout shift was the original reason this bug was filed.
+	   Per-state styles below override only color + cursor; geometry stays
+	   constant across all states. */
 	.save-btn {
+		min-width: 96px;
 		padding: 5px 16px;
 		font-size: 13px;
 		font-weight: 500;
-		border: none;
+		border: 1px solid transparent;
 		border-radius: 4px;
 		background: #2563eb;
 		color: #fff;
 		cursor: pointer;
 		white-space: nowrap;
+		text-align: center;
 	}
 
-	.save-btn:hover {
+	.save-btn:hover:not(:disabled) {
 		background: #1d4ed8;
 	}
 
-	.save-btn:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
+	.save-btn:focus-visible {
+		outline: 2px solid #2563eb;
+		outline-offset: 2px;
+	}
+
+	/* Dirty (default appearance) is the primary blue above. */
+
+	/* Saved — clean, disabled. Muted appearance so the eye isn't drawn
+	   to a button that has nothing to do. */
+	.save-btn-saved {
+		background: #f1f5f9;
+		color: #475569;
+		border-color: #e2e8f0;
+		cursor: default;
+	}
+
+	/* Saving — disabled, subtly pulsing to signal in-flight work. */
+	.save-btn-saving {
+		background: #93c5fd;
+		color: #fff;
+		cursor: wait;
+		animation: save-btn-pulse 1s ease-in-out infinite;
+	}
+
+	/* Failed — red, enabled so the user can retry by clicking. */
+	.save-btn-failed {
+		background: #dc2626;
+		color: #fff;
+		border-color: #b91c1c;
+	}
+
+	.save-btn-failed:hover:not(:disabled) {
+		background: #b91c1c;
+	}
+
+	@keyframes save-btn-pulse {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.7;
+		}
 	}
 
 	.publish-btn {
@@ -2301,10 +2084,10 @@
 
 	/*
 	 * BT-158: at ≤1440px the toolbar can't fit every icon+label button on
-	 * a single row alongside the back-link, canvas-name, zoom widget,
-	 * save indicator, and Save/Publish CTAs. Collapse the icon+label
-	 * buttons to their icons by visually hiding the label `<span>`. The
-	 * text remains in the DOM, so:
+	 * a single row alongside the back-link, canvas-name, zoom widget, and
+	 * Save/Publish CTAs. Collapse the icon+label buttons to their icons
+	 * by visually hiding the label `<span>`. The text remains in the
+	 * DOM, so:
 	 *   - tooltips (title=) and aria-labels keep working on hover/AT
 	 *   - Playwright's getByRole({ name: 'Rectangle' }) still resolves
 	 *     (accessible-name computation reads clipped sr-only text)
@@ -2314,9 +2097,10 @@
 	 *
 	 * Selector intentionally excludes `.icon-only` (already iconified)
 	 * and `.zoom-value` (label IS the visible value — "100%" / "Fit").
-	 * `> span` reaches only direct-child `<span>`s, leaving
-	 * `.save-indicator`, `.live-render-indicator`, and `.canvas-name`
-	 * untouched (they aren't descendants of `.tool-btn`).
+	 * `> span` reaches only direct-child `<span>`s, leaving the
+	 * `.canvas-name` untouched (it isn't a descendant of `.tool-btn`).
+	 * The Save button's BT-160 status states live on the button itself
+	 * (no inner span), so this rule never reaches them.
 	 */
 	@media (max-width: 1440px) {
 		.toolbar {

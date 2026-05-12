@@ -33,8 +33,11 @@ test.describe('Pipe formatters', () => {
 		// share URL — read templateJson back from the API instead since the
 		// rendered PNG is pixel data we don't introspect here.
 		await page.getByRole('button', { name: 'Save' }).click();
-		// Save indicator is a span (not a button); wait for the 'saved' label.
-		await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 10_000 });
+		// BT-160: Save button doubles as the indicator; wait for its
+		// data-state to settle on 'saved'.
+		await expect(page.getByTestId('toolbar-save')).toHaveAttribute('data-state', 'saved', {
+			timeout: 10_000
+		});
 
 		const apiRes = await request.get(`/api/canvas/${canvas.id}`);
 		expect(apiRes.status()).toBe(200);
@@ -66,6 +69,14 @@ test.describe('Pipe formatters', () => {
 		await bindParam(page, 'Text Content', 'value', 'fallback text');
 		await page.getByLabel('Format').selectOption('currency:USD');
 		await page.getByRole('button', { name: 'Save' }).click();
+		// Saves are manual since BT-160; without waiting for the PATCH to
+		// commit, the preview below races and may render the pre-format
+		// state. The test's "rendered a valid PNG" assertion would still
+		// pass against the stale render, hiding regressions in the
+		// formatter pipeline that's actually under test here.
+		await expect(page.getByTestId('toolbar-save')).toHaveAttribute('data-state', 'saved', {
+			timeout: 10_000
+		});
 
 		// Param=words → not a number → renderer should show the words verbatim
 		// rather than blanking the layer. We can't read pixels easily; assert
@@ -92,7 +103,9 @@ test.describe('Pipe formatters', () => {
 		// preset shape.)
 		await page.getByLabel('Format').selectOption('compact');
 		await page.getByRole('button', { name: 'Save' }).click();
-		await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 10_000 });
+		await expect(page.getByTestId('toolbar-save')).toHaveAttribute('data-state', 'saved', {
+			timeout: 10_000
+		});
 
 		// Persistence guard.
 		const apiRes = await request.get(`/api/canvas/${canvas.id}`);
@@ -112,7 +125,9 @@ test.describe('Pipe formatters', () => {
 		// canvas state is the same; only the param flow changes.
 		await page.getByLabel('Format').selectOption('number');
 		await page.getByRole('button', { name: 'Save' }).click();
-		await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 10_000 });
+		await expect(page.getByTestId('toolbar-save')).toHaveAttribute('data-state', 'saved', {
+			timeout: 10_000
+		});
 		const numberRender = await request.get(`/api/canvas/${canvas.id}/preview?mc=1234567`);
 		expect(numberRender.status()).toBe(200);
 		expect((await numberRender.body()).equals(await compactRender.body())).toBe(false);
@@ -129,7 +144,9 @@ test.describe('Pipe formatters', () => {
 		// Default (4 sig digits) baseline: ?price=0.000123 → "$0.0001230".
 		await page.getByLabel('Format').selectOption('crypto-price');
 		await page.getByRole('button', { name: 'Save' }).click();
-		await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 10_000 });
+		await expect(page.getByTestId('toolbar-save')).toHaveAttribute('data-state', 'saved', {
+			timeout: 10_000
+		});
 		const defaultRender = await request.get(`/api/canvas/${canvas.id}/preview?price=0.000123`);
 		expect(defaultRender.status()).toBe(200);
 		expect((await defaultRender.body()).length).toBeGreaterThan(100);
@@ -139,7 +156,9 @@ test.describe('Pipe formatters', () => {
 		// than the default 4-sig-digit "$0.0001230".
 		await page.getByLabel('Format').selectOption('crypto-price:6');
 		await page.getByRole('button', { name: 'Save' }).click();
-		await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 10_000 });
+		await expect(page.getByTestId('toolbar-save')).toHaveAttribute('data-state', 'saved', {
+			timeout: 10_000
+		});
 		const sixSigRender = await request.get(`/api/canvas/${canvas.id}/preview?price=0.000123`);
 		expect(sixSigRender.status()).toBe(200);
 		expect((await sixSigRender.body()).equals(await defaultRender.body())).toBe(false);

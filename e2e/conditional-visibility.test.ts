@@ -38,7 +38,9 @@ test('conditional rule hides a layer when condition matches', async ({ page }) =
 	await expect(page.getByLabel('Rule 1 visibility')).toHaveValue('false');
 
 	await page.getByRole('button', { name: 'Save' }).click();
-	await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 10_000 });
+	await expect(page.getByTestId('toolbar-save')).toHaveAttribute('data-state', 'saved', {
+		timeout: 10_000
+	});
 
 	// Verify the rule actually persisted to the templateJson — protects
 	// against a no-op where save silently dropped the new property type.
@@ -93,7 +95,9 @@ test('conditional rule wins over a visible binding (precedence)', async ({ page 
 	// Default 'false' value — leave as-is.
 
 	await page.getByRole('button', { name: 'Save' }).click();
-	await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 10_000 });
+	await expect(page.getByTestId('toolbar-save')).toHaveAttribute('data-state', 'saved', {
+		timeout: 10_000
+	});
 
 	// ?show=true alone → no rule match → layer visible (binding wins, no conflict).
 	const visible = await request.get(`/api/canvas/${canvas.id}/preview?show=true`);

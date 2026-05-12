@@ -138,7 +138,7 @@ export function rewriteAssetRefsForEditor(
 /**
  * Walk Fabric's `toObject()` output and rewrite tracked asset URLs back
  * to `asset://{id}` so the persisted JSON is portable. Inverse of
- * `rewriteAssetRefsForEditor` — runs in autosave / publish.
+ * `rewriteAssetRefsForEditor` — runs at save / publish time.
  *
  * Layers whose user manually edited the URL but kept the id stamped
  * still get rewritten to `asset://{id}`. The id stamp is the truth of

@@ -424,7 +424,8 @@
 	/** Move every selected object forward one z-step. No-op (and no
 	 *  markDirty) when nothing is selected — the route always
 	 *  preventDefault()s the bracket shortcut, so without this guard a
-	 *  spurious press would flag the canvas dirty + trigger autosave. */
+	 *  spurious press would flip the Save button into the 'dirty' state
+	 *  for nothing. */
 	export function bringSelectedForward() {
 		if (!editorState.fabricCanvas) return;
 		const objects = editorState.fabricCanvas.getActiveObjects();

@@ -19,7 +19,9 @@ test('visibility binding hides the layer when param is false', async ({ page }) 
 	await bindParam(page, 'Visibility', 'show', 'true');
 
 	await page.getByRole('button', { name: 'Save' }).click();
-	await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 10_000 });
+	await expect(page.getByTestId('toolbar-save')).toHaveAttribute('data-state', 'saved', {
+		timeout: 10_000
+	});
 
 	const visible = await request.get(`/api/canvas/${canvas.id}/preview?show=true`);
 	const hidden = await request.get(`/api/canvas/${canvas.id}/preview?show=false`);

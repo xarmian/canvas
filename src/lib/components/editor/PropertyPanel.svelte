@@ -65,7 +65,7 @@
 	);
 	// Per-layer image fallback (TASK-86). Stored as a custom Fabric property
 	// so it's picked up by the same `propertiesToInclude` list as paramBindings
-	// / conditionalStyles when the canvas is serialized (history, autosave,
+	// / conditionalStyles when the canvas is serialized (history, save,
 	// duplicate). The renderer uses it when the primary `src` fails to fetch.
 	let fallbackSrc = $derived(getObjProp<string>('fallbackSrc', ''));
 

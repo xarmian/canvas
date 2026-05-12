@@ -4,7 +4,7 @@
  * library to insert without re-uploading.
  */
 import { test, expect } from '@playwright/test';
-import { signupAndLogin, createCanvas, gotoEditor, addImageLayer } from './helpers';
+import { signupAndLogin, createCanvas, gotoEditor, addImageLayer, saveAndWait } from './helpers';
 
 /** Smallest legal PNG — 1x1 transparent pixel. Inlined so the test
  *  doesn't need a fixture file on disk. */
@@ -28,10 +28,11 @@ test.describe('Asset library', () => {
 			buffer: ONE_BY_ONE_PNG
 		});
 
-		// Wait for autosave to finish before navigating away — without
-		// this the editor's beforeNavigate guard fires and traps us in
-		// the Leave-without-saving dialog.
-		await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 8_000 });
+		// Saves are manual since BT-160 — click Save and wait for the
+		// toolbar Save button to settle on the 'saved' state so the
+		// editor's beforeNavigate guard doesn't trap us in the
+		// Leave-without-saving dialog when we navigate away.
+		await saveAndWait(page);
 
 		// Navigate to the assets page via the top nav and verify the asset
 		// is listed there.
@@ -73,9 +74,10 @@ test.describe('Asset library', () => {
 			buffer: ONE_BY_ONE_PNG
 		});
 
-		// Wait for autosave so the templateJson actually contains the
-		// asset URL by the time the usage scan runs.
-		await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 8_000 });
+		// Saves are manual since BT-160 — persist explicitly so the
+		// templateJson actually contains the asset URL by the time the
+		// usage scan runs.
+		await saveAndWait(page);
 
 		await page.goto('/assets');
 		await page.waitForLoadState('networkidle');

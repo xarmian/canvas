@@ -9,9 +9,9 @@
 	 *  1. In-memory `paramBindings` walked off `editorState.fabricCanvas`
 	 *     gives us the live default + formatter + which layers reference
 	 *     the param. Edits to the default flow back into Fabric (see
-	 *     `updateDefault`) so the editor's preview + autosave reflect the
-	 *     change immediately, identical to the per-property bind editor
-	 *     (TASK-104).
+	 *     `updateDefault`) so the editor's preview reflects the change
+	 *     immediately, identical to the per-property bind editor (TASK-104).
+	 *     Persistence is manual — the user hits Save when ready (BT-160).
 	 *  2. The DB-backed `canvas_params` table (loaded via
 	 *     `GET /api/canvas/[id]/params`) gives us the user-managed
 	 *     `type` + `required` flags. Those rows only exist for
@@ -315,8 +315,9 @@
 	 *  lockstep so the renderer sees a consistent default everywhere.
 	 *
 	 *  Mutates the binding objects in place via `obj.set(...)` so the
-	 *  same propertiesToInclude / autosave / undo machinery PropertyPanel
-	 *  uses kicks in (markDirty triggers the autosave debouncer). */
+	 *  same propertiesToInclude / serialize / undo machinery PropertyPanel
+	 *  uses kicks in (markDirty flips the Save button into the 'dirty'
+	 *  state — saves are manual per BT-160). */
 	function updateDefault(name: string, newDefault: string): void {
 		const canvas = editorState.fabricCanvas;
 		if (!canvas) return;
