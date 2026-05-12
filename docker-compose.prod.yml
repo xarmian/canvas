@@ -1,12 +1,32 @@
-# Canvas — Production Docker Compose
+# =============================================================================
+# Canvas — Production Docker Compose (TASK-76)
+# =============================================================================
+#
+# Tailored for VPS environments running an existing nginx-proxy +
+# acme-companion stack. The app container joins the external
+# `nginx-proxy_nginx-proxy` network so the proxy can reach it; cert
+# issuance is handled by acme-companion based on the LETSENCRYPT_HOST
+# env. Postgres + MinIO stay on this compose's internal `default`
+# network — neither should be publicly reachable.
 #
 # Usage:
-#   1. Copy .env.example to .env and fill in production values
+#   1. cp .env.example.prod .env  (and fill in every value)
 #   2. docker compose -f docker-compose.prod.yml up -d
+#   3. (subsequent deploys) ./scripts/deploy.sh
 #
-# This adds the Canvas app container on top of the dev services (db + minio).
+# If you DON'T use nginx-proxy + acme-companion: comment out the
+# VIRTUAL_HOST / LETSENCRYPT_HOST blocks below and the
+# `nginx-proxy_nginx-proxy` external network; then either publish
+# `app`'s port 3000 to the host or wire your own reverse proxy on
+# whatever shared network you use.
+# =============================================================================
 
 services:
+  # ---------------------------------------------------------------------------
+  # Postgres — internal-only. No `ports:` block so the DB is not
+  # reachable from outside the docker network. Connections come from
+  # `app` via the docker DNS name `db`.
+  # ---------------------------------------------------------------------------
   db:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -22,6 +42,13 @@ services:
       timeout: 5s
       retries: 5
 
+  # ---------------------------------------------------------------------------
+  # MinIO — internal-only S3-compatible object storage. The app
+  # proxies asset bytes through `/api/assets/{key}` server-side
+  # (see `S3_PUBLIC_URL` in .env.example), so MinIO does NOT need
+  # to be publicly reachable. Operators wanting direct CDN-style
+  # URLs should expose this separately via their reverse proxy.
+  # ---------------------------------------------------------------------------
   minio:
     image: minio/minio
     restart: unless-stopped
@@ -37,6 +64,12 @@ services:
       timeout: 5s
       retries: 5
 
+  # ---------------------------------------------------------------------------
+  # Bucket bootstrap. Runs once on first `up`, creates the canvas
+  # bucket if missing, opens the `/public` prefix for anonymous
+  # downloads. `service_completed_successfully` gates `app`'s start
+  # so the bucket exists before the app tries to write to it.
+  # ---------------------------------------------------------------------------
   minio-init:
     image: minio/mc
     depends_on:
@@ -54,35 +87,108 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: ${S3_BUCKET:-canvas}
 
+  # ---------------------------------------------------------------------------
+  # Canvas app — built from the local Dockerfile. Joins TWO docker
+  # networks: the internal `default` network (so it can resolve `db`
+  # and `minio` by name) and the external `nginx-proxy` network (so
+  # the existing reverse proxy can resolve `app`). No `ports:` block —
+  # nginx-proxy reaches us on the docker network at internal port
+  # 3000, which is the entire point of the nginx-proxy pattern.
+  # ---------------------------------------------------------------------------
   app:
-    build: .
+    build:
+      context: .
+      # `target: runner` is the implicit default for our Dockerfile,
+      # but stating it explicitly makes the build intent obvious to
+      # anyone reading the compose file.
+      target: runner
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
-    ports:
-      - '${PORT:-3000}:3000'
+
+    # Pull through any extra env keys (BETTER_AUTH_SECRET, SMTP_*,
+    # SENTRY_DSN, etc.) the operator sets in .env without listing
+    # each one here. The explicit `environment:` block below
+    # OVERRIDES env_file values, so we use it for derived /
+    # computed envs only (database URL, docker-internal hostnames,
+    # nginx-proxy contract).
+    env_file: .env
+
     environment:
       NODE_ENV: production
-      PORT: 3000
+      PORT: '3000'
+
+      # Computed wiring — uses docker DNS to reach sibling
+      # services. The .env file holds the credentials; we just
+      # weave them into the connection strings here.
       DATABASE_URL: postgresql://${POSTGRES_USER:-canvas}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-canvas}
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET in .env}
-      BETTER_AUTH_URL: ${PUBLIC_APP_URL:?Set PUBLIC_APP_URL in .env}
       S3_ENDPOINT: http://minio:9000
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
-      S3_SECRET_KEY: ${S3_SECRET_KEY}
-      S3_BUCKET: ${S3_BUCKET:-canvas}
-      S3_REGION: ${S3_REGION:-us-east-1}
-      S3_PUBLIC_URL: ${S3_PUBLIC_URL:-}
-      PUBLIC_APP_URL: ${PUBLIC_APP_URL}
+
+      # Better Auth derives the OAuth callback / cookie-domain
+      # logic from BETTER_AUTH_URL; we pin it to PUBLIC_APP_URL so
+      # operators only have to set ONE public-URL value in .env
+      # and both surfaces stay in sync. The override here wins
+      # over any stale BETTER_AUTH_URL the .env still carries from
+      # development.
+      BETTER_AUTH_URL: ${PUBLIC_APP_URL:?Set PUBLIC_APP_URL in .env}
+
+      # Render cache lives on a named volume so app-only deploys
+      # (`up -d --no-deps app`) don't blow away cached renders.
+      CACHE_DIR: /data/cache/render
+
+      # ---- nginx-proxy + acme-companion contract --------------
+      # nginx-proxy (jwilder / nginxproxy) reads these envs at
+      # container start and generates the corresponding upstream
+      # block in its nginx config. acme-companion reads
+      # LETSENCRYPT_HOST / LETSENCRYPT_EMAIL to request and
+      # auto-renew the certificate. Reference:
+      #   https://github.com/nginx-proxy/nginx-proxy
+      #   https://github.com/nginx-proxy/acme-companion
+      VIRTUAL_HOST: ${CANVAS_HOSTNAME:?Set CANVAS_HOSTNAME in .env (e.g. canvas.example.com)}
+      VIRTUAL_PORT: '3000'
+      LETSENCRYPT_HOST: ${CANVAS_HOSTNAME}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL:?Set LETSENCRYPT_EMAIL in .env}
+
+    networks:
+      - default
+      - nginx-proxy
+
+    volumes:
+      # Persist the render cache across container recreations so
+      # `scripts/deploy.sh`'s app-only restart doesn't wipe a hot
+      # cache. The path matches CACHE_DIR above.
+      - render_cache:/data/cache/render
+
     healthcheck:
-      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:3000']
-      interval: 10s
+      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:3000/health']
+      interval: 30s
       timeout: 5s
-      retries: 5
+      retries: 3
+      start_period: 20s
+
+networks:
+  # `default` is the compose-managed internal network. Postgres and
+  # MinIO live here exclusively; the app joins this network for DB
+  # + storage access and ALSO joins `nginx-proxy` below for ingress.
+  default: {}
+
+  # External reverse-proxy network — created by the operator's
+  # nginx-proxy stack, not by this compose file. `external: true`
+  # tells compose to attach to it rather than try to create it.
+  nginx-proxy:
+    external: true
+    # The actual docker network name on the host. Confirmed via
+    # `docker network ls` — the proxy stack is itself a compose
+    # project named `nginx-proxy` with an internal network also
+    # called `nginx-proxy`, producing the `<project>_<network>` form.
+    name: nginx-proxy_nginx-proxy
 
 volumes:
   pg_data:
   minio_data:
+  # Survives `up -d --no-deps app` so the on-disk render cache
+  # (TASK-53's filesystem-backed cache) carries across deploys.
+  render_cache:

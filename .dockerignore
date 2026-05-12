@@ -1,12 +1,45 @@
+# =============================================================================
+# Canvas — Docker build context excludes
+# =============================================================================
+# Keeps the build context lean: smaller `docker build` payload, no
+# accidental ingestion of local secrets, CI artifacts, or e2e test
+# infrastructure into the image.
+
+# Build / install artifacts
 node_modules
 build
 .svelte-kit
 .local-storage
 .cache
+
+# Local config / secrets
 .env
-.env.local
+.env.*
+!.env.example
+!.env.example.prod
+
+# Git + IDE / tooling state
 .git
+.gitignore
 .claude
+.pad.toml
+
+# Test infrastructure — none of this runs in production
+e2e
+playwright.config.ts
 playwright-report
 test-results
+lighthouserc.cjs
+
+# Build-host-only compose files (the image doesn't need to know
+# about its own orchestration)
+docker-compose*.yml
+
+# Dev-only scripts (the production deploy uses scripts/deploy.sh
+# from the host, not from inside the image)
+scripts/setup-test-db.sh
+scripts/seed-crypto-lp-card.sql
+
+# Misc
 *.log
+README.md
