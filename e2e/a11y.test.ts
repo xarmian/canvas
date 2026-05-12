@@ -179,7 +179,11 @@ test.describe('A11y smoke (axe-core)', () => {
 		// failure could leave the URL at /assets while rendering the
 		// app's error boundary, which would let axe scan the error
 		// page instead of the actual route.
-		await expect(page.getByRole('heading', { name: 'Assets' })).toBeVisible();
+		//
+		// BT-159: `name: 'Assets'` was a substring match that also
+		// resolved to the empty-state H2 "No assets yet", tripping
+		// strict-mode. `exact: true` pins it to the H1.
+		await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible();
 		await expectNoA11yViolations(page, 'assets');
 	});
 

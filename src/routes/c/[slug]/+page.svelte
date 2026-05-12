@@ -215,9 +215,19 @@
 		color: var(--color-text-subtle);
 	}
 
+	/*
+	 * BT-159: the "Created with [Canvas]" link sits inline inside a
+	 * `<p class="meta">`. Link-in-text-block (WCAG SC 1.4.1) requires
+	 * a non-color differentiator since the primary-blue link vs the
+	 * `--color-text-subtle` paragraph color fails the 3:1 contrast
+	 * floor for color-alone differentiation. Pre-BT-159 this was
+	 * `text-decoration: none` with underline only on hover — now
+	 * underlined by default. Hover rule is kept as a no-op for
+	 * safety against future Tailwind preflight changes.
+	 */
 	.brand {
 		color: var(--color-primary);
-		text-decoration: none;
+		text-decoration: underline;
 	}
 
 	.brand:hover {

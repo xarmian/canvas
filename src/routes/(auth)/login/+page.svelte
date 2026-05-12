@@ -154,7 +154,18 @@
 		color: var(--color-text-muted);
 	}
 
+	/*
+	 * BT-159: the footer link sits inline inside a `<p>` and the link
+	 * color (`--color-primary` = #2563eb) only has 1.46:1 contrast vs
+	 * the surrounding `--color-text-muted` paragraph text. WCAG SC
+	 * 1.4.1 requires a non-color differentiator OR ≥3:1 contrast vs
+	 * adjacent text; an explicit underline is the standard fix and
+	 * matches typical inline-link reading convention. Tailwind 4's
+	 * preflight resets `<a>` text-decoration to inherit, so we have
+	 * to opt in explicitly.
+	 */
 	.footer a {
 		color: var(--color-primary);
+		text-decoration: underline;
 	}
 </style>
