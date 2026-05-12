@@ -4,7 +4,7 @@
  * left-aligns and horizontally distributes 3 rectangles.
  */
 import { test, expect } from '@playwright/test';
-import { signupAndLogin, createCanvas, gotoEditor } from './helpers';
+import { signupAndLogin, createCanvas, gotoEditor, saveAndWait } from './helpers';
 
 test.describe('Multi-select + align', () => {
 	test('shift-click multi-select + align-left + distribute-h', async ({ page }) => {
@@ -133,9 +133,10 @@ test.describe('Multi-select + align', () => {
 		expect(sortedYs[1]).toBeGreaterThan(sortedYs[0]);
 		expect(sortedYs[1]).toBeLessThan(sortedYs[2]);
 
-		// Reload to verify the alignment persisted to the server (autosave
-		// + refresh confirms the templateJson PATCH committed).
-		await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 8_000 });
+		// Reload to verify the alignment persisted to the server. Saves are
+		// manual since BT-160 — click Save and wait for the Save button to
+		// settle on the 'saved' state before navigating.
+		await saveAndWait(page);
 		await gotoEditor(page, canvas.id);
 		const layers2 = page.getByRole('listbox', { name: 'Canvas layers' });
 		await expect(layers2.locator('[role="option"]')).toHaveCount(3);

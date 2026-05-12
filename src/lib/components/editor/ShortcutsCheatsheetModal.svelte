@@ -30,7 +30,7 @@
 				// font size, etc.) flushes its pending value into Fabric
 				// before serialize. Worth surfacing because "save"
 				// otherwise feels surprising when an input is focused.
-				{ keys: ['Cmd / Ctrl', 'S'], label: 'Save (flushes input + auto-saves)' },
+				{ keys: ['Cmd / Ctrl', 'S'], label: 'Save (flushes the focused input first)' },
 				{ keys: ['Delete'], label: 'Delete selected' }
 			]
 		},

@@ -34,7 +34,9 @@ test('conditional fill flips on numeric comparison', async ({ page }) => {
 	// fill defaults to red (#dc2626) on rule add — keep it.
 
 	await page.getByRole('button', { name: 'Save' }).click();
-	await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 10_000 });
+	await expect(page.getByTestId('toolbar-save')).toHaveAttribute('data-state', 'saved', {
+		timeout: 10_000
+	});
 
 	// Verify the rule actually persisted to the templateJson — protects
 	// the test from a no-op where save silently dropped conditionalStyles.

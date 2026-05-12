@@ -155,6 +155,29 @@ export async function gotoEditor(page: Page, canvasId: string): Promise<void> {
 }
 
 /**
+ * Click Save and wait for the toolbar Save button to settle on the
+ * 'saved' state (BT-160). Replaces the old `page.getByText('All changes
+ * saved')` pattern: the standalone save-status pill was removed when
+ * automatic debounced saves were turned off — the Save button now
+ * doubles as the indicator, exposing `data-state` for assertions.
+ *
+ * Use this anywhere a test previously relied on autosave to flush or
+ * needed to wait for a save to complete before navigating away (the
+ * editor's beforeNavigate guard fires on any pending dirty state).
+ */
+export async function saveAndWait(page: Page, timeoutMs = 10_000): Promise<void> {
+	const saveBtn = page.getByTestId('toolbar-save');
+	// If the button is already 'saved', the canvas is clean — nothing to do.
+	const state = await saveBtn.getAttribute('data-state');
+	if (state !== 'saved') {
+		// The Save button is disabled in the 'saved' state, so calling
+		// click() when there's nothing to save would error. Guard above.
+		await saveBtn.click();
+	}
+	await expect(saveBtn).toHaveAttribute('data-state', 'saved', { timeout: timeoutMs });
+}
+
+/**
  * Add a Text layer via the toolbar and (if `text` is supplied) replace its
  * content via the property panel. Returns when the panel reflects the new
  * value, so subsequent assertions can rely on the change being committed.
@@ -178,8 +201,8 @@ export async function addTextLayer(page: Page, text?: string): Promise<void> {
 	await expect(contentField).toBeVisible({ timeout: 5_000 });
 	if (text !== undefined) {
 		await contentField.fill(text);
-		// Property panel commits on input — give Fabric a tick to repaint
-		// and the autosave debounce a moment to settle.
+		// Property panel commits on input — wait for the value to be reflected
+		// back so subsequent assertions can rely on Fabric having repainted.
 		await expect(contentField).toHaveValue(text);
 	}
 }
@@ -297,8 +320,8 @@ export async function bindParam(
 export async function publish(page: Page): Promise<{ shareUrl: string; imageUrl: string }> {
 	await page.getByTestId('toolbar-publish').click();
 	// PublishModal renders with a "Publish canvas" CTA in the unpublished
-	// branch; clicking it triggers onBeforePublish (autosave flush) +
-	// PATCH ?published=true.
+	// branch; clicking it triggers onBeforePublish (which flushes any
+	// in-flight save and saves any pending edits) + PATCH ?published=true.
 	const confirmBtn = page.getByRole('button', { name: 'Publish canvas' });
 	await expect(confirmBtn).toBeVisible({ timeout: 5_000 });
 	await confirmBtn.click();

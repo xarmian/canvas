@@ -34,7 +34,7 @@
 		/**
 		 * Optional hook invoked before a publish request is sent. Use this to flush
 		 * any pending editor changes so the published canvas reflects the latest
-		 * state, not a stale autosave snapshot. Return false to abort the publish.
+		 * state. Return false to abort the publish.
 		 */
 		onBeforePublish?: () => Promise<boolean>;
 		/**
@@ -96,8 +96,8 @@
 	// metadata — the schema and PATCH endpoint already accept them, but
 	// before TASK-95 there was no UI to edit them. Loaded lazily when
 	// the modal opens for a published canvas. Edits persist on blur via
-	// the existing PATCH so we keep the auto-save discipline of the
-	// param-flags rows.
+	// the existing PATCH so blur-to-commit stays the rule for these
+	// metadata fields, in line with the param-flags rows.
 	interface SharingState {
 		ogTitle: string;
 		ogDescription: string;

@@ -1,7 +1,7 @@
 /**
  * Custom Fabric properties that must be threaded through every
- * `toObject` / `clone` call in the editor so save / autosave / undo /
- * redo / duplicate all preserve them.
+ * `toObject` / `clone` call in the editor so save / undo / redo /
+ * duplicate all preserve them.
  *
  * Fabric only emits a fixed allowlist by default. Anything we attach via
  * `set('foo', ...)` (paramBindings, conditional rules, badge fields,
@@ -21,7 +21,7 @@ export const EDITOR_TO_OBJECT_PROPS = [
 	// Asset-library link tracking (TASK-116). Each *AssetId stamps which
 	// library row a URL field came from so save-time translation can
 	// rewrite the URL back to `asset://{id}` without re-walking the DB.
-	// Survives autosave / undo / redo / duplicate.
+	// Survives save / undo / redo / duplicate.
 	'srcAssetId',
 	'fallbackSrcAssetId',
 	'iconImageAssetId',

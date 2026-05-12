@@ -21,7 +21,7 @@
  * checks both halves.
  */
 import { test, expect } from '@playwright/test';
-import { signupAndLogin, createCanvas, addImageLayer } from './helpers';
+import { signupAndLogin, createCanvas, addImageLayer, saveAndWait } from './helpers';
 
 /** Smallest legal PNG — 1x1 transparent pixel. */
 const ONE_BY_ONE_PNG = Buffer.from(
@@ -39,7 +39,8 @@ test.describe('Asset proxy (BT-154)', () => {
 			mimeType: 'image/png',
 			buffer: ONE_BY_ONE_PNG
 		});
-		await expect(page.getByText('All changes saved')).toBeVisible({ timeout: 8_000 });
+		// Saves are manual since BT-160 — persist before navigating away.
+		await saveAndWait(page);
 
 		await page.getByTestId('nav-assets').click();
 		await page.waitForURL('**/assets');
