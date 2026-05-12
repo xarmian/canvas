@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Vitest configuration for Canvas unit tests.
@@ -7,8 +8,21 @@ import { defineConfig } from 'vitest/config';
  * The Playwright e2e suite lives in `e2e/**\/*.test.ts` and is run via
  * `pnpm test:e2e`, so the two test runners never see each other's files
  * even though both use the `.test.ts` suffix.
+ *
+ * `$env/dynamic/private` is a SvelteKit-runtime virtual module that
+ * doesn't exist outside `vite dev` / `vite build`. We alias it to a tiny
+ * stub so server-side modules (e.g. `$lib/server/db`) can be imported in
+ * unit tests without crashing on the env-var guard at module top-level.
+ * The pure helpers exercised by the tests never make a DB call.
  */
 export default defineConfig({
+	resolve: {
+		alias: {
+			'$env/dynamic/private': fileURLToPath(
+				new URL('./src/test/env-private-stub.ts', import.meta.url)
+			)
+		}
+	},
 	test: {
 		include: ['src/**/*.test.ts'],
 		environment: 'node'
