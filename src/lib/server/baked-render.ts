@@ -158,6 +158,14 @@ export function buildContentHashInputs(args: {
 	 *  Required so a template edit between two identical POSTs produces
 	 *  a different shortId rather than returning the stale baked bytes. */
 	canvasVersion: string;
+	/** User font-library fingerprint (`fontSetVersionFromDescriptors`).
+	 *  Required so a font upload/delete invalidates dedup the same way it
+	 *  invalidates the public render cache. */
+	fontSetVersion: string;
+	/** Asset-set fingerprint (`assetSetVersionFromEntries`) over the
+	 *  `asset://` references the templateJson resolves to. Required so a
+	 *  delete/replace of a referenced asset invalidates dedup. */
+	assetSetVersion: string;
 	params: Record<string, string>;
 	format: string;
 	dpr: number;
@@ -170,6 +178,8 @@ export function buildContentHashInputs(args: {
 		u: args.userId,
 		c: args.canvasId,
 		v: args.canvasVersion,
+		fnt: args.fontSetVersion,
+		ast: args.assetSetVersion,
 		p: sortedEntries,
 		f: args.format,
 		d: args.dpr,

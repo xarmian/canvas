@@ -16,7 +16,7 @@ import { env } from '$env/dynamic/private';
 // `$env/dynamic/private`, so we pull this one specifically from the
 // public surface (Codex TASK-168 round 1 P3).
 import { env as publicEnv } from '$env/dynamic/public';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { canvases, canvasParams, renderedImages } from '$lib/server/db/schema';
@@ -31,8 +31,14 @@ import {
 } from '$lib/server/render-throttle';
 import { buildContentHashInputs, renderForUser, FORMAT_EXTENSIONS } from '$lib/server/baked-render';
 import { generateShortId } from '$lib/server/short-id';
+import { getLiveUserFontDescriptors } from '$lib/server/user-fonts';
+import { collectAssetReferences, loadAssetFingerprint } from '$lib/server/asset-resolver';
+import {
+	assetSetVersionFromEntries,
+	fontSetVersionFromDescriptors
+} from '$lib/server/content-version';
 import { getStorage } from '$lib/server/storage';
-import type { OutputFormat } from '$lib/engine';
+import type { OutputFormat, FabricCanvasJson } from '$lib/engine';
 
 /** Default user-scoped render quota — overridable by the operator at
  *  process start via the RENDER_QUOTA_PER_USER env var. 1000 rows is
@@ -228,6 +234,22 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 	const ogTitle = typeof rawOgTitle === 'string' ? rawOgTitle : null;
 	const ogDescription = typeof rawOgDescription === 'string' ? rawOgDescription : null;
 
+	// Font + asset fingerprints follow the live render route's
+	// cache-invalidation model. Without these the dedup path returns the
+	// pre-edit baked bytes when a referenced font is uploaded/deleted
+	// (GlobalFonts has no unregister) or a referenced `asset://` is
+	// replaced/deleted between two identical POSTs (Codex TASK-168 round 2).
+	const liveFontDescriptors = await getLiveUserFontDescriptors(apiKey.userId);
+	const fontSetVersion = fontSetVersionFromDescriptors(liveFontDescriptors);
+	const referencedAssetIds = collectAssetReferences(
+		canvas.templateJson as unknown as FabricCanvasJson | null
+	);
+	const assetEntries =
+		referencedAssetIds.length > 0
+			? await loadAssetFingerprint(referencedAssetIds, apiKey.userId)
+			: [];
+	const assetSetVersion = assetSetVersionFromEntries(assetEntries);
+
 	const contentHashInput = buildContentHashInputs({
 		userId: apiKey.userId,
 		canvasId: canvas.id,
@@ -236,6 +258,8 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 		// the stale baked bytes (Codex TASK-168 round 1 P1). Matches the live
 		// render route's cache-busting model.
 		canvasVersion: canvas.updatedAt.toISOString(),
+		fontSetVersion,
+		assetSetVersion,
 		params: resolvedParams,
 		format,
 		dpr,
@@ -330,6 +354,16 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 	try {
 		const rendered = await renderForUser(canvas, resolvedParams, { format, dpr });
 
+		// Storage key uses a fresh random UUID, NOT the shortId. Decoupling
+		// them means a (vanishingly unlikely) shortId collision in the retry
+		// loop can't accidentally overwrite another row's existing blob path
+		// (Codex TASK-168 round 2). The shortId is the public-facing
+		// identifier; the storage key only needs to be unique within the
+		// user's namespace.
+		const blobKey = `renders/${apiKey.userId}/${randomUUID()}.${FORMAT_EXTENSIONS[format].ext}`;
+		await getStorage().upload(blobKey, rendered.buffer, FORMAT_EXTENSIONS[format].contentType);
+		storageKey = blobKey;
+
 		// Insert loop: a single render's bytes are uploaded once and tried
 		// against a fresh short id up to MAX_SHORT_ID_ATTEMPTS times in case
 		// of a nanoid collision (vanishingly unlikely at this scale, but the
@@ -343,11 +377,6 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 		let lastErr: unknown;
 		for (let attempt = 0; attempt < MAX_SHORT_ID_ATTEMPTS; attempt++) {
 			const shortId = generateShortId();
-			const ext = FORMAT_EXTENSIONS[format].ext;
-			const contentType = FORMAT_EXTENSIONS[format].contentType;
-			const key = `renders/${apiKey.userId}/${shortId}.${ext}`;
-			await getStorage().upload(key, rendered.buffer, contentType);
-			storageKey = key;
 			try {
 				const [row] = await db
 					.insert(renderedImages)
@@ -358,7 +387,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 						canvasId: canvas.id,
 						params: resolvedParams,
 						format,
-						storageKey: key,
+						storageKey: blobKey,
 						sizeBytes: rendered.sizeBytes,
 						width: rendered.width,
 						height: rendered.height,
@@ -369,20 +398,22 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 					})
 					.returning();
 				inserted = row;
+				// Mark the blob as committed — the outer cleanup must NOT
+				// touch it on success.
 				storageKey = null;
 				break;
 			} catch (err) {
 				lastErr = err;
-				// Clean up the just-uploaded blob regardless of which unique
-				// constraint tripped — neither path commits this blob.
-				await getStorage()
-					.delete(key)
-					.catch(() => {
-						/* best-effort */
-					});
-				storageKey = null;
 				const msg = err instanceof Error ? err.message : String(err);
 				if (msg.includes('rendered_images_user_content_hash_live_uidx')) {
+					// Content-hash race lost. Drop the orphan blob and return
+					// the winner as a dedup hit.
+					await getStorage()
+						.delete(blobKey)
+						.catch(() => {
+							/* best-effort */
+						});
+					storageKey = null;
 					// Dedup race lost. Look up the winning row and return it
 					// as a dedup hit. If for some reason the winning row
 					// can't be located (constraint without a row is
@@ -416,7 +447,10 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 					throw err;
 				}
 				if (msg.includes('rendered_images_short_id_unique')) {
-					// Re-roll the shortId; bytes for this attempt are gone.
+					// Re-roll the shortId. The uploaded blob is keyed by a
+					// random UUID independent of the shortId (see above), so
+					// it stays valid for the next insert attempt — no upload
+					// or cleanup needed in this branch.
 					continue;
 				}
 				// Any other insert failure — bubble up to the outer catch.

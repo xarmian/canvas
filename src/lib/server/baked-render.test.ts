@@ -6,6 +6,8 @@ describe('buildContentHashInputs', () => {
 		userId: 'u1',
 		canvasId: 'c1',
 		canvasVersion: '2026-01-01T00:00:00.000Z',
+		fontSetVersion: 'fonts-v1',
+		assetSetVersion: 'assets-v1',
 		params: { title: 'hello', avatar: 'x' },
 		format: 'png',
 		dpr: 1,
@@ -57,6 +59,18 @@ describe('buildContentHashInputs', () => {
 	it('distinguishes between canvas versions so an edit busts dedup', () => {
 		expect(buildContentHashInputs(base)).not.toBe(
 			buildContentHashInputs({ ...base, canvasVersion: '2026-02-02T00:00:00.000Z' })
+		);
+	});
+
+	it('distinguishes between font set versions so a font upload busts dedup', () => {
+		expect(buildContentHashInputs(base)).not.toBe(
+			buildContentHashInputs({ ...base, fontSetVersion: 'fonts-v2' })
+		);
+	});
+
+	it('distinguishes between asset set versions so an asset replace busts dedup', () => {
+		expect(buildContentHashInputs(base)).not.toBe(
+			buildContentHashInputs({ ...base, assetSetVersion: 'assets-v2' })
 		);
 	});
 
