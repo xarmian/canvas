@@ -16,6 +16,8 @@
 		"db:push": "drizzle-kit push",
 		"db:migrate": "drizzle-kit migrate",
 		"db:studio": "drizzle-kit studio",
+		"test:unit": "vitest run",
+		"test:unit:watch": "vitest",
 		"test:e2e:setup": "bash scripts/setup-test-db.sh",
 		"test:e2e": "pnpm test:e2e:setup && playwright test",
 		"lh:mobile": "lhci autorun --config=./lighthouserc.cjs"
@@ -45,7 +47,8 @@
 		"tailwindcss": "^4.3.0",
 		"typescript": "^6.0.2",
 		"typescript-eslint": "^8.58.1",
-		"vite": "^8.0.7"
+		"vite": "^8.0.7",
+		"vitest": "4.1.6"
 	},
 	"dependencies": {
 		"@aws-sdk/client-s3": "^3.1030.0",
