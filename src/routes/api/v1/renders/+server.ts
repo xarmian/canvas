@@ -11,6 +11,11 @@
  */
 import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
+// `PUBLIC_APP_URL` is intentionally a public var so frontend code can
+// build absolute share URLs. SvelteKit strips `PUBLIC_*` keys from
+// `$env/dynamic/private`, so we pull this one specifically from the
+// public surface (Codex TASK-168 round 1 P3).
+import { env as publicEnv } from '$env/dynamic/public';
 import { createHash } from 'node:crypto';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
@@ -25,7 +30,7 @@ import {
 	RENDER_THROTTLE_CONFIG
 } from '$lib/server/render-throttle';
 import { buildContentHashInputs, renderForUser, FORMAT_EXTENSIONS } from '$lib/server/baked-render';
-import { withUniqueShortId } from '$lib/server/short-id';
+import { generateShortId } from '$lib/server/short-id';
 import { getStorage } from '$lib/server/storage';
 import type { OutputFormat } from '$lib/engine';
 
@@ -78,10 +83,10 @@ function clampDpr(raw: unknown): number {
 }
 
 function parsePublicAppUrl(requestOrigin: string): string {
-	// `$env/dynamic/private` keys not present at build time narrow to
+	// `$env/dynamic/public` keys not present at build time narrow to
 	// `never`, so reach via bracket access — the type model is fine with
 	// that, and the runtime is identical.
-	const raw = (env as Record<string, string | undefined>).PUBLIC_APP_URL?.trim();
+	const raw = (publicEnv as Record<string, string | undefined>).PUBLIC_APP_URL?.trim();
 	if (!raw) return requestOrigin;
 	// Strip a single trailing slash so `${PUBLIC_APP_URL}/i/${id}` doesn't
 	// double-slash the path.
@@ -226,6 +231,11 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 	const contentHashInput = buildContentHashInputs({
 		userId: apiKey.userId,
 		canvasId: canvas.id,
+		// Folding canvas.updatedAt in here means a canvas edit between two
+		// identical-body POSTs produces a new shortId rather than returning
+		// the stale baked bytes (Codex TASK-168 round 1 P1). Matches the live
+		// render route's cache-busting model.
+		canvasVersion: canvas.updatedAt.toISOString(),
 		params: resolvedParams,
 		format,
 		dpr,
@@ -320,7 +330,19 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 	try {
 		const rendered = await renderForUser(canvas, resolvedParams, { format, dpr });
 
-		const result = await withUniqueShortId(async (shortId) => {
+		// Insert loop: a single render's bytes are uploaded once and tried
+		// against a fresh short id up to MAX_SHORT_ID_ATTEMPTS times in case
+		// of a nanoid collision (vanishingly unlikely at this scale, but the
+		// DB column is UNIQUE so we have to handle it). If the
+		// `(user_id, content_hash)` UNIQUE index trips, a concurrent POST
+		// won the dedup race — the just-uploaded bytes are best-effort
+		// deleted and the winning row is returned with `deduplicated: true`
+		// (Codex TASK-168 round 1 P2).
+		const MAX_SHORT_ID_ATTEMPTS = 5;
+		let inserted: typeof renderedImages.$inferSelect | null = null;
+		let lastErr: unknown;
+		for (let attempt = 0; attempt < MAX_SHORT_ID_ATTEMPTS; attempt++) {
+			const shortId = generateShortId();
 			const ext = FORMAT_EXTENSIONS[format].ext;
 			const contentType = FORMAT_EXTENSIONS[format].contentType;
 			const key = `renders/${apiKey.userId}/${shortId}.${ext}`;
@@ -346,30 +368,75 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 						contentHash
 					})
 					.returning();
-				return { row, ext, shortId };
+				inserted = row;
+				storageKey = null;
+				break;
 			} catch (err) {
-				// Insert failed — clean up the just-uploaded blob so we don't
-				// leave orphan bytes. Short-id collision is recoverable
-				// (caller retries); other failures bubble up and the outer
-				// catch propagates a 500 with the orphan already cleared.
+				lastErr = err;
+				// Clean up the just-uploaded blob regardless of which unique
+				// constraint tripped — neither path commits this blob.
 				await getStorage()
 					.delete(key)
 					.catch(() => {
 						/* best-effort */
 					});
 				storageKey = null;
+				const msg = err instanceof Error ? err.message : String(err);
+				if (msg.includes('rendered_images_user_content_hash_live_uidx')) {
+					// Dedup race lost. Look up the winning row and return it
+					// as a dedup hit. If for some reason the winning row
+					// can't be located (constraint without a row is
+					// vanishingly unlikely but possible during a brief
+					// window), fall through to the error path.
+					const [winner] = await db
+						.select()
+						.from(renderedImages)
+						.where(
+							and(
+								eq(renderedImages.userId, apiKey.userId),
+								eq(renderedImages.contentHash, contentHash),
+								isNull(renderedImages.deletedAt)
+							)
+						)
+						.limit(1);
+					if (winner) {
+						const winnerExt = FORMAT_EXTENSIONS[winner.format as OutputFormat]?.ext ?? 'png';
+						return json(
+							{
+								id: winner.shortId,
+								url: `${appUrl}/i/${winner.shortId}`,
+								imageUrl: `${appUrl}/i/${winner.shortId}/image.${winnerExt}`,
+								forwardUrl: winner.forwardUrl,
+								deduplicated: true,
+								createdAt: winner.createdAt.toISOString()
+							},
+							{ status: 200 }
+						);
+					}
+					throw err;
+				}
+				if (msg.includes('rendered_images_short_id_unique')) {
+					// Re-roll the shortId; bytes for this attempt are gone.
+					continue;
+				}
+				// Any other insert failure — bubble up to the outer catch.
 				throw err;
 			}
-		});
+		}
+		if (!inserted) {
+			// Exhausted shortId attempts — should never happen at this scale.
+			throw lastErr ?? new Error('Could not allocate a unique shortId');
+		}
 
+		const ext = FORMAT_EXTENSIONS[inserted.format as OutputFormat]?.ext ?? 'png';
 		return json(
 			{
-				id: result.row.shortId,
-				url: `${appUrl}/i/${result.row.shortId}`,
-				imageUrl: `${appUrl}/i/${result.row.shortId}/image.${result.ext}`,
-				forwardUrl: result.row.forwardUrl,
+				id: inserted.shortId,
+				url: `${appUrl}/i/${inserted.shortId}`,
+				imageUrl: `${appUrl}/i/${inserted.shortId}/image.${ext}`,
+				forwardUrl: inserted.forwardUrl,
 				deduplicated: false,
-				createdAt: result.row.createdAt.toISOString()
+				createdAt: inserted.createdAt.toISOString()
 			},
 			{ status: 201 }
 		);

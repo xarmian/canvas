@@ -5,6 +5,7 @@ describe('buildContentHashInputs', () => {
 	const base = {
 		userId: 'u1',
 		canvasId: 'c1',
+		canvasVersion: '2026-01-01T00:00:00.000Z',
 		params: { title: 'hello', avatar: 'x' },
 		format: 'png',
 		dpr: 1,
@@ -35,8 +36,10 @@ describe('buildContentHashInputs', () => {
 		);
 	});
 
-	it('distinguishes between forwardUrl null and an empty-string-ish url', () => {
-		expect(buildContentHashInputs({ ...base, forwardUrl: null })).toBe(
+	it('distinguishes null vs empty-string forwardUrl (post-JSON unambiguous)', () => {
+		// Earlier `join('|')`-based input collapsed these together. JSON
+		// distinguishes `null` from `""` so the hashes differ now.
+		expect(buildContentHashInputs({ ...base, forwardUrl: null })).not.toBe(
 			buildContentHashInputs({ ...base, forwardUrl: '' })
 		);
 		// Two truly different forwardUrls must produce different hashes.
@@ -49,6 +52,20 @@ describe('buildContentHashInputs', () => {
 		expect(buildContentHashInputs(base)).not.toBe(
 			buildContentHashInputs({ ...base, userId: 'u2' })
 		);
+	});
+
+	it('distinguishes between canvas versions so an edit busts dedup', () => {
+		expect(buildContentHashInputs(base)).not.toBe(
+			buildContentHashInputs({ ...base, canvasVersion: '2026-02-02T00:00:00.000Z' })
+		);
+	});
+
+	it('is unambiguous against `|`-containing inputs (regression: Codex round 1 P2)', () => {
+		// Earlier `join('|')`-based serialization let these two distinct
+		// field sets collide. JSON encoding guarantees they don't.
+		const a = buildContentHashInputs({ ...base, forwardUrl: 'https://ex.com/a|b' });
+		const b = buildContentHashInputs({ ...base, forwardUrl: 'https://ex.com/a', ogTitle: 'b' });
+		expect(a).not.toBe(b);
 	});
 });
 

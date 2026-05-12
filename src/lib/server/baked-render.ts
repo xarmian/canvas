@@ -135,6 +135,18 @@ export const FORMAT_EXTENSIONS: Record<OutputFormat, { ext: string; contentType:
  *  distinct hash and stores its own blob, but two identical re-POSTs
  *  collapse to one row. Param order is normalized before serialization.
  *
+ *  Includes `canvasVersion` (canvas.updatedAt.toISOString()) per Codex
+ *  TASK-168 round 1 P1: without it, an edit to the canvas template /
+ *  background / params would let the dedup path serve the pre-edit
+ *  bytes for the next identical-body POST. Matching the live render
+ *  route's cache-busting model (which folds canvas.updatedAt into its
+ *  cache key) keeps the two surfaces consistent.
+ *
+ *  Serialization uses JSON.stringify of a structured object rather than
+ *  `join('|')` — string fields can legitimately contain `|`, and a
+ *  delimiter-joined hash input was ambiguous (Codex round 1 P2). The
+ *  JSON encoding is bijective so no two distinct field sets can collide.
+ *
  *  SECURITY note: callers MUST pass the *resolved* params (post-
  *  `validateParams`), not the raw request body — otherwise two requests
  *  that only differ in which keys relied on defaults would not dedup,
@@ -142,6 +154,10 @@ export const FORMAT_EXTENSIONS: Record<OutputFormat, { ext: string; contentType:
 export function buildContentHashInputs(args: {
 	userId: string;
 	canvasId: string;
+	/** Canvas version marker (typically `canvas.updatedAt.toISOString()`).
+	 *  Required so a template edit between two identical POSTs produces
+	 *  a different shortId rather than returning the stale baked bytes. */
+	canvasVersion: string;
 	params: Record<string, string>;
 	format: string;
 	dpr: number;
@@ -150,15 +166,15 @@ export function buildContentHashInputs(args: {
 	ogDescription: string | null;
 }): string {
 	const sortedEntries = Object.entries(args.params).sort(([a], [b]) => a.localeCompare(b));
-	const serializedParams = JSON.stringify(sortedEntries);
-	return [
-		args.userId,
-		args.canvasId,
-		serializedParams,
-		args.format,
-		String(args.dpr),
-		args.forwardUrl ?? '',
-		args.ogTitle ?? '',
-		args.ogDescription ?? ''
-	].join('|');
+	return JSON.stringify({
+		u: args.userId,
+		c: args.canvasId,
+		v: args.canvasVersion,
+		p: sortedEntries,
+		f: args.format,
+		d: args.dpr,
+		fwd: args.forwardUrl,
+		t: args.ogTitle,
+		dsc: args.ogDescription
+	});
 }
