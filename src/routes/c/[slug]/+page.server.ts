@@ -33,34 +33,7 @@ import { db } from '$lib/server/db';
 import { canvases } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { resolveContentVersion } from '$lib/server/content-version';
-
-/** Match a single `{{paramName}}` placeholder. Allows `[\w-]` so a
- *  user binding `utm-source` works the same as `utmSource`. */
-const PARAM_PLACEHOLDER_RE = /\{\{([\w-]+)\}\}/g;
-
-/** Replace `{{param}}` placeholders in a string with query parameter
- *  values. Missing keys substitute to empty string — the redirect /
- *  og:title contracts treat that as "user didn't provide a value", so
- *  the public URL doesn't 500 just because the creator added a
- *  placeholder for an unbound param. The caller can detect missing
- *  substitutions separately via {@link findUnsubstitutedPlaceholders}.
- */
-function substituteParams(template: string, params: Record<string, string>): string {
-	return template.replace(PARAM_PLACEHOLDER_RE, (_, key) => params[key] ?? '');
-}
-
-/** Return the list of `{{name}}` placeholders in `template` whose key
- *  is NOT present in `params`. Used to surface a structured warning
- *  log when the redirect-URL substitution is incomplete (TASK-96) so
- *  ops can spot misconfigured templates without parsing access logs. */
-function findUnsubstitutedPlaceholders(template: string, params: Record<string, string>): string[] {
-	const missing = new Set<string>();
-	for (const match of template.matchAll(PARAM_PLACEHOLDER_RE)) {
-		const key = match[1];
-		if (!Object.hasOwn(params, key)) missing.add(key);
-	}
-	return [...missing];
-}
+import { substituteParams, resolveForwardUrl } from '$lib/server/forward-url';
 
 export const load: PageServerLoad = async ({ params, url }) => {
 	// Load canvas by slug (must be published)
@@ -127,39 +100,31 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	// log when a placeholder isn't satisfied (TASK-96) — that signal is
 	// useful regardless of whether the redirect is auto or interstitial.
 	//
-	// SECURITY (Codex round 1, P1): the previous server-side 302 was
-	// immune to `javascript:`-scheme abuse because browsers don't
-	// execute scripts in `Location` headers. Rendering the resolved
-	// URL as a clickable `<a href>` is NOT immune — a creator could
-	// PATCH `redirectUrl=javascript:alert(...)`, or smuggle it through
-	// a `{{param}}` substitution, and the Continue CTA would execute
-	// script on the app origin. Only emit the URL when its
-	// post-substitution scheme is http(s). Anything else collapses to
-	// `null` and the landing renders without a CTA — same fallback
-	// the no-redirect case uses, so layout is unchanged.
+	// SECURITY: the legacy server-side 302 was immune to `javascript:` abuse
+	// because browsers don't execute scripts in `Location` headers. The
+	// interstitial's clickable `<a href>` is NOT immune, so we only emit the
+	// URL when its post-substitution scheme is http(s). Anything else
+	// collapses to `null` and the landing renders without a CTA — same
+	// fallback the no-redirect case uses, so layout is unchanged. The
+	// allowlist + warning logs live in `$lib/server/forward-url.ts` so the
+	// /i/{shortId} share page can reuse the exact same boundary (TASK-165).
 	let redirectUrl: string | null = null;
-	if (canvas.redirectUrl) {
-		const resolved = substituteParams(canvas.redirectUrl, queryParams);
-		const missing = findUnsubstitutedPlaceholders(canvas.redirectUrl, queryParams);
-		if (missing.length > 0) {
-			console.warn(
-				`[redirect] unsubstituted placeholders slug=${canvas.slug} missing=${missing.join(',')}`
-			);
-		}
-		try {
-			const parsed = new URL(resolved);
-			if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-				redirectUrl = resolved;
-			} else {
-				console.warn(
-					`[redirect] dropped non-http(s) scheme slug=${canvas.slug} scheme=${parsed.protocol}`
-				);
-			}
-		} catch {
-			// URL constructor throws for bare-`{{param}}` cases where the
-			// whole URL was a placeholder that didn't resolve, or for
-			// inputs the publish form somehow accepted that aren't
-			// parseable. Either way, render the landing without the CTA.
+	const fwd = resolveForwardUrl(canvas.redirectUrl, queryParams);
+	if (fwd?.unsubstituted.length) {
+		console.warn(
+			`[redirect] unsubstituted placeholders slug=${canvas.slug} missing=${fwd.unsubstituted.join(',')}`
+		);
+	}
+	if (fwd?.ok) {
+		redirectUrl = fwd.url;
+	} else if (fwd?.ok === false) {
+		if (fwd.reason === 'invalid-scheme') {
+			// `invalid-scheme` only happens when `new URL(resolved)` succeeded,
+			// so re-parsing is safe and gives us `URL.protocol` for the same
+			// log shape the inline implementation emitted before extraction.
+			const scheme = new URL(fwd.resolved).protocol;
+			console.warn(`[redirect] dropped non-http(s) scheme slug=${canvas.slug} scheme=${scheme}`);
+		} else {
 			console.warn(
 				`[redirect] unparseable resolved URL slug=${canvas.slug} raw=${canvas.redirectUrl}`
 			);
