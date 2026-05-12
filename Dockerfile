@@ -143,10 +143,25 @@ RUN apt-get update \
 
 WORKDIR /app
 
+# Pre-create the render-cache mount point as the `node` user. The
+# docker-compose volume `render_cache` mounts at /data/cache/render
+# and inherits the ownership of the mount point at first mount; if
+# we waited for Docker to create the dir at mount time it would be
+# root-owned, and the `node` user's renderCache.set() calls would
+# 500 with EACCES on every cache miss. (Codex round 1 P1.)
+RUN mkdir -p /data/cache/render && chown -R node:node /data
+
 # Built application output. SvelteKit adapter-node bundles the server
 # entry, SSR code, and client assets into ./build — copying that
 # single tree is everything the Node runtime needs.
 COPY --from=build --chown=node:node /app/build ./build
+
+# Bundled static assets (fonts, robots.txt). `src/lib/engine/fonts.ts`
+# loads Inter-Regular/Bold from `<cwd>/static/fonts` via direct
+# filesystem reads — without these the render path silently falls
+# back to system fonts (DejaVuSans / Liberation), which alters text
+# metrics enough to break OG-card layouts. (Codex round 1 P2.)
+COPY --from=build --chown=node:node /app/static ./static
 
 # Production-only node_modules from the prod-deps stage. Sharp's
 # native binary was built there via its postinstall hook.

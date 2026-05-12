@@ -126,6 +126,15 @@ services:
       # weave them into the connection strings here.
       DATABASE_URL: postgresql://${POSTGRES_USER:-canvas}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-canvas}
       S3_ENDPOINT: http://minio:9000
+      # S3_BUCKET / S3_REGION are required by getStorage() in
+      # src/lib/server/storage/index.ts (the app throws on startup
+      # if either is unset). Default them here so an operator who
+      # leaves them commented in .env still gets a working stack
+      # — matches the minio-init bootstrap which uses
+      # `${S3_BUCKET:-canvas}` for the same reason. (Codex round 1
+      # P2.)
+      S3_BUCKET: ${S3_BUCKET:-canvas}
+      S3_REGION: ${S3_REGION:-us-east-1}
 
       # Better Auth derives the OAuth callback / cookie-domain
       # logic from BETTER_AUTH_URL; we pin it to PUBLIC_APP_URL so
