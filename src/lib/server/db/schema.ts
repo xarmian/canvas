@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
 	pgTable,
 	text,
@@ -99,4 +100,99 @@ export const assets = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 	},
 	(table) => [index('assets_user_id_idx').on(table.userId)]
+);
+
+// ─── API Keys ────────────────────────────────────────────────────────────────
+// Bearer tokens that let an external system drive the Programmatic Render API
+// (POST /api/v1/renders, etc). One row per key. The secret is never stored;
+// only its argon2id hash. `prefix` is the non-secret first 12 chars
+// (`ck_live_xxxx`) — auth narrows by prefix before verifying the argon2
+// hash, and the UI uses it to disambiguate keys for the user.
+
+export const apiKeys = pgTable(
+	'api_keys',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		// Cascade matches the auth-table pattern: revoking a user drops their keys.
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		// User-facing label, e.g. "Production server".
+		name: text('name').notNull(),
+		// Non-secret prefix used for narrow lookup before argon2 verify; the full
+		// secret is never persisted. Collisions on insert re-roll the secret.
+		prefix: text('prefix').notNull().unique(),
+		// argon2id hash of the full bearer token.
+		hashedSecret: text('hashed_secret').notNull(),
+		// Scope tokens (e.g. 'render:create'). Stored as text[] (not an enum) so
+		// future scopes are additive without a migration; validation lives in
+		// app code.
+		scopes: text('scopes').array().notNull().default([]),
+		lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+		// Soft-revoke: auth queries filter `revoked_at IS NULL` so revoked keys
+		// can still be displayed in the UI's history without re-authenticating.
+		revokedAt: timestamp('revoked_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [index('api_keys_user_id_idx').on(table.userId)]
+);
+
+// ─── Rendered Images ─────────────────────────────────────────────────────────
+// Baked render rows: each row points at the bytes in object storage for a
+// single POST /api/v1/renders result. Addressed publicly by `shortId`
+// (nanoid(10)) at `/i/{shortId}`.
+
+export const renderedImages = pgTable(
+	'rendered_images',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		// Public, URL-safe identifier (nanoid(10)). Unique across the table.
+		shortId: text('short_id').notNull().unique(),
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		// Nullable to forward-compat session-cookie POSTs that may not have a
+		// key attached. Set null on delete so revoking a key doesn't take down
+		// the renders it produced.
+		apiKeyId: uuid('api_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
+		// Cascade delete for v1 — mirrors how `canvas_params` cascade with their
+		// canvas. When IDEA-59 (soft-delete + published snapshots) lands this
+		// becomes set-null with snapshot survival.
+		canvasId: uuid('canvas_id')
+			.notNull()
+			.references(() => canvases.id, { onDelete: 'cascade' }),
+		// Resolved + validated param snapshot at create time.
+		params: jsonb('params').$type<Record<string, unknown>>().notNull(),
+		// 'png' | 'jpeg' | 'webp' | 'avif'
+		format: text('format').notNull(),
+		storageKey: text('storage_key').notNull(),
+		sizeBytes: integer('size_bytes').notNull(),
+		width: integer('width').notNull(),
+		height: integer('height').notNull(),
+		// Resolved + http(s)-validated at create time. Click-through target for
+		// the /i/{shortId} interstitial.
+		forwardUrl: text('forward_url'),
+		ogTitle: text('og_title'),
+		ogDescription: text('og_description'),
+		// sha256 hex (64 chars) of the canonicalized inputs — used together with
+		// userId to dedup re-POSTs.
+		contentHash: text('content_hash').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		lastAccessedAt: timestamp('last_accessed_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }),
+		// Soft-delete marker; the sweep CLI hard-deletes rows past their grace
+		// window.
+		deletedAt: timestamp('deleted_at', { withTimezone: true })
+	},
+	(table) => [
+		index('rendered_images_user_id_idx').on(table.userId),
+		// Dedup lookup: (userId, contentHash) is queried inside POST to short-
+		// circuit re-uploads.
+		index('rendered_images_user_content_hash_idx').on(table.userId, table.contentHash),
+		// Partial index for the expiresAt sweep — narrow to live rows so the
+		// sweeper's range scan ignores already-soft-deleted rows.
+		index('rendered_images_expires_at_live_idx')
+			.on(table.expiresAt)
+			.where(sql`${table.deletedAt} IS NULL AND ${table.expiresAt} IS NOT NULL`)
+	]
 );
