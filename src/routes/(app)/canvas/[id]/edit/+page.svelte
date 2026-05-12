@@ -1872,18 +1872,49 @@
 		display: flex;
 		flex-direction: column;
 		height: 100vh;
+		/* BT-158: cap the layout to viewport width. Without these, an
+		   overflowing toolbar row pushes the .editor-layout (and the
+		   whole page) wider than the viewport, producing horizontal
+		   page scroll. `min-width: 0` is the canonical flex escape
+		   hatch — without it the default `min-width: auto` on flex
+		   items lets their intrinsic content size win over the
+		   container constraint. */
+		width: 100%;
+		min-width: 0;
 		font-family:
 			system-ui,
 			-apple-system,
 			sans-serif;
 	}
 
+	/*
+	 * BT-158: toolbar responsive overhaul.
+	 *
+	 * Before this fix the toolbar was a single non-wrapping flex row with
+	 * ~15 controls (back-link, canvas-name, 10 tool buttons, optional 6–8
+	 * alignment buttons, params/preview, zoom widget, save indicator,
+	 * Save, Publish). Natural width hits ~1500px with labels visible —
+	 * comfortably wider than typical 1280–1440px desktops, so the row
+	 * overflowed and dragged the whole page horizontally.
+	 *
+	 * Strategy: keep one row when it fits, wrap to a second row when it
+	 * doesn't, and collapse the icon+label buttons to icon-only at
+	 * ≤1440px so the single-row case covers the common desktop range.
+	 * Label `<span>`s are visually hidden (not removed) so screen readers
+	 * and Playwright's accessible-name selectors still see them.
+	 *
+	 * The MobileBanner overlay still gates everything below 1024px, so
+	 * this fix targets the 1024–1440px window where the bug actually
+	 * shows up.
+	 */
 	.toolbar {
 		display: flex;
 		align-items: center;
+		flex-wrap: wrap;
 		gap: 12px;
-		height: 48px;
-		padding: 0 16px;
+		row-gap: 4px;
+		min-height: 48px;
+		padding: 4px 16px;
 		border-bottom: 1px solid #e2e8f0;
 		background: #fff;
 		flex-shrink: 0;
@@ -1910,7 +1941,13 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		max-width: 200px;
+		/* BT-158: scale down on narrow viewports so the canvas name
+		   doesn't crowd the toolbar at 1024–1280px widths. 200px is
+		   the desktop ceiling (long names get truncated with
+		   ellipsis); `30vw` shrinks proportionally on narrower
+		   viewports while still keeping enough characters to identify
+		   the canvas. */
+		max-width: min(200px, 30vw);
 		/* Prevent the flex layout from shrinking the canvas name to zero
 		   width when the toolbar gets crowded (e.g. with the TASK-150
 		   zoom widget added). `overflow: hidden` here would otherwise
@@ -2260,6 +2297,50 @@
 
 	.publish-btn.published:hover {
 		background: #bbf7d0;
+	}
+
+	/*
+	 * BT-158: at ≤1440px the toolbar can't fit every icon+label button on
+	 * a single row alongside the back-link, canvas-name, zoom widget,
+	 * save indicator, and Save/Publish CTAs. Collapse the icon+label
+	 * buttons to their icons by visually hiding the label `<span>`. The
+	 * text remains in the DOM, so:
+	 *   - tooltips (title=) and aria-labels keep working on hover/AT
+	 *   - Playwright's getByRole({ name: 'Rectangle' }) still resolves
+	 *     (accessible-name computation reads clipped sr-only text)
+	 *   - the `.toolbar .icon-only` selector still picks up only the
+	 *     genuinely icon-only buttons, so regressions.test.ts:131
+	 *     unchanged.
+	 *
+	 * Selector intentionally excludes `.icon-only` (already iconified)
+	 * and `.zoom-value` (label IS the visible value — "100%" / "Fit").
+	 * `> span` reaches only direct-child `<span>`s, leaving
+	 * `.save-indicator`, `.live-render-indicator`, and `.canvas-name`
+	 * untouched (they aren't descendants of `.tool-btn`).
+	 */
+	@media (max-width: 1440px) {
+		.toolbar {
+			gap: 8px;
+		}
+		.toolbar-actions {
+			gap: 4px;
+		}
+		.tool-btn:not(.icon-only):not(.zoom-value) > span {
+			/* Standard sr-only / visually-hidden pattern — invisible but
+			   still part of the accessible name computation. */
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			padding: 0;
+			margin: -1px;
+			overflow: hidden;
+			clip-path: inset(50%);
+			white-space: nowrap;
+			border: 0;
+		}
+		.tool-btn:not(.icon-only):not(.zoom-value) {
+			padding: 4px 8px;
+		}
 	}
 
 	.property-panel-error {
