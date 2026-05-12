@@ -60,6 +60,15 @@
 				>
 					Assets
 				</a>
+				<a
+					href="/account/api-keys"
+					data-testid="nav-account"
+					aria-current={pathname.startsWith('/account') ? 'page' : undefined}
+					class="app-nav-link"
+					class:active={pathname.startsWith('/account')}
+				>
+					Account
+				</a>
 			</nav>
 		</div>
 		<div class="app-user-row">
