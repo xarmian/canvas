@@ -84,7 +84,11 @@ export function resolveForwardUrl(
 	rawTemplate: string | null,
 	params: Record<string, string>
 ): ResolveForwardUrlResult | null {
-	if (rawTemplate === null) return null;
+	// Treat `null` AND empty string as "no redirect" — the legacy callsite
+	// gated on `if (canvas.redirectUrl)` which was falsy for both. Cleared
+	// redirects persist as `''` via the UI/API path, and they shouldn't
+	// produce an `unparseable` warning on every share-page load.
+	if (rawTemplate === null || rawTemplate === '') return null;
 	const unsubstituted = findUnsubstitutedPlaceholders(rawTemplate, params);
 	const resolved = substituteParams(rawTemplate, params);
 	try {

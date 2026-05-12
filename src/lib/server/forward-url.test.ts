@@ -56,6 +56,10 @@ describe('resolveForwardUrl', () => {
 		expect(resolveForwardUrl(null, {})).toBeNull();
 	});
 
+	it('returns null when rawTemplate is the empty string (matches legacy falsy gate)', () => {
+		expect(resolveForwardUrl('', {})).toBeNull();
+	});
+
 	it('returns ok:true for an http URL', () => {
 		const result = resolveForwardUrl('http://example.com/x', {});
 		expect(result).toEqual({ ok: true, url: 'http://example.com/x', unsubstituted: [] });
