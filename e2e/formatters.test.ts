@@ -69,6 +69,14 @@ test.describe('Pipe formatters', () => {
 		await bindParam(page, 'Text Content', 'value', 'fallback text');
 		await page.getByLabel('Format').selectOption('currency:USD');
 		await page.getByRole('button', { name: 'Save' }).click();
+		// Saves are manual since BT-160; without waiting for the PATCH to
+		// commit, the preview below races and may render the pre-format
+		// state. The test's "rendered a valid PNG" assertion would still
+		// pass against the stale render, hiding regressions in the
+		// formatter pipeline that's actually under test here.
+		await expect(page.getByTestId('toolbar-save')).toHaveAttribute('data-state', 'saved', {
+			timeout: 10_000
+		});
 
 		// Param=words → not a number → renderer should show the words verbatim
 		// rather than blanking the layer. We can't read pixels easily; assert

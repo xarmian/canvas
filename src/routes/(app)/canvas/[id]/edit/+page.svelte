@@ -403,6 +403,15 @@
 							if (hydrationToken !== thisToken) return;
 							endSuppressSnapshots();
 							saveSnapshot(canvas);
+							// Fabric's loadFromJSON fires an `object:added` per layer
+							// (Canvas.svelte wires it to markDirty), so a non-empty
+							// canvas finishes hydration with editorState.isDirty=true
+							// — i.e. no user input but the Save button reads 'dirty'
+							// and the beforeNavigate guard would trap the user on
+							// first load. Autosave used to mask this by PATCHing
+							// 2s later and clearing dirty in markClean(); with
+							// manual-only saves (BT-160) we have to do it here.
+							markClean();
 							hydrationComplete = true;
 							setHydrationComplete(true);
 						});
