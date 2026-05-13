@@ -34,6 +34,7 @@ import {
 } from '$lib/server/content-version';
 import { getStorage } from '$lib/server/storage';
 import { publicAppOrigin, shareUrlFor, imageUrlFor } from '$lib/server/render-permalink';
+import { enforceApiKeyRateLimit } from '$lib/server/api-rate-limit';
 import type { OutputFormat, FabricCanvasJson } from '$lib/engine';
 
 /** Default user-scoped render quota — overridable by the operator at
@@ -86,6 +87,11 @@ function clampDpr(raw: unknown): number {
 
 export const POST: RequestHandler = async ({ request, locals, url }) => {
 	const apiKey = requireApiKey(locals, 'render:create');
+	// Per-API-key rate gate. Throws a structured 429 with Retry-After +
+	// X-RateLimit headers on exhaustion; returns a `decorate(response)`
+	// closure for the success path that attaches the limit headers to
+	// the eventual 2xx.
+	const decorate = enforceApiKeyRateLimit(apiKey.id, 'write');
 
 	// Body parse + shape check
 	const body = await request.json().catch(() => null);
@@ -283,16 +289,18 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 				});
 		});
 		const ext = FORMAT_EXTENSIONS[existing.format as OutputFormat]?.ext ?? 'png';
-		return json(
-			{
-				id: existing.shortId,
-				url: `${appUrl}/i/${existing.shortId}`,
-				imageUrl: `${appUrl}/i/${existing.shortId}/image.${ext}`,
-				forwardUrl: existing.forwardUrl,
-				deduplicated: true,
-				createdAt: existing.createdAt.toISOString()
-			},
-			{ status: 200 }
+		return decorate(
+			json(
+				{
+					id: existing.shortId,
+					url: `${appUrl}/i/${existing.shortId}`,
+					imageUrl: `${appUrl}/i/${existing.shortId}/image.${ext}`,
+					forwardUrl: existing.forwardUrl,
+					deduplicated: true,
+					createdAt: existing.createdAt.toISOString()
+				},
+				{ status: 200 }
+			)
 		);
 	}
 
@@ -417,16 +425,18 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 						.limit(1);
 					if (winner) {
 						const winnerExt = FORMAT_EXTENSIONS[winner.format as OutputFormat]?.ext ?? 'png';
-						return json(
-							{
-								id: winner.shortId,
-								url: `${appUrl}/i/${winner.shortId}`,
-								imageUrl: `${appUrl}/i/${winner.shortId}/image.${winnerExt}`,
-								forwardUrl: winner.forwardUrl,
-								deduplicated: true,
-								createdAt: winner.createdAt.toISOString()
-							},
-							{ status: 200 }
+						return decorate(
+							json(
+								{
+									id: winner.shortId,
+									url: `${appUrl}/i/${winner.shortId}`,
+									imageUrl: `${appUrl}/i/${winner.shortId}/image.${winnerExt}`,
+									forwardUrl: winner.forwardUrl,
+									deduplicated: true,
+									createdAt: winner.createdAt.toISOString()
+								},
+								{ status: 200 }
+							)
 						);
 					}
 					throw err;
@@ -448,16 +458,18 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 		}
 
 		const ext = FORMAT_EXTENSIONS[inserted.format as OutputFormat]?.ext ?? 'png';
-		return json(
-			{
-				id: inserted.shortId,
-				url: `${appUrl}/i/${inserted.shortId}`,
-				imageUrl: `${appUrl}/i/${inserted.shortId}/image.${ext}`,
-				forwardUrl: inserted.forwardUrl,
-				deduplicated: false,
-				createdAt: inserted.createdAt.toISOString()
-			},
-			{ status: 201 }
+		return decorate(
+			json(
+				{
+					id: inserted.shortId,
+					url: `${appUrl}/i/${inserted.shortId}`,
+					imageUrl: `${appUrl}/i/${inserted.shortId}/image.${ext}`,
+					forwardUrl: inserted.forwardUrl,
+					deduplicated: false,
+					createdAt: inserted.createdAt.toISOString()
+				},
+				{ status: 201 }
+			)
 		);
 	} catch (err) {
 		// Anything that escapes the inner retry: a propagated insert
@@ -590,6 +602,7 @@ function decodeCursor(raw: string): Cursor | null {
 export const GET: RequestHandler = async ({ locals, url }) => {
 	requireApiKey(locals, 'render:read');
 	const apiKey = locals.apiKey!;
+	const decorate = enforceApiKeyRateLimit(apiKey.id, 'read');
 
 	const rawLimit = url.searchParams.get('limit');
 	let limit = DEFAULT_LIMIT;
@@ -629,7 +642,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 			.where(and(conditions, eq(canvases.userId, apiKey.userId)))
 			.limit(1);
 		if (!canvasRow) {
-			return json({ items: [], nextCursor: null });
+			return decorate(json({ items: [], nextCursor: null }));
 		}
 		canvasFilter = canvasRow.id;
 	}
@@ -709,5 +722,5 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 		expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null
 	}));
 
-	return json({ items, nextCursor });
+	return decorate(json({ items, nextCursor }));
 };
