@@ -508,7 +508,40 @@ const CURSOR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
  *  400 (Codex round 2). The regex also rejects junk that looks like a
  *  timestamp but Postgres can't parse. */
 const CURSOR_TIMESTAMP_RE =
-	/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}(?::\d{2})?)?$/;
+	/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(?:Z|[+-]\d{2}(?::\d{2})?)?$/;
+
+/** True iff `value` is a syntactically-valid AND calendar-valid Postgres
+ *  timestamptz text. The regex handles the syntactic shape; the
+ *  `Date.UTC` round-trip catches calendar-invalid dates like `2024-02-31`
+ *  that JS would otherwise normalize to a different day and pass to
+ *  Postgres, which rejects them as 22008 (Codex round 3). */
+function isValidCursorTimestamp(value: string): boolean {
+	const m = CURSOR_TIMESTAMP_RE.exec(value);
+	if (!m) return false;
+	const year = Number(m[1]);
+	const month = Number(m[2]);
+	const day = Number(m[3]);
+	const hour = Number(m[4]);
+	const minute = Number(m[5]);
+	const second = Number(m[6]);
+	// Cheap bounds first.
+	if (year < 1900 || year > 9999) return false;
+	if (month < 1 || month > 12) return false;
+	if (day < 1 || day > 31) return false;
+	if (hour > 23 || minute > 59 || second > 60) return false;
+	// Round-trip: JS normalizes Feb-31 etc. to a different calendar day;
+	// if the round-trip changed any component, the input wasn't a real
+	// date.
+	const d = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+	return (
+		d.getUTCFullYear() === year &&
+		d.getUTCMonth() === month - 1 &&
+		d.getUTCDate() === day &&
+		d.getUTCHours() === hour &&
+		d.getUTCMinutes() === minute &&
+		d.getUTCSeconds() === second
+	);
+}
 
 function encodeCursor(cursor: Cursor): string {
 	return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
@@ -524,13 +557,12 @@ function decodeCursor(raw: string): Cursor | null {
 		// surfaces as 500 instead of the intended structured 400
 		// (Codex round 1 P2).
 		if (!CURSOR_UUID_RE.test(parsed.id)) return null;
-		// Shape-check the timestamp against the Postgres `::text` output we
-		// emit (or a close ISO equivalent). This rejects strings that JS
-		// `Date` would happily parse but Postgres rejects as out-of-range
-		// (Codex round 2). The JS-parse check is a second belt-and-braces
-		// layer in case the regex matches an otherwise-junk value.
-		if (!CURSOR_TIMESTAMP_RE.test(parsed.createdAt)) return null;
-		if (Number.isNaN(new Date(parsed.createdAt).getTime())) return null;
+		// Shape + calendar validation. The strict check rejects strings JS
+		// would happily parse but Postgres rejects (extended years, Feb 31
+		// etc. — Codex rounds 2 + 3). Without this the `::timestamptz`
+		// cast surfaces as a 500 instead of the intended `invalid_cursor`
+		// 400.
+		if (!isValidCursorTimestamp(parsed.createdAt)) return null;
 		return { createdAt: parsed.createdAt, id: parsed.id };
 	} catch {
 		return null;
