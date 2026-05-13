@@ -167,52 +167,60 @@ async function runExpire(
 	args: ParsedArgs
 ): Promise<{ marked: number; bytesFreed: number; errors: number; ms: number }> {
 	const start = Date.now();
-	// Concurrency-safe select: another concurrent sweep will SKIP rows
-	// we've locked, partitioning the work. The transaction commits after
-	// per-row processing so the locked window is short.
 	type Row = { id: string; storage_key: string; size_bytes: number };
-	const rows = await db.execute<Row>(sql`
-        SELECT id, storage_key, size_bytes
-        FROM rendered_images
-        WHERE expires_at IS NOT NULL
-          AND expires_at < now()
-          AND deleted_at IS NULL
-        ORDER BY expires_at ASC
-        LIMIT ${args.maxRows}
-        FOR UPDATE SKIP LOCKED
-    `);
 
-	if (args.dryRun) {
-		log('expire_dry_run', { wouldMark: rows.length });
-		return { marked: rows.length, bytesFreed: 0, errors: 0, ms: Date.now() - start };
-	}
+	// `FOR UPDATE SKIP LOCKED` only holds the locks for the duration of
+	// the surrounding transaction (Codex round 1 P2). Without the
+	// transaction Postgres releases the locks as soon as the SELECT
+	// finishes and a concurrent sweeper could re-pick the same rows
+	// before our UPDATE marks them deleted. Holding the transaction
+	// open across the per-row UPDATEs keeps the lock window long enough
+	// to serialize the partitioning.
+	const result = await db.transaction(async (tx) => {
+		const rows = await tx.execute<Row>(sql`
+            SELECT id, storage_key, size_bytes
+            FROM rendered_images
+            WHERE expires_at IS NOT NULL
+              AND expires_at < now()
+              AND deleted_at IS NULL
+            ORDER BY expires_at ASC
+            LIMIT ${args.maxRows}
+            FOR UPDATE SKIP LOCKED
+        `);
 
-	let marked = 0;
-	let bytesFreed = 0;
-	let errors = 0;
-	for (const row of rows) {
-		try {
-			await storage.delete(row.storage_key);
-		} catch (err) {
-			errors += 1;
-			logErr('expire_storage_error', {
-				id: row.id,
-				key: row.storage_key,
-				error: err instanceof Error ? err.message : String(err)
-			});
-			// Continue — we still mark the row deleted; the bytes (if any
-			// remain) will be reaped on the next run when reap picks the
-			// row up.
+		if (args.dryRun) {
+			log('expire_dry_run', { wouldMark: rows.length });
+			return { marked: rows.length, bytesFreed: 0, errors: 0 };
 		}
-		await db
-			.update(schema.renderedImages)
-			.set({ deletedAt: new Date() })
-			.where(eq(schema.renderedImages.id, row.id));
-		marked += 1;
-		bytesFreed += Number(row.size_bytes ?? 0);
-	}
 
-	return { marked, bytesFreed, errors, ms: Date.now() - start };
+		let marked = 0;
+		let bytesFreed = 0;
+		let errors = 0;
+		for (const row of rows) {
+			try {
+				await storage.delete(row.storage_key);
+			} catch (err) {
+				errors += 1;
+				logErr('expire_storage_error', {
+					id: row.id,
+					key: row.storage_key,
+					error: err instanceof Error ? err.message : String(err)
+				});
+				// Continue — we still mark the row deleted; the bytes (if
+				// any remain) will be reaped on the next pass.
+			}
+			await tx
+				.update(schema.renderedImages)
+				.set({ deletedAt: new Date() })
+				.where(eq(schema.renderedImages.id, row.id));
+			marked += 1;
+			bytesFreed += Number(row.size_bytes ?? 0);
+		}
+
+		return { marked, bytesFreed, errors };
+	});
+
+	return { ...result, ms: Date.now() - start };
 }
 
 async function runReap(
@@ -223,44 +231,51 @@ async function runReap(
 	const start = Date.now();
 	type Row = { id: string; storage_key: string };
 	const cutoffDays = args.reapAfterDays;
-	const rows = await db.execute<Row>(sql`
-        SELECT id, storage_key
-        FROM rendered_images
-        WHERE deleted_at IS NOT NULL
-          AND deleted_at < now() - make_interval(days => ${cutoffDays})
-        ORDER BY deleted_at ASC
-        LIMIT ${args.maxRows}
-        FOR UPDATE SKIP LOCKED
-    `);
 
-	if (args.dryRun) {
-		log('reap_dry_run', { wouldDelete: rows.length });
-		return { deleted: rows.length, errors: 0, ms: Date.now() - start };
-	}
+	// Same transaction discipline as expire — keep the SKIP LOCKED locks
+	// alive long enough to serialize the per-row work (Codex round 1 P2).
+	const result = await db.transaction(async (tx) => {
+		const rows = await tx.execute<Row>(sql`
+            SELECT id, storage_key
+            FROM rendered_images
+            WHERE deleted_at IS NOT NULL
+              AND deleted_at < now() - make_interval(days => ${cutoffDays})
+            ORDER BY deleted_at ASC
+            LIMIT ${args.maxRows}
+            FOR UPDATE SKIP LOCKED
+        `);
 
-	let deleted = 0;
-	let errors = 0;
-	for (const row of rows) {
-		// expire might have already dropped the blob. We re-try anyway —
-		// the storage adapter's delete is idempotent (S3 returns success
-		// on a missing key; the local adapter's unlink swallows ENOENT
-		// inside a try/catch — see types.ts contract). Any failure here
-		// is logged but doesn't block the hard-delete.
-		try {
-			await storage.delete(row.storage_key);
-		} catch (err) {
-			errors += 1;
-			logErr('reap_storage_error', {
-				id: row.id,
-				key: row.storage_key,
-				error: err instanceof Error ? err.message : String(err)
-			});
+		if (args.dryRun) {
+			log('reap_dry_run', { wouldDelete: rows.length });
+			return { deleted: rows.length, errors: 0 };
 		}
-		await db.delete(schema.renderedImages).where(eq(schema.renderedImages.id, row.id));
-		deleted += 1;
-	}
 
-	return { deleted, errors, ms: Date.now() - start };
+		let deleted = 0;
+		let errors = 0;
+		for (const row of rows) {
+			// Try the blob delete first. If it fails, skip the hard-delete
+			// so the DB row keeps the storage_key reference — otherwise a
+			// transient S3 hiccup would permanently orphan the blob with
+			// no record left to drive a retry (Codex round 1 P2).
+			try {
+				await storage.delete(row.storage_key);
+			} catch (err) {
+				errors += 1;
+				logErr('reap_storage_error', {
+					id: row.id,
+					key: row.storage_key,
+					error: err instanceof Error ? err.message : String(err)
+				});
+				continue;
+			}
+			await tx.delete(schema.renderedImages).where(eq(schema.renderedImages.id, row.id));
+			deleted += 1;
+		}
+
+		return { deleted, errors };
+	});
+
+	return { ...result, ms: Date.now() - start };
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────
