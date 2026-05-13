@@ -6,7 +6,8 @@
 	// Section nav is forward-compatible: when /account/storage (TASK-173)
 	// and any future account pages land, they just add to this array.
 	const sections: { href: string; label: string; testid: string }[] = [
-		{ href: '/account/api-keys', label: 'API keys', testid: 'account-nav-api-keys' }
+		{ href: '/account/api-keys', label: 'API keys', testid: 'account-nav-api-keys' },
+		{ href: '/account/storage', label: 'Storage', testid: 'account-nav-storage' }
 	];
 
 	let pathname = $derived(page.url.pathname);
