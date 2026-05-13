@@ -95,6 +95,33 @@ docker compose -f docker-compose.prod.yml up -d
 
 The app runs migrations on startup and serves on port 3000.
 
+### Render storage management
+
+Baked-render rows (from `POST /api/v1/renders`) persist indefinitely unless the row carries an `expiresAt`. Run the sweep periodically to expire stale rows and reap long-soft-deleted ones:
+
+```bash
+# Manual run from the host (dev)
+pnpm renders:sweep
+
+# Inside the production container
+docker compose -f docker-compose.prod.yml exec app node scripts/renders-sweep.mjs
+
+# Cron (daily at 03:00, prod container)
+0 3 * * * docker compose -f /opt/canvas/docker-compose.prod.yml exec -T app \
+  node scripts/renders-sweep.mjs >> /var/log/canvas/sweep.log 2>&1
+```
+
+Flags:
+
+| Flag                        | Default | Notes                                                                                                                 |
+| --------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------- |
+| `--mode=expire\|reap\|both` | `both`  | `expire` drops storage bytes + sets `deleted_at`; `reap` hard-deletes rows soft-deleted longer than the grace window. |
+| `--dry-run`                 | off     | Logs what would happen, mutates nothing.                                                                              |
+| `--max-rows=N`              | `10000` | Cap per invocation. Multiple invocations chip away at larger backlogs.                                                |
+| `--reap-after-days=N`       | `30`    | Soft-delete grace before reap hard-deletes.                                                                           |
+
+Output is structured JSON-lines logs (`sweep_start`, `expire_done`, `reap_done`, `sweep_end`). Concurrency-safe via `FOR UPDATE SKIP LOCKED` inside a transaction — two simultaneous invocations partition the work instead of double-processing rows.
+
 ## URL API
 
 ### Render an image
@@ -115,6 +142,78 @@ GET /c/{slug}?param1=value1
 
 - **Bots/crawlers** (Twitter, Facebook, Slack, etc.) receive an HTML page with `og:image` meta tags
 - **Humans** are redirected to the creator-configured destination URL
+
+## Programmatic Render API
+
+Two ways to drive Canvas from a backend:
+
+1. **URL API** (above) — `GET /c/{slug}/image.png?param=value` for live, template-resolved renders. Best for OG cards where the template can evolve and you want every share to reflect the current design.
+2. **Render API** — `POST /api/v1/renders` returns a stable `/i/{shortId}` permalink to a frozen image. Best for backend-generated cards (blog posts, newsletters, transactional emails) where you want the share to never change even if the canvas template is edited.
+
+### Authentication
+
+Create an API key at `/account/api-keys`. The full token is shown ONCE on creation — save it somewhere safe. Use it as a bearer token:
+
+```bash
+curl -X POST https://canvas.example.com/api/v1/renders \
+  -H "Authorization: Bearer ck_live_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "canvas": "lp-card",
+    "params": { "title": "Hello", "avatar": "https://example.com/me.png" },
+    "forwardUrl": "https://example.com/post/123"
+  }'
+```
+
+Response:
+
+```json
+{
+	"id": "aB3cDeFgHi",
+	"url": "https://canvas.example.com/i/aB3cDeFgHi",
+	"imageUrl": "https://canvas.example.com/i/aB3cDeFgHi/image.png",
+	"forwardUrl": "https://example.com/post/123",
+	"deduplicated": false,
+	"createdAt": "2026-05-12T20:00:00Z"
+}
+```
+
+The returned `url` is the share permalink — social-card crawlers fetch its OG meta, humans see a branded landing with a "Continue to {host}" CTA that forwards to `forwardUrl`.
+
+### Endpoints
+
+| Method | Path                        | Description                                                      |
+| ------ | --------------------------- | ---------------------------------------------------------------- |
+| POST   | `/api/v1/renders`           | Create a baked render. Scope: `render:create`                    |
+| GET    | `/api/v1/renders`           | List your renders (paginated, `?limit=`, `?cursor=`, `?canvas=`) |
+| GET    | `/api/v1/renders/{shortId}` | Single render metadata. Scope: `render:read`                     |
+| DELETE | `/api/v1/renders/{shortId}` | Soft-delete + free storage. Scope: `render:delete`               |
+
+All endpoints return `429 rate_limited` with `Retry-After`, `X-RateLimit-Limit`, and `X-RateLimit-Remaining: 0` once the per-API-key bucket is exhausted. Successful (2xx) responses additionally carry `X-RateLimit-Reset` (seconds until the bucket refills to its burst cap). POST has its own bucket; the read + delete endpoints share a separate, looser bucket.
+
+### Request fields
+
+| Field           | Type    | Notes                                                                                          |
+| --------------- | ------- | ---------------------------------------------------------------------------------------------- |
+| `canvas`        | string  | Required. Canvas slug OR uuid. Must be owned by the API key's user. Unpublished canvases work. |
+| `params`        | object  | String → string. Validated strictly against the canvas's defined params.                       |
+| `format`        | string  | `png` (default), `jpeg`, `webp`, or `avif`.                                                    |
+| `forwardUrl`    | string  | Optional. Substituted from `params`, must resolve to `http:` or `https:`.                      |
+| `ogTitle`       | string  | Optional override for the share-page OG title.                                                 |
+| `ogDescription` | string  | Optional override for the share-page OG description.                                           |
+| `dpr`           | 1\|2\|3 | Render at higher DPR (output dimensions scale).                                                |
+
+### Deduplication
+
+Identical POSTs (same `canvas` + `params` + `format` + `dpr` + `forwardUrl` + og text, AND same underlying canvas template + font set + referenced assets) return the existing `shortId` instead of creating a second image — response status is `200` instead of `201`, and `deduplicated: true` in the body. Safe to retry on network errors without flooding storage.
+
+### Limits
+
+- **Per-user storage quota** — `RENDER_QUOTA_PER_USER` (default `1000` rows). 429 once exceeded.
+- **Per-API-key rate limits** — `RENDER_API_RATE_LIMIT_PER_MIN` / `_BURST` (defaults 60 / 120 for writes; reads get 5×).
+- **Param value length** — capped at 2 000 chars per value; `ogTitle` / `ogDescription` capped at 300 chars.
+
+See `/account/storage` for your utilization.
 
 ## Project Structure
 
@@ -148,32 +247,38 @@ canvas/
 
 See [`.env.example`](.env.example) for all configuration options.
 
-| Variable             | Description                                                      |
-| -------------------- | ---------------------------------------------------------------- |
-| `DATABASE_URL`       | PostgreSQL connection string                                     |
-| `BETTER_AUTH_SECRET` | Session signing secret (generate with `openssl rand -base64 32`) |
-| `BETTER_AUTH_URL`    | Public app URL for auth callbacks                                |
-| `S3_ENDPOINT`        | S3-compatible storage endpoint                                   |
-| `S3_ACCESS_KEY`      | Storage access key                                               |
-| `S3_SECRET_KEY`      | Storage secret key                                               |
-| `S3_BUCKET`          | Storage bucket name                                              |
-| `S3_PUBLIC_URL`      | Public URL for accessing stored assets                           |
-| `STORAGE_LOCAL`      | Set to `true` for local filesystem storage (dev)                 |
-| `PUBLIC_APP_URL`     | Public-facing app URL                                            |
+| Variable                        | Description                                                                   |
+| ------------------------------- | ----------------------------------------------------------------------------- |
+| `DATABASE_URL`                  | PostgreSQL connection string                                                  |
+| `BETTER_AUTH_SECRET`            | Session signing secret (generate with `openssl rand -base64 32`)              |
+| `BETTER_AUTH_URL`               | Public app URL for auth callbacks                                             |
+| `S3_ENDPOINT`                   | S3-compatible storage endpoint                                                |
+| `S3_ACCESS_KEY`                 | Storage access key                                                            |
+| `S3_SECRET_KEY`                 | Storage secret key                                                            |
+| `S3_BUCKET`                     | Storage bucket name                                                           |
+| `S3_PUBLIC_URL`                 | Public URL for accessing stored assets                                        |
+| `STORAGE_LOCAL`                 | Set to `true` for local filesystem storage (dev)                              |
+| `PUBLIC_APP_URL`                | Public-facing app URL                                                         |
+| `RENDER_QUOTA_PER_USER`         | Baked-render row cap per user. Default `1000`.                                |
+| `RENDER_API_RATE_LIMIT_PER_MIN` | Per-API-key steady rate for `POST /api/v1/renders`. Default `60`.             |
+| `RENDER_API_RATE_LIMIT_BURST`   | Per-API-key burst cap. Default `120`. Reads get 5× both values.               |
+| `CANVAS_ADMIN_EMAILS`           | Comma-separated allowlist for `/admin/*`. Empty (default) = 403 for everyone. |
 
 ## Scripts
 
 ```bash
-pnpm dev          # Start dev server
-pnpm build        # Production build
-pnpm preview      # Preview production build
-pnpm check        # TypeScript + Svelte checks
-pnpm lint         # ESLint + Prettier
-pnpm format       # Auto-format code
-pnpm db:generate  # Generate migration from schema changes
-pnpm db:push      # Push schema to database (dev)
-pnpm db:migrate   # Run migrations (production)
-pnpm test:e2e     # Run Playwright E2E tests
+pnpm dev           # Start dev server
+pnpm build         # Production build
+pnpm preview       # Preview production build
+pnpm check         # TypeScript + Svelte checks
+pnpm lint          # ESLint + Prettier
+pnpm format        # Auto-format code
+pnpm db:generate   # Generate migration from schema changes
+pnpm db:push       # Push schema to database (dev)
+pnpm db:migrate    # Run migrations (production)
+pnpm test:unit     # Run vitest unit tests
+pnpm test:e2e      # Run Playwright E2E tests
+pnpm renders:sweep # Expire + reap baked-render rows (see Operations)
 ```
 
 ## License
