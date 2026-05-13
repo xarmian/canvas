@@ -84,7 +84,15 @@ export const GET: RequestHandler = async ({ params, request }) => {
 	// Strong validator; safe to mark `immutable` for the whole 1-year
 	// window. The matching 304 path doesn't hit storage.
 	const etag = `"${row.shortId}"`;
-	const cacheControl = 'public, max-age=31536000, immutable';
+	// Cache policy: shorter than the spec's `immutable, max-age=1y` because
+	// the user can DELETE a baked render and expects the public URL to
+	// stop serving within a bounded window (Codex round 2). `immutable`
+	// would let edge caches keep serving the bytes for up to a year past
+	// the delete. 1 hour keeps the CDN-efficiency benefit while bounding
+	// the revocation latency. Social crawlers re-scrape OG cards on their
+	// own cadence (typically hours-to-days) so this doesn't hurt the
+	// share-card UX in practice.
+	const cacheControl = 'public, max-age=3600';
 
 	const ifNoneMatch = request.headers.get('if-none-match');
 	if (ifNoneMatch !== null && ifNoneMatchHits(ifNoneMatch, etag)) {
