@@ -11,16 +11,11 @@
  */
 import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
-// `PUBLIC_APP_URL` is intentionally a public var so frontend code can
-// build absolute share URLs. SvelteKit strips `PUBLIC_*` keys from
-// `$env/dynamic/private`, so we pull this one specifically from the
-// public surface (Codex TASK-168 round 1 P3).
-import { env as publicEnv } from '$env/dynamic/public';
 import { createHash, randomUUID } from 'node:crypto';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { canvases, canvasParams, renderedImages } from '$lib/server/db/schema';
-import { eq, and, or, isNull, sql } from 'drizzle-orm';
+import { eq, and, or, isNull, sql, desc } from 'drizzle-orm';
 import { requireApiKey } from '$lib/server/api-key';
 import { resolveForwardUrl } from '$lib/server/forward-url';
 import { validateParams } from '$lib/server/canvas-params';
@@ -38,6 +33,7 @@ import {
 	fontSetVersionFromDescriptors
 } from '$lib/server/content-version';
 import { getStorage } from '$lib/server/storage';
+import { publicAppOrigin, shareUrlFor, imageUrlFor } from '$lib/server/render-permalink';
 import type { OutputFormat, FabricCanvasJson } from '$lib/engine';
 
 /** Default user-scoped render quota — overridable by the operator at
@@ -86,17 +82,6 @@ function clampDpr(raw: unknown): number {
 	const v = Math.floor(n);
 	if (v < 1 || v > 3) badRequest({ error: 'invalid_dpr', message: 'dpr must be 1, 2, or 3' });
 	return v;
-}
-
-function parsePublicAppUrl(requestOrigin: string): string {
-	// `$env/dynamic/public` keys not present at build time narrow to
-	// `never`, so reach via bracket access — the type model is fine with
-	// that, and the runtime is identical.
-	const raw = (publicEnv as Record<string, string | undefined>).PUBLIC_APP_URL?.trim();
-	if (!raw) return requestOrigin;
-	// Strip a single trailing slash so `${PUBLIC_APP_URL}/i/${id}` doesn't
-	// double-slash the path.
-	return raw.endsWith('/') ? raw.slice(0, -1) : raw;
 }
 
 export const POST: RequestHandler = async ({ request, locals, url }) => {
@@ -269,7 +254,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 	});
 	const contentHash = createHash('sha256').update(contentHashInput).digest('hex');
 
-	const appUrl = parsePublicAppUrl(url.origin);
+	const appUrl = publicAppOrigin(url.origin);
 
 	// Dedup lookup. `(user_id, content_hash)` is indexed; the partial-
 	// index on `expires_at` doesn't help us here so the index covers
@@ -491,4 +476,238 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 	} finally {
 		releaseSlot();
 	}
+};
+
+// ─── GET /api/v1/renders (list) ──────────────────────────────────────────
+//
+// Paginated by an opaque (createdAt, id) cursor so two rows created in
+// the same millisecond can't both be on the page boundary. The cursor
+// is base64-encoded JSON — clients must NOT parse it; the encoding may
+// change without notice.
+
+const DEFAULT_LIMIT = 25;
+const MAX_LIMIT = 100;
+
+interface Cursor {
+	/** Raw Postgres timestamptz text (full precision, including microseconds
+	 *  if present). Carried as text — never round-tripped through a JS
+	 *  Date — so the next page's tuple comparison against the row's full-
+	 *  precision createdAt can't skip rows that share a millisecond
+	 *  with the cursor row but differ in microseconds (Codex round 1 P1). */
+	createdAt: string;
+	id: string;
+}
+
+const CURSOR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Postgres timestamptz `::text` output shape, plus the ISO-with-`T` shape
+ *  in case a cursor lands here from elsewhere. The leading 4-digit year
+ *  is intentional — JS `Date` accepts huge extended-year strings like
+ *  `"-100000-01-01T00:00:00Z"` that Postgres rejects outside its
+ *  timestamptz range, surfacing as a 500 instead of `invalid_cursor`
+ *  400 (Codex round 2). The regex also rejects junk that looks like a
+ *  timestamp but Postgres can't parse. Offset components are captured
+ *  separately so we can bound them (Codex round 4). */
+const CURSOR_TIMESTAMP_RE =
+	/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(?:Z|[+-](\d{2})(?::(\d{2}))?)?$/;
+
+/** True iff `value` is a syntactically-valid AND calendar-valid Postgres
+ *  timestamptz text with a bounded timezone offset.
+ *
+ *  - Regex handles the syntactic shape (Codex round 2 — extended-year).
+ *  - `Date.UTC` round-trip catches calendar-invalid dates like
+ *    `2024-02-31` that JS would normalize and silently pass through to
+ *    Postgres, which rejects them as 22008 (Codex round 3).
+ *  - Offset hours and minutes are explicitly bounded so junk like
+ *    `+99:99` is rejected at decode rather than tripping Postgres's
+ *    datetime-overflow error and surfacing as a 500 (Codex round 4).
+ */
+function isValidCursorTimestamp(value: string): boolean {
+	const m = CURSOR_TIMESTAMP_RE.exec(value);
+	if (!m) return false;
+	const year = Number(m[1]);
+	const month = Number(m[2]);
+	const day = Number(m[3]);
+	const hour = Number(m[4]);
+	const minute = Number(m[5]);
+	const second = Number(m[6]);
+	// Cheap bounds first.
+	if (year < 1900 || year > 9999) return false;
+	if (month < 1 || month > 12) return false;
+	if (day < 1 || day > 31) return false;
+	if (hour > 23 || minute > 59 || second > 60) return false;
+	// Offset bounds. Postgres caps timezone offset at ±15:59:59 (per
+	// the time-zone abbreviation table); ISO 8601 caps at ±14:00.
+	// Reject anything wider so a craft cursor can't trip 22008.
+	if (m[7] !== undefined) {
+		const offsetHour = Number(m[7]);
+		if (offsetHour > 15) return false;
+	}
+	if (m[8] !== undefined) {
+		const offsetMinute = Number(m[8]);
+		if (offsetMinute > 59) return false;
+	}
+	// Round-trip: JS normalizes Feb-31 etc. to a different calendar day;
+	// if the round-trip changed any component, the input wasn't a real
+	// date.
+	const d = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+	return (
+		d.getUTCFullYear() === year &&
+		d.getUTCMonth() === month - 1 &&
+		d.getUTCDate() === day &&
+		d.getUTCHours() === hour &&
+		d.getUTCMinutes() === minute &&
+		d.getUTCSeconds() === second
+	);
+}
+
+function encodeCursor(cursor: Cursor): string {
+	return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+function decodeCursor(raw: string): Cursor | null {
+	try {
+		const json = Buffer.from(raw, 'base64url').toString('utf8');
+		const parsed = JSON.parse(json) as Partial<Cursor>;
+		if (typeof parsed.createdAt !== 'string' || typeof parsed.id !== 'string') return null;
+		// Validate the id looks like a uuid — otherwise the `::uuid` cast in
+		// the tuple comparison below trips a Postgres parse error that
+		// surfaces as 500 instead of the intended structured 400
+		// (Codex round 1 P2).
+		if (!CURSOR_UUID_RE.test(parsed.id)) return null;
+		// Shape + calendar validation. The strict check rejects strings JS
+		// would happily parse but Postgres rejects (extended years, Feb 31
+		// etc. — Codex rounds 2 + 3). Without this the `::timestamptz`
+		// cast surfaces as a 500 instead of the intended `invalid_cursor`
+		// 400.
+		if (!isValidCursorTimestamp(parsed.createdAt)) return null;
+		return { createdAt: parsed.createdAt, id: parsed.id };
+	} catch {
+		return null;
+	}
+}
+
+export const GET: RequestHandler = async ({ locals, url }) => {
+	requireApiKey(locals, 'render:read');
+	const apiKey = locals.apiKey!;
+
+	const rawLimit = url.searchParams.get('limit');
+	let limit = DEFAULT_LIMIT;
+	if (rawLimit !== null) {
+		const n = Number(rawLimit);
+		if (!Number.isInteger(n) || n < 1) {
+			badRequest({ error: 'invalid_limit', message: 'limit must be a positive integer' });
+		}
+		if (n > MAX_LIMIT) {
+			badRequest({ error: 'invalid_limit', message: `limit must be ${MAX_LIMIT} or fewer` });
+		}
+		limit = n;
+	}
+
+	const rawCursor = url.searchParams.get('cursor');
+	let cursor: Cursor | null = null;
+	if (rawCursor !== null) {
+		cursor = decodeCursor(rawCursor);
+		if (cursor === null) {
+			badRequest({ error: 'invalid_cursor', message: 'cursor could not be decoded' });
+		}
+	}
+
+	const canvasRef = url.searchParams.get('canvas');
+	let canvasFilter: string | null = null; // canvas UUID, post-resolution
+	if (canvasRef !== null && canvasRef.length > 0) {
+		// Owner-scoped — a cross-user canvas reference filters to no rows
+		// (rather than 404'ing) because the list semantics are "the
+		// renders YOU made"; an empty page for an unknown filter value is
+		// the right answer.
+		const conditions = looksLikeUuid(canvasRef)
+			? or(eq(canvases.id, canvasRef), eq(canvases.slug, canvasRef))
+			: eq(canvases.slug, canvasRef);
+		const [canvasRow] = await db
+			.select({ id: canvases.id })
+			.from(canvases)
+			.where(and(conditions, eq(canvases.userId, apiKey.userId)))
+			.limit(1);
+		if (!canvasRow) {
+			return json({ items: [], nextCursor: null });
+		}
+		canvasFilter = canvasRow.id;
+	}
+
+	// LEFT JOIN to canvases for the convenience-fields (canvasSlug, name).
+	// Pull `limit + 1` rows so we can detect a next page without an
+	// extra COUNT(*). The extra row is dropped from the response.
+	const conditions = [eq(renderedImages.userId, apiKey.userId), isNull(renderedImages.deletedAt)];
+	if (canvasFilter !== null) {
+		conditions.push(eq(renderedImages.canvasId, canvasFilter));
+	}
+	if (cursor) {
+		// Tuple comparison (createdAt, id) < (cursorTs, cursorId) — Drizzle
+		// doesn't have a tuple comparator built-in, so reach into `sql` for
+		// the row-value clause. Postgres tuple < is lexicographic, exactly
+		// what we want for a stable DESC sort.
+		conditions.push(
+			sql`(${renderedImages.createdAt}, ${renderedImages.id}) < (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)`
+		);
+	}
+
+	const rows = await db
+		.select({
+			id: renderedImages.id,
+			shortId: renderedImages.shortId,
+			canvasId: renderedImages.canvasId,
+			canvasSlug: canvases.slug,
+			canvasName: canvases.name,
+			format: renderedImages.format,
+			sizeBytes: renderedImages.sizeBytes,
+			width: renderedImages.width,
+			height: renderedImages.height,
+			forwardUrl: renderedImages.forwardUrl,
+			ogTitle: renderedImages.ogTitle,
+			ogDescription: renderedImages.ogDescription,
+			createdAt: renderedImages.createdAt,
+			// Pull the raw Postgres text representation alongside the parsed
+			// Date. JS truncates timestamptz to milliseconds at parse time,
+			// so encoding `createdAt.toISOString()` into the cursor would
+			// skip microsecond-disambiguated rows on the next page
+			// (Codex round 1 P1). The text preserves Postgres's full
+			// precision and is round-tripped verbatim via `::timestamptz`
+			// in the tuple comparison.
+			createdAtText: sql<string>`${renderedImages.createdAt}::text`,
+			lastAccessedAt: renderedImages.lastAccessedAt,
+			expiresAt: renderedImages.expiresAt
+		})
+		.from(renderedImages)
+		.leftJoin(canvases, eq(canvases.id, renderedImages.canvasId))
+		.where(and(...conditions))
+		.orderBy(desc(renderedImages.createdAt), desc(renderedImages.id))
+		.limit(limit + 1);
+
+	const hasMore = rows.length > limit;
+	const page = hasMore ? rows.slice(0, limit) : rows;
+	const last = page[page.length - 1];
+	const nextCursor =
+		hasMore && last ? encodeCursor({ createdAt: last.createdAtText, id: last.id }) : null;
+
+	const appUrl = publicAppOrigin(url.origin);
+	const items = page.map((row) => ({
+		id: row.shortId,
+		url: shareUrlFor(appUrl, row.shortId),
+		imageUrl: imageUrlFor(appUrl, row.shortId, row.format),
+		canvasId: row.canvasId,
+		canvasSlug: row.canvasSlug,
+		canvasName: row.canvasName,
+		format: row.format,
+		sizeBytes: row.sizeBytes,
+		width: row.width,
+		height: row.height,
+		forwardUrl: row.forwardUrl,
+		ogTitle: row.ogTitle,
+		ogDescription: row.ogDescription,
+		createdAt: row.createdAt.toISOString(),
+		lastAccessedAt: row.lastAccessedAt.toISOString(),
+		expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null
+	}));
+
+	return json({ items, nextCursor });
 };
