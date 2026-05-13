@@ -183,16 +183,135 @@ export function getClientIp(headers: Headers, fallback: string | null): string {
 	return fallback ?? 'unknown';
 }
 
+// ─── Per-API-key token-bucket rate limit (TASK-172) ──────────────────────
+//
+// In-memory single-process buckets, separately tracked for "write"
+// (POST /api/v1/renders — the expensive CPU path) and "read" (GET
+// list / detail, DELETE — cheap DB calls). Each API key gets two
+// independent buckets so a saturated POST budget doesn't 429 a list
+// call from the same key. Durable Redis-backed infra is deferred to
+// IDEA-58 (the same plan the per-IP layer punts to for multi-replica).
+//
+// The bucket implementation mirrors the per-IP one: lazy refill on
+// access, stale eviction when an idle bucket is touched after 10
+// minutes, capacity-capped tokens. Decimal `tokens` is intentional —
+// it lets a fractional refill survive across requests so the
+// long-term rate is exactly `RATE_PER_MIN / 60` tokens/sec rather
+// than rounding down to zero between sub-second requests.
+
+const DEFAULT_API_RATE_LIMIT_PER_MIN = 60;
+const DEFAULT_API_RATE_LIMIT_BURST = 120;
+
+const API_RATE_LIMIT_PER_MIN = readIntEnv(
+	'RENDER_API_RATE_LIMIT_PER_MIN',
+	DEFAULT_API_RATE_LIMIT_PER_MIN
+);
+const API_RATE_LIMIT_BURST = readIntEnv(
+	'RENDER_API_RATE_LIMIT_BURST',
+	DEFAULT_API_RATE_LIMIT_BURST
+);
+
+/** Read endpoints (GET list, GET detail, DELETE) get 5× the steady-state
+ *  rate and 5× the burst of the write path. They're cheap (DB-only) so
+ *  the budget can be looser without risking server CPU. */
+const API_READ_MULTIPLIER = 5;
+
+export type ApiKeyRateLimitKind = 'write' | 'read';
+
+interface ApiKeyBucket {
+	tokens: number;
+	lastRefillMs: number;
+}
+
+const apiKeyBuckets: Record<ApiKeyRateLimitKind, Map<string, ApiKeyBucket>> = {
+	write: new Map(),
+	read: new Map()
+};
+
+/** How long an idle bucket can sit before it's reset on next access.
+ *  Pure memory-bound hygiene — a long-quiet API key shouldn't see a
+ *  carry-over of partial tokens hours later (might be a different
+ *  caller anyway by then). */
+const API_BUCKET_IDLE_RESET_MS = 60 * 60 * 1000;
+
+function configFor(kind: ApiKeyRateLimitKind): { ratePerMin: number; burst: number } {
+	if (kind === 'write') {
+		return { ratePerMin: API_RATE_LIMIT_PER_MIN, burst: API_RATE_LIMIT_BURST };
+	}
+	return {
+		ratePerMin: API_RATE_LIMIT_PER_MIN * API_READ_MULTIPLIER,
+		burst: API_RATE_LIMIT_BURST * API_READ_MULTIPLIER
+	};
+}
+
+/**
+ * Try to consume one token from the per-API-key bucket for `kind`.
+ *
+ * On success: decrements the bucket and returns `{ allowed: true, limit,
+ * remaining, resetSec }` for the caller to attach as `X-RateLimit-*`
+ * headers on the eventual 2xx response.
+ *
+ * On exhaustion: returns `{ allowed: false, limit, retryAfterSeconds }`
+ * — the caller should emit 429 with the same `Retry-After`. The bucket
+ * is not modified on the failure path, so a hammering loop doesn't
+ * push the refill horizon further into the future.
+ */
+export function checkApiKeyRateLimit(
+	apiKeyId: string,
+	kind: ApiKeyRateLimitKind
+):
+	| { allowed: true; limit: number; remaining: number; resetSec: number }
+	| { allowed: false; limit: number; retryAfterSeconds: number } {
+	const { ratePerMin, burst } = configFor(kind);
+	const ratePerMs = ratePerMin / 60_000;
+	const map = apiKeyBuckets[kind];
+	const now = Date.now();
+	let bucket = map.get(apiKeyId);
+	if (!bucket) {
+		bucket = { tokens: burst, lastRefillMs: now };
+		map.set(apiKeyId, bucket);
+	} else if (now - bucket.lastRefillMs > API_BUCKET_IDLE_RESET_MS) {
+		bucket.tokens = burst;
+		bucket.lastRefillMs = now;
+	} else {
+		const elapsed = now - bucket.lastRefillMs;
+		bucket.tokens = Math.min(burst, bucket.tokens + elapsed * ratePerMs);
+		bucket.lastRefillMs = now;
+	}
+
+	if (bucket.tokens >= 1) {
+		bucket.tokens -= 1;
+		// Time until the bucket is fully refilled to `burst` — the standard
+		// interpretation of `X-RateLimit-Reset` (seconds, not epoch).
+		const tokensToFull = Math.max(0, burst - bucket.tokens);
+		const resetSec = Math.max(1, Math.ceil(tokensToFull / ratePerMs / 1000));
+		return {
+			allowed: true,
+			limit: burst,
+			remaining: Math.floor(bucket.tokens),
+			resetSec
+		};
+	}
+	const tokensNeeded = 1 - bucket.tokens;
+	const retryAfterSeconds = Math.max(1, Math.ceil(tokensNeeded / ratePerMs / 1000));
+	return { allowed: false, limit: burst, retryAfterSeconds };
+}
+
 /** Test-only hook to reset state between unit tests. */
 export function resetRenderThrottleStateForTesting(): void {
 	activeRenders = 0;
 	waiters.splice(0);
 	buckets.clear();
+	apiKeyBuckets.write.clear();
+	apiKeyBuckets.read.clear();
 }
 
 /** Read-only constants exposed for tests + headers. */
 export const RENDER_THROTTLE_CONFIG = {
 	concurrency: CONCURRENCY,
 	queueTimeoutMs: QUEUE_TIMEOUT_MS,
-	ratePerMin: RATE_PER_MIN
+	ratePerMin: RATE_PER_MIN,
+	apiKeyRatePerMin: API_RATE_LIMIT_PER_MIN,
+	apiKeyBurst: API_RATE_LIMIT_BURST,
+	apiKeyReadMultiplier: API_READ_MULTIPLIER
 };

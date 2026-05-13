@@ -17,6 +17,7 @@ import { eq, and, isNull } from 'drizzle-orm';
 import { requireApiKey } from '$lib/server/api-key';
 import { getStorage } from '$lib/server/storage';
 import { imageUrlFor, publicAppOrigin, shareUrlFor } from '$lib/server/render-permalink';
+import { enforceApiKeyRateLimit } from '$lib/server/api-rate-limit';
 
 /** shortId is `[A-Za-z0-9_-]{10}` per `$lib/server/short-id.ts`. Bail
  *  on anything else as a clean 404 so a malformed URL doesn't even
@@ -26,6 +27,7 @@ const SHORT_ID_RE = /^[A-Za-z0-9_-]{10}$/;
 export const GET: RequestHandler = async ({ locals, params, url }) => {
 	requireApiKey(locals, 'render:read');
 	const apiKey = locals.apiKey!;
+	const decorate = enforceApiKeyRateLimit(apiKey.id, 'read');
 	if (!SHORT_ID_RE.test(params.shortId)) error(404, 'render_not_found');
 
 	const [row] = await db
@@ -60,29 +62,32 @@ export const GET: RequestHandler = async ({ locals, params, url }) => {
 	if (!row) error(404, 'render_not_found');
 
 	const appUrl = publicAppOrigin(url.origin);
-	return json({
-		id: row.shortId,
-		url: shareUrlFor(appUrl, row.shortId),
-		imageUrl: imageUrlFor(appUrl, row.shortId, row.format),
-		canvasId: row.canvasId,
-		canvasSlug: row.canvasSlug,
-		canvasName: row.canvasName,
-		format: row.format,
-		sizeBytes: row.sizeBytes,
-		width: row.width,
-		height: row.height,
-		forwardUrl: row.forwardUrl,
-		ogTitle: row.ogTitle,
-		ogDescription: row.ogDescription,
-		createdAt: row.createdAt.toISOString(),
-		lastAccessedAt: row.lastAccessedAt.toISOString(),
-		expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null
-	});
+	return decorate(
+		json({
+			id: row.shortId,
+			url: shareUrlFor(appUrl, row.shortId),
+			imageUrl: imageUrlFor(appUrl, row.shortId, row.format),
+			canvasId: row.canvasId,
+			canvasSlug: row.canvasSlug,
+			canvasName: row.canvasName,
+			format: row.format,
+			sizeBytes: row.sizeBytes,
+			width: row.width,
+			height: row.height,
+			forwardUrl: row.forwardUrl,
+			ogTitle: row.ogTitle,
+			ogDescription: row.ogDescription,
+			createdAt: row.createdAt.toISOString(),
+			lastAccessedAt: row.lastAccessedAt.toISOString(),
+			expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null
+		})
+	);
 };
 
 export const DELETE: RequestHandler = async ({ locals, params }) => {
 	requireApiKey(locals, 'render:delete');
 	const apiKey = locals.apiKey!;
+	const decorate = enforceApiKeyRateLimit(apiKey.id, 'read');
 	if (!SHORT_ID_RE.test(params.shortId)) error(404, 'render_not_found');
 
 	// Single round-trip soft-delete: marks `deletedAt` and returns the
@@ -115,5 +120,5 @@ export const DELETE: RequestHandler = async ({ locals, params }) => {
 			);
 		});
 
-	return new Response(null, { status: 204 });
+	return decorate(new Response(null, { status: 204 }));
 };
