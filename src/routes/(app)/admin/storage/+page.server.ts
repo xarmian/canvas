@@ -38,7 +38,11 @@ export const load: PageServerLoad = async ({ url }) => {
           ON r.user_id = u.id AND r.deleted_at IS NULL
         GROUP BY u.id, u.email
         HAVING COUNT(r.id) > 0
-        ORDER BY total_bytes DESC, render_count DESC
+        -- u.id is the deterministic tie-breaker: two users with the
+        -- same (total_bytes, render_count) tuple would otherwise appear
+        -- in unstable order across offset pages, producing duplicates
+        -- or skips on Next/Prev (Codex review round 1).
+        ORDER BY total_bytes DESC, render_count DESC, u.id ASC
         LIMIT ${PAGE_SIZE} OFFSET ${offset}
     `);
 	const perUser = perUserRows.map((row) => ({
