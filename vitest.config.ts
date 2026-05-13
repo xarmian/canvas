@@ -29,7 +29,10 @@ export default defineConfig({
 		}
 	},
 	test: {
-		include: ['src/**/*.test.ts'],
+		// `src/**` covers app-side helper modules; `scripts/**` picks up
+		// the CLI unit tests (e.g. renders-sweep). Playwright keeps its
+		// own `testDir: 'e2e'` scope so it doesn't see either.
+		include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
 		environment: 'node'
 	}
 });
