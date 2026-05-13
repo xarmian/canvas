@@ -13,7 +13,10 @@
  * pattern in vitest.config.ts.
  */
 import { describe, expect, it } from 'vitest';
-import { parseArgsForTesting } from './renders-sweep';
+// The script is .mjs (plain JS, no compilation) so prod cron in the
+// Docker runner can `node scripts/renders-sweep.mjs` directly. Vitest
+// resolves the .mjs import natively.
+import { parseArgsForTesting } from './renders-sweep.mjs';
 
 describe('parseArgs', () => {
 	it('returns the documented defaults with no args', () => {

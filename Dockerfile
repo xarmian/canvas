@@ -175,6 +175,11 @@ COPY --chown=node:node package.json ./
 COPY --chown=node:node drizzle ./drizzle
 COPY --chown=node:node scripts/run-migrations.mjs ./scripts/run-migrations.mjs
 
+# Sweep CLI for `rendered_images` cleanup (TASK-175). Operator runs
+# this on a cron / systemd timer — see README "Operations". Plain
+# `.mjs` so it works against the production runtime without tsx.
+COPY --chown=node:node scripts/renders-sweep.mjs ./scripts/renders-sweep.mjs
+
 # Run as the unprivileged `node` user that's baked into the official
 # Node images. The image's process should not have root inside the
 # container — defense-in-depth against any container-escape bug in
