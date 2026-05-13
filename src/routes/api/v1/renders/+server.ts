@@ -500,6 +500,16 @@ interface Cursor {
 
 const CURSOR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Postgres timestamptz `::text` output shape, plus the ISO-with-`T` shape
+ *  in case a cursor lands here from elsewhere. The leading 4-digit year
+ *  is intentional — JS `Date` accepts huge extended-year strings like
+ *  `"-100000-01-01T00:00:00Z"` that Postgres rejects outside its
+ *  timestamptz range, surfacing as a 500 instead of `invalid_cursor`
+ *  400 (Codex round 2). The regex also rejects junk that looks like a
+ *  timestamp but Postgres can't parse. */
+const CURSOR_TIMESTAMP_RE =
+	/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}(?::\d{2})?)?$/;
+
 function encodeCursor(cursor: Cursor): string {
 	return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
 }
@@ -514,8 +524,12 @@ function decodeCursor(raw: string): Cursor | null {
 		// surfaces as 500 instead of the intended structured 400
 		// (Codex round 1 P2).
 		if (!CURSOR_UUID_RE.test(parsed.id)) return null;
-		// Validate the timestamp at least parses — Postgres is stricter
-		// than JS Date so a junk string would otherwise reach the DB.
+		// Shape-check the timestamp against the Postgres `::text` output we
+		// emit (or a close ISO equivalent). This rejects strings that JS
+		// `Date` would happily parse but Postgres rejects as out-of-range
+		// (Codex round 2). The JS-parse check is a second belt-and-braces
+		// layer in case the regex matches an otherwise-junk value.
+		if (!CURSOR_TIMESTAMP_RE.test(parsed.createdAt)) return null;
 		if (Number.isNaN(new Date(parsed.createdAt).getTime())) return null;
 		return { createdAt: parsed.createdAt, id: parsed.id };
 	} catch {
