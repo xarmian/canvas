@@ -11,16 +11,11 @@
  */
 import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
-// `PUBLIC_APP_URL` is intentionally a public var so frontend code can
-// build absolute share URLs. SvelteKit strips `PUBLIC_*` keys from
-// `$env/dynamic/private`, so we pull this one specifically from the
-// public surface (Codex TASK-168 round 1 P3).
-import { env as publicEnv } from '$env/dynamic/public';
 import { createHash, randomUUID } from 'node:crypto';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { canvases, canvasParams, renderedImages } from '$lib/server/db/schema';
-import { eq, and, or, isNull, sql } from 'drizzle-orm';
+import { eq, and, or, isNull, sql, desc } from 'drizzle-orm';
 import { requireApiKey } from '$lib/server/api-key';
 import { resolveForwardUrl } from '$lib/server/forward-url';
 import { validateParams } from '$lib/server/canvas-params';
@@ -38,6 +33,7 @@ import {
 	fontSetVersionFromDescriptors
 } from '$lib/server/content-version';
 import { getStorage } from '$lib/server/storage';
+import { publicAppOrigin, shareUrlFor, imageUrlFor } from '$lib/server/render-permalink';
 import type { OutputFormat, FabricCanvasJson } from '$lib/engine';
 
 /** Default user-scoped render quota — overridable by the operator at
@@ -86,17 +82,6 @@ function clampDpr(raw: unknown): number {
 	const v = Math.floor(n);
 	if (v < 1 || v > 3) badRequest({ error: 'invalid_dpr', message: 'dpr must be 1, 2, or 3' });
 	return v;
-}
-
-function parsePublicAppUrl(requestOrigin: string): string {
-	// `$env/dynamic/public` keys not present at build time narrow to
-	// `never`, so reach via bracket access — the type model is fine with
-	// that, and the runtime is identical.
-	const raw = (publicEnv as Record<string, string | undefined>).PUBLIC_APP_URL?.trim();
-	if (!raw) return requestOrigin;
-	// Strip a single trailing slash so `${PUBLIC_APP_URL}/i/${id}` doesn't
-	// double-slash the path.
-	return raw.endsWith('/') ? raw.slice(0, -1) : raw;
 }
 
 export const POST: RequestHandler = async ({ request, locals, url }) => {
@@ -269,7 +254,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 	});
 	const contentHash = createHash('sha256').update(contentHashInput).digest('hex');
 
-	const appUrl = parsePublicAppUrl(url.origin);
+	const appUrl = publicAppOrigin(url.origin);
 
 	// Dedup lookup. `(user_id, content_hash)` is indexed; the partial-
 	// index on `expires_at` doesn't help us here so the index covers
@@ -491,4 +476,154 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 	} finally {
 		releaseSlot();
 	}
+};
+
+// ─── GET /api/v1/renders (list) ──────────────────────────────────────────
+//
+// Paginated by an opaque (createdAt, id) cursor so two rows created in
+// the same millisecond can't both be on the page boundary. The cursor
+// is base64-encoded JSON — clients must NOT parse it; the encoding may
+// change without notice.
+
+const DEFAULT_LIMIT = 25;
+const MAX_LIMIT = 100;
+
+interface Cursor {
+	createdAt: string; // ISO
+	id: string; // row uuid
+}
+
+function encodeCursor(cursor: Cursor): string {
+	return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+function decodeCursor(raw: string): Cursor | null {
+	try {
+		const json = Buffer.from(raw, 'base64url').toString('utf8');
+		const parsed = JSON.parse(json) as Partial<Cursor>;
+		if (typeof parsed.createdAt !== 'string' || typeof parsed.id !== 'string') return null;
+		// Validate the timestamp parses — otherwise a craft input could
+		// pass through and trip Postgres's date parser as a 500.
+		if (Number.isNaN(new Date(parsed.createdAt).getTime())) return null;
+		return { createdAt: parsed.createdAt, id: parsed.id };
+	} catch {
+		return null;
+	}
+}
+
+export const GET: RequestHandler = async ({ locals, url }) => {
+	requireApiKey(locals, 'render:read');
+	const apiKey = locals.apiKey!;
+
+	const rawLimit = url.searchParams.get('limit');
+	let limit = DEFAULT_LIMIT;
+	if (rawLimit !== null) {
+		const n = Number(rawLimit);
+		if (!Number.isInteger(n) || n < 1) {
+			badRequest({ error: 'invalid_limit', message: 'limit must be a positive integer' });
+		}
+		if (n > MAX_LIMIT) {
+			badRequest({ error: 'invalid_limit', message: `limit must be ${MAX_LIMIT} or fewer` });
+		}
+		limit = n;
+	}
+
+	const rawCursor = url.searchParams.get('cursor');
+	let cursor: Cursor | null = null;
+	if (rawCursor !== null) {
+		cursor = decodeCursor(rawCursor);
+		if (cursor === null) {
+			badRequest({ error: 'invalid_cursor', message: 'cursor could not be decoded' });
+		}
+	}
+
+	const canvasRef = url.searchParams.get('canvas');
+	let canvasFilter: string | null = null; // canvas UUID, post-resolution
+	if (canvasRef !== null && canvasRef.length > 0) {
+		// Owner-scoped — a cross-user canvas reference filters to no rows
+		// (rather than 404'ing) because the list semantics are "the
+		// renders YOU made"; an empty page for an unknown filter value is
+		// the right answer.
+		const conditions = looksLikeUuid(canvasRef)
+			? or(eq(canvases.id, canvasRef), eq(canvases.slug, canvasRef))
+			: eq(canvases.slug, canvasRef);
+		const [canvasRow] = await db
+			.select({ id: canvases.id })
+			.from(canvases)
+			.where(and(conditions, eq(canvases.userId, apiKey.userId)))
+			.limit(1);
+		if (!canvasRow) {
+			return json({ items: [], nextCursor: null });
+		}
+		canvasFilter = canvasRow.id;
+	}
+
+	// LEFT JOIN to canvases for the convenience-fields (canvasSlug, name).
+	// Pull `limit + 1` rows so we can detect a next page without an
+	// extra COUNT(*). The extra row is dropped from the response.
+	const conditions = [eq(renderedImages.userId, apiKey.userId), isNull(renderedImages.deletedAt)];
+	if (canvasFilter !== null) {
+		conditions.push(eq(renderedImages.canvasId, canvasFilter));
+	}
+	if (cursor) {
+		// Tuple comparison (createdAt, id) < (cursorTs, cursorId) — Drizzle
+		// doesn't have a tuple comparator built-in, so reach into `sql` for
+		// the row-value clause. Postgres tuple < is lexicographic, exactly
+		// what we want for a stable DESC sort.
+		conditions.push(
+			sql`(${renderedImages.createdAt}, ${renderedImages.id}) < (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)`
+		);
+	}
+
+	const rows = await db
+		.select({
+			id: renderedImages.id,
+			shortId: renderedImages.shortId,
+			canvasId: renderedImages.canvasId,
+			canvasSlug: canvases.slug,
+			canvasName: canvases.name,
+			format: renderedImages.format,
+			sizeBytes: renderedImages.sizeBytes,
+			width: renderedImages.width,
+			height: renderedImages.height,
+			forwardUrl: renderedImages.forwardUrl,
+			ogTitle: renderedImages.ogTitle,
+			ogDescription: renderedImages.ogDescription,
+			createdAt: renderedImages.createdAt,
+			lastAccessedAt: renderedImages.lastAccessedAt,
+			expiresAt: renderedImages.expiresAt
+		})
+		.from(renderedImages)
+		.leftJoin(canvases, eq(canvases.id, renderedImages.canvasId))
+		.where(and(...conditions))
+		.orderBy(desc(renderedImages.createdAt), desc(renderedImages.id))
+		.limit(limit + 1);
+
+	const hasMore = rows.length > limit;
+	const page = hasMore ? rows.slice(0, limit) : rows;
+	const last = page[page.length - 1];
+	const nextCursor =
+		hasMore && last ? encodeCursor({ createdAt: last.createdAt.toISOString(), id: last.id }) : null;
+
+	const appUrl = publicAppOrigin(url.origin);
+	const items = page.map((row) => ({
+		id: row.shortId,
+		url: shareUrlFor(appUrl, row.shortId),
+		imageUrl: imageUrlFor(appUrl, row.shortId, row.format),
+		canvasId: row.canvasId,
+		canvasSlug: row.canvasSlug,
+		canvasName: row.canvasName,
+		format: row.format,
+		sizeBytes: row.sizeBytes,
+		width: row.width,
+		height: row.height,
+		forwardUrl: row.forwardUrl,
+		ogTitle: row.ogTitle,
+		ogDescription: row.ogDescription,
+		createdAt: row.createdAt.toISOString(),
+		lastAccessedAt: row.lastAccessedAt.toISOString(),
+		expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null
+	}));
+
+	return json({ items, nextCursor });
 };
