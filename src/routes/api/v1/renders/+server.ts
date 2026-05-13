@@ -506,15 +506,22 @@ const CURSOR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
  *  `"-100000-01-01T00:00:00Z"` that Postgres rejects outside its
  *  timestamptz range, surfacing as a 500 instead of `invalid_cursor`
  *  400 (Codex round 2). The regex also rejects junk that looks like a
- *  timestamp but Postgres can't parse. */
+ *  timestamp but Postgres can't parse. Offset components are captured
+ *  separately so we can bound them (Codex round 4). */
 const CURSOR_TIMESTAMP_RE =
-	/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(?:Z|[+-]\d{2}(?::\d{2})?)?$/;
+	/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(?:Z|[+-](\d{2})(?::(\d{2}))?)?$/;
 
 /** True iff `value` is a syntactically-valid AND calendar-valid Postgres
- *  timestamptz text. The regex handles the syntactic shape; the
- *  `Date.UTC` round-trip catches calendar-invalid dates like `2024-02-31`
- *  that JS would otherwise normalize to a different day and pass to
- *  Postgres, which rejects them as 22008 (Codex round 3). */
+ *  timestamptz text with a bounded timezone offset.
+ *
+ *  - Regex handles the syntactic shape (Codex round 2 — extended-year).
+ *  - `Date.UTC` round-trip catches calendar-invalid dates like
+ *    `2024-02-31` that JS would normalize and silently pass through to
+ *    Postgres, which rejects them as 22008 (Codex round 3).
+ *  - Offset hours and minutes are explicitly bounded so junk like
+ *    `+99:99` is rejected at decode rather than tripping Postgres's
+ *    datetime-overflow error and surfacing as a 500 (Codex round 4).
+ */
 function isValidCursorTimestamp(value: string): boolean {
 	const m = CURSOR_TIMESTAMP_RE.exec(value);
 	if (!m) return false;
@@ -529,6 +536,17 @@ function isValidCursorTimestamp(value: string): boolean {
 	if (month < 1 || month > 12) return false;
 	if (day < 1 || day > 31) return false;
 	if (hour > 23 || minute > 59 || second > 60) return false;
+	// Offset bounds. Postgres caps timezone offset at ±15:59:59 (per
+	// the time-zone abbreviation table); ISO 8601 caps at ±14:00.
+	// Reject anything wider so a craft cursor can't trip 22008.
+	if (m[7] !== undefined) {
+		const offsetHour = Number(m[7]);
+		if (offsetHour > 15) return false;
+	}
+	if (m[8] !== undefined) {
+		const offsetMinute = Number(m[8]);
+		if (offsetMinute > 59) return false;
+	}
 	// Round-trip: JS normalizes Feb-31 etc. to a different calendar day;
 	// if the round-trip changed any component, the input wasn't a real
 	// date.
