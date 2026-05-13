@@ -12,7 +12,9 @@ import { db } from '$lib/server/db';
 import { renderedImages, canvases } from '$lib/server/db/schema';
 import { eq, and, isNull, or, gt } from 'drizzle-orm';
 import { resolveForwardUrl } from '$lib/server/forward-url';
+import { FORMAT_EXTENSIONS } from '$lib/server/baked-render';
 import { imageUrlFor, publicAppOrigin, shareUrlFor } from '$lib/server/render-permalink';
+import type { OutputFormat } from '$lib/engine';
 
 /** Mirrors the public-facing regex from `$lib/server/short-id.ts`. */
 const SHORT_ID_RE = /^[A-Za-z0-9_-]{10}$/;
@@ -90,11 +92,14 @@ export const load: PageServerLoad = async ({ params, url }) => {
 		}
 	}
 
+	const imageMimeType = FORMAT_EXTENSIONS[row.format as OutputFormat]?.contentType ?? 'image/png';
+
 	return {
 		shortId: params.shortId,
 		width: row.width,
 		height: row.height,
 		imageUrl,
+		imageMimeType,
 		canonicalShareUrl,
 		ogTitle,
 		ogDescription,

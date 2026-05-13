@@ -19,10 +19,23 @@
 		height: number;
 		/** Post-substitution, http(s)-validated. `null` suppresses the CTA. */
 		redirectUrl: string | null;
+		/** Image MIME type. Defaults to `image/png` to match the
+		 *  /c/{slug} legacy behaviour (which always emits PNG cards).
+		 *  Baked renders pass the row's actual format so the og:image:type
+		 *  hint doesn't lie to crawlers (Codex TASK-170 round 1 P2). */
+		imageMimeType?: string;
 	}
 
-	const { imageUrl, canonicalShareUrl, ogTitle, ogDescription, width, height, redirectUrl }: Props =
-		$props();
+	const {
+		imageUrl,
+		canonicalShareUrl,
+		ogTitle,
+		ogDescription,
+		width,
+		height,
+		redirectUrl,
+		imageMimeType = 'image/png'
+	}: Props = $props();
 
 	/** Friendly label for the Continue CTA — show the destination host
 	 *  rather than the full URL. Full URLs on a mobile button truncate
@@ -51,14 +64,12 @@
 	<meta property="og:image" content={imageUrl} />
 	<meta property="og:image:width" content={String(width)} />
 	<meta property="og:image:height" content={String(height)} />
-	<!-- og:image:type: required by some crawlers (LinkedIn, older Slack) to
-	     skip the binary-sniff step. The share page emits a PNG image URL
-	     for /c/{slug}; for /i/{shortId} the image URL extension may be
-	     png/jpg/webp/avif. We keep the type hint as `image/png` because
-	     most crawlers prefer PNG for OG and the baked-render flow already
-	     defaults to PNG; alternate formats are integrator-driven and the
-	     type field is advisory. -->
-	<meta property="og:image:type" content="image/png" />
+	<!-- og:image:type: required by some crawlers (LinkedIn, older Slack)
+	     to skip the binary-sniff step. /c/{slug} always serves PNG so the
+	     default is fine there; /i/{shortId} passes the row's actual MIME
+	     so crawlers that trust the hint don't reject a JPEG/WebP/AVIF
+	     card that was advertised as PNG. -->
+	<meta property="og:image:type" content={imageMimeType} />
 	{#if imageUrl.startsWith('https://')}
 		<!-- og:image:secure_url is the same value when the public app URL
 		     is https. Crawlers prefer this on https pages and omitting it

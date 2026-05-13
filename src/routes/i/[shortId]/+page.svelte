@@ -13,6 +13,7 @@
 -->
 <RenderLanding
 	imageUrl={data.imageUrl}
+	imageMimeType={data.imageMimeType}
 	canonicalShareUrl={data.canonicalShareUrl}
 	ogTitle={data.ogTitle}
 	ogDescription={data.ogDescription}
