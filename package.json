@@ -20,6 +20,7 @@
 		"test:unit:watch": "vitest",
 		"test:e2e:setup": "bash scripts/setup-test-db.sh",
 		"test:e2e": "pnpm test:e2e:setup && playwright test",
+		"renders:sweep": "tsx scripts/renders-sweep.ts",
 		"lh:mobile": "lhci autorun --config=./lighthouserc.cjs"
 	},
 	"devDependencies": {
@@ -45,6 +46,7 @@
 		"svelte": "^5.55.2",
 		"svelte-check": "^4.4.6",
 		"tailwindcss": "^4.3.0",
+		"tsx": "4.21.0",
 		"typescript": "^6.0.2",
 		"typescript-eslint": "^8.58.1",
 		"vite": "^8.0.7",
