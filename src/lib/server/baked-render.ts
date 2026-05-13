@@ -40,6 +40,19 @@ export interface BakedRenderOptions {
 	/** JPEG/WebP/AVIF quality 0-100; PNG ignores. Defaults to 85, matching
 	 *  the live render route. */
 	quality?: number;
+	/**
+	 * The live font-family set the caller has already loaded (typically
+	 * via `getLiveUserFontDescriptors` for the cache-key fingerprint).
+	 * When provided, the helper sanitizes against this set instead of
+	 * doing its own DB read — guaranteeing that the bytes produced match
+	 * the snapshot the caller fingerprinted, with no TOCTOU window
+	 * between cache-key construction and render.
+	 *
+	 * Omit when the caller has no fingerprint to align with (e.g. POST
+	 * `/api/v1/renders`, which dedups by content-hash rather than by a
+	 * per-request cache key). The helper will fetch its own live set.
+	 */
+	liveFamilies?: Set<string>;
 }
 
 export interface BakedRenderResult {
@@ -87,8 +100,13 @@ export async function renderForUser(
 	const quality = options.quality ?? 85;
 
 	await ensureUserFontsRegistered(canvas.userId);
-	const liveDescriptors = await getLiveUserFontDescriptors(canvas.userId);
-	const liveFamilies = new Set(liveDescriptors.map((d) => d.family));
+	// Prefer the caller's already-loaded family set when supplied — this
+	// closes the TOCTOU window where a route fingerprints fontSetVersion
+	// for its cache key at T0, then sees a different live set at render
+	// time (helper-internal read at T1) if fonts mutated in between.
+	const liveFamilies =
+		options.liveFamilies ??
+		new Set((await getLiveUserFontDescriptors(canvas.userId)).map((d) => d.family));
 
 	const sanitizedJson = sanitizeFontFamilies(
 		((canvas.templateJson as FabricCanvasJson | null) ?? { objects: [] }) as FabricCanvasJson,

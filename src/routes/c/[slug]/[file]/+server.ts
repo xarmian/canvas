@@ -243,11 +243,14 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 	// family names) so delete-then-reupload of the same filename also
 	// busts the cache — re-uploading produces a new asset row with a
 	// new UUID even though the derived family is identical.
-	// liveDescriptors feeds the cache-key fingerprint here; the actual font
-	// registration + sanitization on cache-miss runs inside renderForUser
-	// below, which re-loads its own live set. The duplicate DB read is the
-	// cost of keeping the render pipeline self-contained in the shared helper.
+	// Read live descriptors once and reuse them for both (a) the cache-key
+	// fingerprint and (b) the sanitize step inside renderForUser. Passing
+	// the same set through closes the TOCTOU window where the route would
+	// otherwise build the key against one snapshot and the helper would
+	// sanitize/render against a fresher one — producing bytes that don't
+	// match their cache key on font upload/delete during the request.
 	const liveDescriptors = await getLiveUserFontDescriptors(canvas.userId);
+	const liveFamilies = new Set(liveDescriptors.map((d) => d.family));
 	const fontSetVersion = fontSetVersionFromDescriptors(liveDescriptors);
 
 	// Asset-reference fingerprint (TASK-117). Walk the templateJson
@@ -396,7 +399,12 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 		const { buffer } = await renderForUser(canvas, queryParams, {
 			format: formatInfo.format,
 			quality: 85,
-			dpr
+			dpr,
+			// Pin the helper to the same font-family snapshot we already
+			// fingerprinted into the cache key above. Without this, a font
+			// mutation between the two reads would leave the cached bytes
+			// labeled with a stale fontSetVersion.
+			liveFamilies
 		});
 
 		// Persist to filesystem cache. The FsRenderCache handles LRU
