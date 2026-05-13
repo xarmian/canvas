@@ -189,7 +189,7 @@ The returned `url` is the share permalink — social-card crawlers fetch its OG 
 | GET    | `/api/v1/renders/{shortId}` | Single render metadata. Scope: `render:read`                     |
 | DELETE | `/api/v1/renders/{shortId}` | Soft-delete + free storage. Scope: `render:delete`               |
 
-All endpoints return `429 rate_limited` with `Retry-After` once the per-API-key bucket is exhausted, and emit `X-RateLimit-Limit` / `Remaining` / `Reset` on every response. POST has its own bucket; the read+delete endpoints share a separate, looser bucket.
+All endpoints return `429 rate_limited` with `Retry-After`, `X-RateLimit-Limit`, and `X-RateLimit-Remaining: 0` once the per-API-key bucket is exhausted. Successful (2xx) responses additionally carry `X-RateLimit-Reset` (seconds until the bucket refills to its burst cap). POST has its own bucket; the read + delete endpoints share a separate, looser bucket.
 
 ### Request fields
 
