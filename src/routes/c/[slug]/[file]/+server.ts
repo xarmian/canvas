@@ -4,21 +4,17 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { canvases, canvasParams } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
-import { render } from '$lib/engine';
-import type { CanvasTemplate, FabricCanvasJson, OutputFormat } from '$lib/engine';
+import type { FabricCanvasJson, OutputFormat } from '$lib/engine';
 import { validateParams } from '$lib/server/canvas-params';
 import { getDefaultRenderCache } from '$lib/server/render-cache';
-import { ensureUserFontsRegistered, getLiveUserFontDescriptors } from '$lib/server/user-fonts';
+import { getLiveUserFontDescriptors } from '$lib/server/user-fonts';
 import {
 	assetSetVersionFromEntries,
 	buildContentVersionToken,
 	fontSetVersionFromDescriptors
 } from '$lib/server/content-version';
-import {
-	collectAssetReferences,
-	loadAssetFingerprint,
-	resolveAssetReferences
-} from '$lib/server/asset-resolver';
+import { collectAssetReferences, loadAssetFingerprint } from '$lib/server/asset-resolver';
+import { renderForUser } from '$lib/server/baked-render';
 import {
 	acquireRenderSlot,
 	checkRateLimit,
@@ -54,21 +50,6 @@ function parseDpr(raw: string | null): number {
 	if (!Number.isFinite(n)) return 1;
 	const clamped = Math.max(1, Math.min(3, Math.floor(n)));
 	return clamped;
-}
-
-/** Replace any user-namespaced fontFamily that's no longer in the live
- *  asset set with 'Inter'. User-namespaced families are recognizable by
- *  the `u-` prefix that scopedFontFamily emits; bundled families
- *  ("Inter", "Arial", ...) are preserved as-is. */
-function sanitizeFontFamilies(json: FabricCanvasJson, liveFamilies: Set<string>): FabricCanvasJson {
-	const objects = (json.objects ?? []).map((obj) => {
-		const family = (obj as { fontFamily?: string }).fontFamily;
-		if (typeof family === 'string' && family.startsWith('u-') && !liveFamilies.has(family)) {
-			return { ...obj, fontFamily: 'Inter' };
-		}
-		return obj;
-	});
-	return { ...json, objects };
 }
 
 /** Build a cache key from slug + content version + params + format +
@@ -262,6 +243,12 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 	// family names) so delete-then-reupload of the same filename also
 	// busts the cache — re-uploading produces a new asset row with a
 	// new UUID even though the derived family is identical.
+	// Read live descriptors once and reuse them for both (a) the cache-key
+	// fingerprint and (b) the sanitize step inside renderForUser. Passing
+	// the same set through closes the TOCTOU window where the route would
+	// otherwise build the key against one snapshot and the helper would
+	// sanitize/render against a fresher one — producing bytes that don't
+	// match their cache key on font upload/delete during the request.
 	const liveDescriptors = await getLiveUserFontDescriptors(canvas.userId);
 	const liveFamilies = new Set(liveDescriptors.map((d) => d.family));
 	const fontSetVersion = fontSetVersionFromDescriptors(liveDescriptors);
@@ -399,46 +386,25 @@ export const GET: RequestHandler = async ({ params, url, request, getClientAddre
 	}
 
 	try {
-		// Register the canvas owner's uploaded fonts before rendering. No-op
-		// after the first render in this process unless new fonts have been
-		// uploaded since. Failure is logged inside ensureUserFontsRegistered
-		// and is non-fatal — the renderer will fall back to the default
-		// font set instead of 500-ing the public render URL.
-		await ensureUserFontsRegistered(canvas.userId);
-
-		// Sanitize fontFamily references that point at deleted fonts.
-		// GlobalFonts has no unregister API — once a font has been
-		// registered in this process, it stays in Skia's table. Without the
-		// swap, a canvas whose author deleted the asset would keep
-		// rendering with the deleted bytes until the server restarted.
-		// Cache freshness is handled by the fontSetVersion in the key above.
-		const sanitizedJson = sanitizeFontFamilies(
-			(canvas.templateJson as unknown as FabricCanvasJson) ?? { objects: [] },
-			liveFamilies
-		);
-
-		// Resolve `asset://{id}` references to their storage URLs (TASK-89).
-		// Owner-scoped — cross-user refs and deleted IDs are silently
-		// dropped to the placeholder path inside the renderer's image
-		// fetcher, never 500s. Returns a URL→Buffer preload map for
-		// owned assets so the renderer doesn't need to round-trip
-		// through HTTP (and skips the SSRF check that would block
-		// local-storage / private-host URLs).
-		const preloadedImages = await resolveAssetReferences(sanitizedJson, canvas.userId);
-
-		const template: CanvasTemplate = {
-			width: canvas.width,
-			height: canvas.height,
-			backgroundType: canvas.backgroundType as 'color' | 'image',
-			backgroundValue: canvas.backgroundValue,
-			templateJson: sanitizedJson
-		};
-
-		const buffer = await render(template, queryParams, {
+		// Delegate the render pipeline (font registration + sanitize stale
+		// fontFamily refs + asset-reference resolution + render) to the
+		// shared helper introduced in TASK-168. The helper is owned by the
+		// Programmatic Render API (`POST /api/v1/renders`) and we now share
+		// it from this live route so a fix in one place propagates to both.
+		//
+		// The cache/HTTP plumbing (ETag short-circuit, per-IP rate limit,
+		// render-slot semaphore, FsRenderCache get/set, cache-control
+		// negotiation against `?_v=`) stays inline — those are concerns of
+		// this route, not of the render pipeline.
+		const { buffer } = await renderForUser(canvas, queryParams, {
 			format: formatInfo.format,
 			quality: 85,
 			dpr,
-			preloadedImages
+			// Pin the helper to the same font-family snapshot we already
+			// fingerprinted into the cache key above. Without this, a font
+			// mutation between the two reads would leave the cached bytes
+			// labeled with a stale fontSetVersion.
+			liveFamilies
 		});
 
 		// Persist to filesystem cache. The FsRenderCache handles LRU
