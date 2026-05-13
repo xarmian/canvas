@@ -34,3 +34,7 @@ playwright-report/
 
 # Codex CLI scratch
 .codex
+
+# Local agent / skill tooling
+.claude/
+.agents/
