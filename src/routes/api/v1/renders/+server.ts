@@ -489,9 +489,16 @@ const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
 
 interface Cursor {
-	createdAt: string; // ISO
-	id: string; // row uuid
+	/** Raw Postgres timestamptz text (full precision, including microseconds
+	 *  if present). Carried as text — never round-tripped through a JS
+	 *  Date — so the next page's tuple comparison against the row's full-
+	 *  precision createdAt can't skip rows that share a millisecond
+	 *  with the cursor row but differ in microseconds (Codex round 1 P1). */
+	createdAt: string;
+	id: string;
 }
+
+const CURSOR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function encodeCursor(cursor: Cursor): string {
 	return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
@@ -502,8 +509,13 @@ function decodeCursor(raw: string): Cursor | null {
 		const json = Buffer.from(raw, 'base64url').toString('utf8');
 		const parsed = JSON.parse(json) as Partial<Cursor>;
 		if (typeof parsed.createdAt !== 'string' || typeof parsed.id !== 'string') return null;
-		// Validate the timestamp parses — otherwise a craft input could
-		// pass through and trip Postgres's date parser as a 500.
+		// Validate the id looks like a uuid — otherwise the `::uuid` cast in
+		// the tuple comparison below trips a Postgres parse error that
+		// surfaces as 500 instead of the intended structured 400
+		// (Codex round 1 P2).
+		if (!CURSOR_UUID_RE.test(parsed.id)) return null;
+		// Validate the timestamp at least parses — Postgres is stricter
+		// than JS Date so a junk string would otherwise reach the DB.
 		if (Number.isNaN(new Date(parsed.createdAt).getTime())) return null;
 		return { createdAt: parsed.createdAt, id: parsed.id };
 	} catch {
@@ -590,6 +602,14 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 			ogTitle: renderedImages.ogTitle,
 			ogDescription: renderedImages.ogDescription,
 			createdAt: renderedImages.createdAt,
+			// Pull the raw Postgres text representation alongside the parsed
+			// Date. JS truncates timestamptz to milliseconds at parse time,
+			// so encoding `createdAt.toISOString()` into the cursor would
+			// skip microsecond-disambiguated rows on the next page
+			// (Codex round 1 P1). The text preserves Postgres's full
+			// precision and is round-tripped verbatim via `::timestamptz`
+			// in the tuple comparison.
+			createdAtText: sql<string>`${renderedImages.createdAt}::text`,
 			lastAccessedAt: renderedImages.lastAccessedAt,
 			expiresAt: renderedImages.expiresAt
 		})
@@ -603,7 +623,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 	const page = hasMore ? rows.slice(0, limit) : rows;
 	const last = page[page.length - 1];
 	const nextCursor =
-		hasMore && last ? encodeCursor({ createdAt: last.createdAt.toISOString(), id: last.id }) : null;
+		hasMore && last ? encodeCursor({ createdAt: last.createdAtText, id: last.id }) : null;
 
 	const appUrl = publicAppOrigin(url.origin);
 	const items = page.map((row) => ({
