@@ -59,6 +59,22 @@ describe('parseArgs', () => {
 		);
 	});
 
+	it('rejects empty --reap-after-days (Number("") === 0 would disable the grace)', () => {
+		expect(() => parseArgsForTesting(['--reap-after-days='])).toThrow(/Invalid --reap-after-days/);
+		expect(() => parseArgsForTesting(['--reap-after-days'])).toThrow(/Invalid --reap-after-days/);
+	});
+
+	it('rejects empty --max-rows', () => {
+		expect(() => parseArgsForTesting(['--max-rows='])).toThrow(/Invalid --max-rows/);
+		expect(() => parseArgsForTesting(['--max-rows'])).toThrow(/Invalid --max-rows/);
+	});
+
+	it('rejects fractional --reap-after-days', () => {
+		expect(() => parseArgsForTesting(['--reap-after-days=0.5'])).toThrow(
+			/Invalid --reap-after-days/
+		);
+	});
+
 	it('rejects unknown args', () => {
 		expect(() => parseArgsForTesting(['--surprise'])).toThrow(/Unknown argument/);
 	});

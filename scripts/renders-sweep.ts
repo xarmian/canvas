@@ -74,6 +74,10 @@ export function parseArgsForTesting(argv: string[]): ParsedArgs {
 		}
 		if (raw.startsWith('--max-rows')) {
 			const v = eq > 0 ? raw.slice(eq + 1) : '';
+			// Empty value (e.g. `--max-rows=` or bare `--max-rows`) is a
+			// usage error, NOT a silent zero. Reject before Number()
+			// coerces it (Number('') === 0). Same logic on reap-after-days.
+			if (v === '') throw new Error(`Invalid --max-rows: (missing)`);
 			const n = Number(v);
 			if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
 				throw new Error(`Invalid --max-rows: ${v}`);
@@ -83,8 +87,12 @@ export function parseArgsForTesting(argv: string[]): ParsedArgs {
 		}
 		if (raw.startsWith('--reap-after-days')) {
 			const v = eq > 0 ? raw.slice(eq + 1) : '';
+			// Critical: Number('') === 0 would silently disable the grace
+			// window and reap every soft-deleted row immediately
+			// (Codex round 2). Reject empty + require an integer.
+			if (v === '') throw new Error(`Invalid --reap-after-days: (missing)`);
 			const n = Number(v);
-			if (!Number.isFinite(n) || n < 0) {
+			if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
 				throw new Error(`Invalid --reap-after-days: ${v}`);
 			}
 			args.reapAfterDays = n;
