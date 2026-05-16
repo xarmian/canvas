@@ -14,6 +14,13 @@
 		lastUsedAt: string | Date | null;
 		revokedAt: string | Date | null;
 		createdAt: string | Date;
+		// Per-key 30-day usage (TASK-197). `requestCount` is a row count
+		// from `render_events`; `last429At` is the most recent throttled
+		// request. Both come from the batched server load — never null,
+		// always a number / ISO-or-null.
+		requestCount: number;
+		last429At: string | null;
+		lastErrorAt: string | null;
 	};
 
 	// Create-flow state
@@ -122,6 +129,25 @@
 		const date = typeof value === 'string' ? new Date(value) : value;
 		return date.toLocaleString();
 	}
+
+	/** Coarse "Xh ago / Yd ago" formatter for the Last 429 column. Same
+	 *  rounding ladder as `/account/storage` (TASK-173) so the two
+	 *  surfaces feel consistent. Returns `'—'` for never-throttled keys
+	 *  so the column reads cleanly without a `null`-vs-`undefined` UX
+	 *  bug. */
+	function formatRelative(value: string | null): string {
+		if (!value) return '—';
+		const diffMs = Date.now() - new Date(value).getTime();
+		if (diffMs < 60_000) return 'just now';
+		const min = Math.floor(diffMs / 60_000);
+		if (min < 60) return `${min}m ago`;
+		const hr = Math.floor(min / 60);
+		if (hr < 24) return `${hr}h ago`;
+		const day = Math.floor(hr / 24);
+		if (day < 30) return `${day}d ago`;
+		const mo = Math.floor(day / 30);
+		return mo < 12 ? `${mo}mo ago` : `${Math.floor(mo / 12)}y ago`;
+	}
 </script>
 
 <svelte:head>
@@ -162,6 +188,8 @@
 					<th scope="col">Prefix</th>
 					<th scope="col">Created</th>
 					<th scope="col">Last used</th>
+					<th scope="col" class="num">Requests (30d)</th>
+					<th scope="col">Last 429</th>
 					<th scope="col">Status</th>
 					<th scope="col"><span class="sr-only">Actions</span></th>
 				</tr>
@@ -173,6 +201,18 @@
 						<td><code class="prefix">{row.prefix}…</code></td>
 						<td>{formatDate(row.createdAt)}</td>
 						<td>{formatDate(row.lastUsedAt)}</td>
+						<!--
+							Per-key 30-day counters (TASK-197). Revoked keys keep
+							their history — events don't care about revokedAt —
+							so the columns render the same way whether the key
+							is active or revoked. `requestCount` is always a
+							number (zero for never-used); `last429At` may be
+							null, formatted as '—'.
+						-->
+						<td class="num" data-testid="key-request-count">
+							{row.requestCount.toLocaleString()}
+						</td>
+						<td data-testid="key-last-429">{formatRelative(row.last429At)}</td>
 						<td>
 							{#if row.revokedAt}
 								<span class="badge badge-revoked" data-testid="status-revoked">Revoked</span>
@@ -341,6 +381,13 @@
 		font-weight: 600;
 		font-size: var(--text-sm);
 		color: var(--color-text-muted);
+	}
+
+	/* TASK-197: Requests (30d) column is a count — right-align + tabular
+	   nums so digits line up cleanly across rows. */
+	.key-table .num {
+		text-align: right;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.prefix {
