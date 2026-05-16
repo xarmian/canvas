@@ -43,6 +43,13 @@
 			"when": 1778897569644,
 			"tag": "0005_cynical_earthquake",
 			"breakpoints": true
+		},
+		{
+			"idx": 6,
+			"version": "7",
+			"when": 1778934362803,
+			"tag": "0006_fresh_stark_industries",
+			"breakpoints": true
 		}
 	]
 }
