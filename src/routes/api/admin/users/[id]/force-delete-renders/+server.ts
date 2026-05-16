@@ -36,15 +36,35 @@ export const POST: RequestHandler = async ({ locals, params }) => {
 		.limit(1);
 	if (!targetRows[0]) error(404, 'User not found');
 
-	const deleted = await db
-		.update(renderedImages)
-		.set({ deletedAt: new Date() })
-		.where(and(eq(renderedImages.userId, params.id), isNull(renderedImages.deletedAt)))
-		.returning({ storageKey: renderedImages.storageKey });
+	// Soft-delete + audit row commit atomically: if the audit insert
+	// fails we don't want a destructive action with no trail. Blob
+	// cleanup is best-effort (the sweep CLI reaps leftovers from the DB
+	// rows, which are the source of truth) so it deliberately runs
+	// AFTER the transaction commits — a failed blob delete must not
+	// roll back the soft-delete.
+	const deleted = await db.transaction(async (tx) => {
+		const rows = await tx
+			.update(renderedImages)
+			.set({ deletedAt: new Date() })
+			.where(and(eq(renderedImages.userId, params.id), isNull(renderedImages.deletedAt)))
+			.returning({ storageKey: renderedImages.storageKey });
+
+		await recordAdminAction(
+			{
+				actor: { id: locals.user!.id, email: locals.user!.email },
+				action: 'force_delete_user_renders',
+				targetUserId: params.id,
+				payload: { deletedRenderCount: rows.length }
+			},
+			tx
+		);
+
+		return rows;
+	});
 
 	// Best-effort parallel blob cleanup. Each delete swallows its own
-	// error so a single storage hiccup doesn't tank the batch; the DB
-	// row is the source of truth and the sweep CLI reaps leftovers.
+	// error so a single storage hiccup doesn't tank the batch; the
+	// sweep CLI reaps leftovers on its next run.
 	const storage = getStorage();
 	await Promise.all(
 		deleted.map((row) =>
@@ -56,13 +76,6 @@ export const POST: RequestHandler = async ({ locals, params }) => {
 			})
 		)
 	);
-
-	await recordAdminAction({
-		actor: { id: locals.user.id, email: locals.user.email },
-		action: 'force_delete_user_renders',
-		targetUserId: params.id,
-		payload: { deletedRenderCount: deleted.length }
-	});
 
 	return json({ deleted: deleted.length });
 };

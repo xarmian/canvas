@@ -25,8 +25,19 @@ export type AdminAuditInput = {
 	payload?: Record<string, unknown>;
 };
 
-export async function recordAdminAction(input: AdminAuditInput): Promise<void> {
-	await db.insert(adminAuditLog).values({
+/**
+ * The minimal shape `recordAdminAction` needs from its executor. Both
+ * the top-level `db` and a drizzle transaction object structurally
+ * satisfy this, so callers can hand in either — useful when the audit
+ * insert needs to land atomically with another mutation.
+ */
+type AdminAuditExecutor = Pick<typeof db, 'insert'>;
+
+export async function recordAdminAction(
+	input: AdminAuditInput,
+	executor: AdminAuditExecutor = db
+): Promise<void> {
+	await executor.insert(adminAuditLog).values({
 		actorId: input.actor.id,
 		actorEmail: input.actor.email,
 		action: input.action,
