@@ -57,13 +57,15 @@
 		"@napi-rs/canvas": "^0.1.97",
 		"@node-rs/argon2": "2.0.2",
 		"better-auth": "^1.6.3",
+		"chart.js": "4.5.1",
 		"dotenv": "^17.4.2",
 		"drizzle-orm": "^0.45.2",
 		"fabric": "^7.2.0",
 		"mime-types": "^3.0.2",
 		"nanoid": "^5.1.7",
 		"postgres": "^3.4.9",
-		"sharp": "^0.34.5"
+		"sharp": "^0.34.5",
+		"svelte-chartjs": "4.0.1"
 	},
 	"pnpm": {
 		"onlyBuiltDependencies": [
