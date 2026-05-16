@@ -22,6 +22,18 @@
 		/** All unique parameter bindings present on the canvas, used to render
 		 * the "Using this template" documentation section when published. */
 		bindings?: PublishModalBinding[];
+		/** Current user-typed test values from the editor's params panel,
+		 * keyed by param name. When provided, snippet generators prefer
+		 * `liveValues[name]` over the binding's default — so the
+		 * copy-paste snippets reflect what the user is previewing in the
+		 * editor right now, not just the canonical defaults. Reactivity
+		 * contract: the parent passes its $state-backed `testParams`
+		 * object directly, so edits in the params panel flow into the
+		 * modal's derived snippet text on the next microtask without
+		 * needing to close/reopen the modal. Empty-string values are
+		 * treated as "use the binding default" to match the public
+		 * renderer's omit-to-default semantics. */
+		liveValues?: Record<string, string>;
 		/** Set when the editor couldn't fully persist pending edits before
 		 * opening the modal — the bindings snapshot may not match what
 		 * /c/[slug]/image.png currently renders. We still render the docs
@@ -51,6 +63,7 @@
 		slug,
 		published,
 		bindings = [],
+		liveValues = {},
 		bindingsStale = false,
 		onClose,
 		onPublishedChange,
@@ -783,12 +796,33 @@
 		}
 	}
 
+	/** Resolve the example value for a binding, preferring (in order):
+	 *   1. The user's live test value from the editor params panel
+	 *      (`liveValues[name]`), if non-empty.
+	 *   2. The binding's declared default (`b.default`), if non-empty.
+	 *   3. A representative `sampleFor()` placeholder based on the
+	 *      source property.
+	 *
+	 * Empty strings at tier 1 and 2 fall through to the next tier — this
+	 * matches the public renderer, which treats an empty value the same
+	 * as omitting the param (binding default applies). Reading
+	 * `liveValues[b.name]` inside this function is what wires the modal's
+	 * derived snippet text to the parent's `$state`-backed
+	 * `testParams` proxy: edits in the params panel re-trigger the
+	 * deriveds without needing to close/reopen the modal. */
+	function resolveExampleValue(b: PublishModalBinding): string {
+		const live = liveValues[b.name];
+		if (live) return live;
+		if (b.default) return b.default;
+		return sampleFor(b.sourceLabel);
+	}
+
 	function buildQueryString(): string {
 		if (bindings.length === 0) return '';
 		const parts: string[] = [];
 		for (const b of bindings) {
 			if (!b.name) continue;
-			const value = b.default || sampleFor(b.sourceLabel);
+			const value = resolveExampleValue(b);
 			parts.push(`${encodeURIComponent(b.name)}=${encodeURIComponent(value)}`);
 		}
 		return parts.length ? `?${parts.join('&')}` : '';

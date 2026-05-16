@@ -1682,6 +1682,7 @@
 		slug={canvasSlug}
 		published={isPublished}
 		bindings={publishBindings}
+		liveValues={testParams}
 		bindingsStale={publishBindingsStale}
 		onClose={() => (showPublishModal = false)}
 		onPublishedChange={(next) => (isPublished = next)}
