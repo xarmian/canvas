@@ -3,7 +3,7 @@ import { eq, max } from 'drizzle-orm';
 import type { PageServerLoad } from './$types';
 import { db } from '$lib/server/db';
 import { session, user } from '$lib/server/db/schema';
-import { getUserRenderStats } from '$lib/server/render-stats';
+import { getUserRecentRenders, getUserRenderStats } from '$lib/server/render-stats';
 
 /**
  * Per-user admin drilldown (PLAN-180).
@@ -14,7 +14,7 @@ import { getUserRenderStats } from '$lib/server/render-stats';
  * layout, every admin page follows.
  *
  * Hydrated sections: identity card (TASK-182), storage stat tiles
- * (TASK-183). Still stubbed: recent renders table (TASK-184), API
+ * (TASK-183), recent renders table (TASK-184). Still stubbed: API
  * keys (TASK-187).
  */
 export const load: PageServerLoad = async ({ params }) => {
@@ -54,20 +54,12 @@ export const load: PageServerLoad = async ({ params }) => {
 		lastSignInAt
 	};
 
-	// Reuses the same aggregate /account/storage runs for the session
-	// user, scoped here to the path-param target user. Keeping the
-	// query shared (rather than forking) means the two views can't
-	// drift on what counts as a "live render."
+	// Reuses the same aggregate + recent-renders queries /account/storage
+	// runs for the session user, scoped here to the path-param target
+	// user. Keeping the queries shared (rather than forking) means the
+	// two views can't drift on what counts as a "live render."
 	const storageStats = await getUserRenderStats(row.id);
-
-	type RecentRender = {
-		id: string;
-		shortId: string;
-		createdAt: string;
-		sizeBytes: number;
-	};
-	// Hydrated by TASK-184 (recently-used renders table).
-	const recentRenders: RecentRender[] = [];
+	const recentRenders = await getUserRecentRenders(row.id);
 
 	type ApiKeyRow = {
 		id: string;

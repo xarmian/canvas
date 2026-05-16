@@ -127,13 +127,44 @@
 	</div>
 </div>
 
-<!-- Recently-used renders table — TASK-184 hydrates. -->
+<!-- Recently-used renders table -->
 <div class="card" data-testid="user-recent-renders">
 	<header class="card-header">
-		<h3>Recently-used renders</h3>
-		<p class="card-blurb">10 most recent — populated in a follow-up.</p>
+		<h3>Recently used</h3>
+		<p class="card-blurb">Last 10 renders sorted by access time.</p>
 	</header>
-	<div class="card-body muted empty">No data yet.</div>
+	{#if data.recentRenders.length === 0}
+		<div class="card-body muted empty">No renders for this user.</div>
+	{:else}
+		<table class="recent-table" data-testid="recent-renders">
+			<thead>
+				<tr>
+					<th scope="col">Short ID</th>
+					<th scope="col">Canvas</th>
+					<th scope="col">Format</th>
+					<th scope="col">Size</th>
+					<th scope="col">Created</th>
+					<th scope="col">Last used</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each data.recentRenders as row (row.shortId)}
+					<tr>
+						<td>
+							<a href="/i/{row.shortId}" target="_blank" rel="noopener" class="short-id-link">
+								{row.shortId}
+							</a>
+						</td>
+						<td>{row.canvasName ?? '—'}</td>
+						<td><code>{row.format}</code></td>
+						<td>{formatBytes(row.sizeBytes)}</td>
+						<td>{formatRelative(row.createdAt)}</td>
+						<td>{formatRelative(row.lastAccessedAt)}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	{/if}
 </div>
 
 <!-- API keys — TASK-187 hydrates. -->
@@ -272,5 +303,35 @@
 
 	.mono {
 		font-family: var(--font-mono, monospace);
+	}
+
+	.recent-table {
+		width: 100%;
+		border-collapse: collapse;
+	}
+
+	.recent-table th,
+	.recent-table td {
+		text-align: left;
+		padding: var(--spacing-3) var(--spacing-4);
+		border-top: 1px solid var(--color-border);
+		font-size: var(--text-sm);
+		vertical-align: middle;
+	}
+
+	.recent-table th {
+		background: var(--color-surface-muted);
+		font-weight: 600;
+		color: var(--color-text-muted);
+	}
+
+	.short-id-link {
+		font-family: var(--font-mono, monospace);
+		color: var(--color-primary);
+		text-decoration: none;
+	}
+
+	.short-id-link:hover {
+		text-decoration: underline;
 	}
 </style>
