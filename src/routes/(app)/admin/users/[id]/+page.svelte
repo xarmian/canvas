@@ -1,5 +1,37 @@
 <script lang="ts">
 	let { data } = $props();
+
+	// Inline relative-time helper, matching /admin/storage's formatRelative
+	// shape. Worth extracting once a third caller appears; until then,
+	// duplicating ~15 lines keeps the surface small and avoids a churn PR.
+	function formatRelative(value: string | null): string {
+		if (!value) return '—';
+		const date = new Date(value);
+		const diffMs = Date.now() - date.getTime();
+		if (diffMs < 60_000) return 'just now';
+		const min = Math.floor(diffMs / 60_000);
+		if (min < 60) return `${min}m ago`;
+		const hr = Math.floor(min / 60);
+		if (hr < 24) return `${hr}h ago`;
+		const day = Math.floor(hr / 24);
+		if (day < 30) return `${day}d ago`;
+		const mo = Math.floor(day / 30);
+		if (mo < 12) return `${mo}mo ago`;
+		return `${Math.floor(mo / 12)}y ago`;
+	}
+
+	const dateFormatter = new Intl.DateTimeFormat(undefined, {
+		year: 'numeric',
+		month: 'short',
+		day: 'numeric',
+		hour: '2-digit',
+		minute: '2-digit'
+	});
+
+	function formatDateTime(value: string | null): string {
+		if (!value) return '—';
+		return dateFormatter.format(new Date(value));
+	}
 </script>
 
 <svelte:head>
@@ -17,7 +49,7 @@
 	<a class="back-link" href="/admin/storage" data-testid="back-to-storage">← Storage admin</a>
 </div>
 
-<!-- Identity card — TASK-182 hydrates email/created_at/last sign-in. -->
+<!-- Identity card -->
 <div class="card" data-testid="user-identity-card">
 	<header class="card-header">
 		<h3>{data.targetUser.email}</h3>
@@ -25,7 +57,36 @@
 			User <code>{data.targetUser.id}</code>
 		</p>
 	</header>
-	<div class="card-body muted">Identity details land in a follow-up.</div>
+	<dl class="identity-list">
+		<div class="identity-row">
+			<dt>Email</dt>
+			<dd data-testid="identity-email">
+				<code class="mono">{data.targetUser.email}</code>
+			</dd>
+		</div>
+		<div class="identity-row">
+			<dt>Created</dt>
+			<dd data-testid="identity-created-at">
+				<time datetime={data.targetUser.createdAt}>
+					{formatDateTime(data.targetUser.createdAt)}
+					<span class="muted">({formatRelative(data.targetUser.createdAt)})</span>
+				</time>
+			</dd>
+		</div>
+		<div class="identity-row">
+			<dt>Last sign-in</dt>
+			<dd data-testid="identity-last-sign-in">
+				{#if data.targetUser.lastSignInAt}
+					<time datetime={data.targetUser.lastSignInAt}>
+						{formatDateTime(data.targetUser.lastSignInAt)}
+						<span class="muted">({formatRelative(data.targetUser.lastSignInAt)})</span>
+					</time>
+				{:else}
+					<span class="muted">Never</span>
+				{/if}
+			</dd>
+		</div>
+	</dl>
 </div>
 
 <!-- Stat tiles — TASK-183 hydrates render count, total bytes, oldest, most recent. -->
@@ -160,5 +221,38 @@
 
 	.muted {
 		color: var(--color-text-muted);
+	}
+
+	.identity-list {
+		margin: 0;
+		padding: 0;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.identity-row {
+		display: grid;
+		grid-template-columns: minmax(8rem, 12rem) 1fr;
+		gap: var(--spacing-4);
+		padding: var(--spacing-3) var(--spacing-4);
+		font-size: var(--text-sm);
+		align-items: baseline;
+	}
+
+	.identity-row + .identity-row {
+		border-top: 1px solid var(--color-border);
+	}
+
+	.identity-row dt {
+		color: var(--color-text-muted);
+		font-weight: 500;
+	}
+
+	.identity-row dd {
+		margin: 0;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.mono {
+		font-family: var(--font-mono, monospace);
 	}
 </style>

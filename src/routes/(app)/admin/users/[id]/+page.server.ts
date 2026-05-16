@@ -1,8 +1,8 @@
 import { error } from '@sveltejs/kit';
-import { eq } from 'drizzle-orm';
+import { eq, max } from 'drizzle-orm';
 import type { PageServerLoad } from './$types';
 import { db } from '$lib/server/db';
-import { user } from '$lib/server/db/schema';
+import { session, user } from '$lib/server/db/schema';
 
 /**
  * Per-user admin drilldown — scaffold (TASK-181 / PLAN-180).
@@ -32,14 +32,25 @@ export const load: PageServerLoad = async ({ params }) => {
 	const row = rows[0];
 	if (!row) error(404, 'User not found');
 
+	// Last sign-in = MAX(session.created_at) for the target user.
+	// session.created_at is set once when the session row is inserted
+	// (i.e. when the user signed in); session.updated_at is bumped on
+	// each authenticated request (rolling expiry) and would conflate
+	// active use with sign-in. The task spec is "Last sign-in," so we
+	// take created_at.
+	const sessionRows = await db
+		.select({ lastSignInAt: max(session.createdAt) })
+		.from(session)
+		.where(eq(session.userId, row.id));
+	const lastSignInAt = sessionRows[0]?.lastSignInAt?.toISOString() ?? null;
+
 	const targetUser = {
 		id: row.id,
 		email: row.email,
 		name: row.name,
 		image: row.image,
 		createdAt: row.createdAt.toISOString(),
-		// Hydrated by TASK-182 (identity card) — MAX(session.created_at).
-		lastSignInAt: null as string | null
+		lastSignInAt
 	};
 
 	// Hydrated by TASK-183 (per-user storage stat tiles).
