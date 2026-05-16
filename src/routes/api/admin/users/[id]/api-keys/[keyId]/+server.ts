@@ -16,7 +16,7 @@
  *     trail (same pattern as TASK-186's force-delete-all-renders).
  */
 import { error, json } from '@sveltejs/kit';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { apiKeys } from '$lib/server/db/schema';
@@ -48,15 +48,29 @@ export const DELETE: RequestHandler = async ({ locals, params }) => {
 
 	// Idempotent: re-revoking a revoked key preserves the original
 	// timestamp (so the UI keeps showing "Revoked 3 days ago" rather
-	// than jumping to "just now" on an accidental double-click). We
-	// also skip the audit-log entry in the no-op case — a re-revoke
-	// isn't a new admin action.
+	// than jumping to "just now" on an accidental double-click) and
+	// skips the audit-log entry — a re-revoke isn't a new admin
+	// action. The pre-check below is an optimization for the common
+	// case; CORRECTNESS for the concurrent case comes from the
+	// `isNull(revokedAt)` predicate inside the transactional UPDATE
+	// (Codex round 1) which guarantees only one of N concurrent
+	// revokes updates the row + writes the audit entry.
 	if (existing.revokedAt !== null) {
 		return new Response(null, { status: 204 });
 	}
 
 	await db.transaction(async (tx) => {
-		await tx.update(apiKeys).set({ revokedAt: new Date() }).where(eq(apiKeys.id, existing.id));
+		const updated = await tx
+			.update(apiKeys)
+			.set({ revokedAt: new Date() })
+			.where(and(eq(apiKeys.id, existing.id), isNull(apiKeys.revokedAt)))
+			.returning({ id: apiKeys.id });
+
+		// Lost the race against another concurrent revoke — the row
+		// was already revoked between our pre-check and this UPDATE.
+		// Skip the audit row; the winning request already wrote one.
+		if (updated.length === 0) return;
+
 		await recordAdminAction(
 			{
 				actor: { id: locals.user!.id, email: locals.user!.email },
