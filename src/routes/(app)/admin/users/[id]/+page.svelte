@@ -269,6 +269,8 @@
 					<th scope="col">Scopes</th>
 					<th scope="col">Created</th>
 					<th scope="col">Last used</th>
+					<th scope="col" class="num">Requests (30d)</th>
+					<th scope="col">Last 429</th>
 					<th scope="col">Status</th>
 					<th scope="col" class="actions-col">Actions</th>
 				</tr>
@@ -288,6 +290,16 @@
 						</td>
 						<td>{formatRelative(key.createdAt)}</td>
 						<td>{formatRelative(key.lastUsedAt)}</td>
+						<!--
+							Per-key 30-day counters mirroring /account/api-keys
+							(TASK-199 mirrors TASK-197). Same batched helper, so
+							the admin and the user see identical numbers for the
+							same key. Revoked keys keep their history.
+						-->
+						<td class="num" data-testid="key-request-count">
+							{key.requestCount.toLocaleString()}
+						</td>
+						<td data-testid="key-last-429">{formatRelative(key.last429At)}</td>
 						<td>
 							{#if revoked}
 								<span class="badge badge-revoked">
@@ -611,6 +623,14 @@
 		background: var(--color-surface-muted);
 		font-weight: 600;
 		color: var(--color-text-muted);
+	}
+
+	/* TASK-199: Requests (30d) column — right-align + tabular-nums so
+	   digits line up across rows, matching the /account/api-keys
+	   variant from TASK-197. */
+	.keys-table .num {
+		text-align: right;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.keys-table tr.revoked td {

@@ -4,6 +4,7 @@ import type { PageServerLoad } from './$types';
 import { db } from '$lib/server/db';
 import { apiKeys, session, user } from '$lib/server/db/schema';
 import { getUserRecentRenders, getUserRenderStats } from '$lib/server/render-stats';
+import { getApiKeyRenderUsageBatch } from '$lib/server/render-events';
 
 /**
  * Per-user admin drilldown (PLAN-180).
@@ -78,15 +79,25 @@ export const load: PageServerLoad = async ({ params }) => {
 		.from(apiKeys)
 		.where(eq(apiKeys.userId, row.id))
 		.orderBy(desc(apiKeys.createdAt));
-	const userApiKeys = apiKeyRows.map((k) => ({
-		id: k.id,
-		name: k.name,
-		prefix: k.prefix,
-		scopes: k.scopes,
-		createdAt: k.createdAt.toISOString(),
-		lastUsedAt: k.lastUsedAt ? k.lastUsedAt.toISOString() : null,
-		revokedAt: k.revokedAt ? k.revokedAt.toISOString() : null
-	}));
+	// Per-key 30-day counters (TASK-199). Same batched helper the
+	// user's own `/account/api-keys` page uses in TASK-197, so the
+	// numbers admin sees match what the user sees on their own page.
+	const usageByKey = await getApiKeyRenderUsageBatch(apiKeyRows.map((k) => k.id));
+	const userApiKeys = apiKeyRows.map((k) => {
+		const usage = usageByKey.get(k.id) ?? { total: 0, last429At: null, lastErrorAt: null };
+		return {
+			id: k.id,
+			name: k.name,
+			prefix: k.prefix,
+			scopes: k.scopes,
+			createdAt: k.createdAt.toISOString(),
+			lastUsedAt: k.lastUsedAt ? k.lastUsedAt.toISOString() : null,
+			revokedAt: k.revokedAt ? k.revokedAt.toISOString() : null,
+			requestCount: usage.total,
+			last429At: usage.last429At,
+			lastErrorAt: usage.lastErrorAt
+		};
+	});
 
 	return {
 		targetUser,
