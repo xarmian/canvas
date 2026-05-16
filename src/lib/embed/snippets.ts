@@ -360,6 +360,95 @@ function defaultLiteralForType(tsType: 'string' | 'number' | 'boolean'): string 
 	return '';
 }
 
+/** Python `requests`-based snippet. Drives the publish modal's
+ * Python tab (wired in TASK-211). Emits a self-contained script:
+ * `import requests`, build the `params` dict (when applicable),
+ * `requests.get(url, params=params)`, `raise_for_status()`, write the
+ * bytes to `card.png`. Targets Python 3.9+ with `requests` installed.
+ *
+ * Type coercion at the Python layer (when `paramSchemas` is supplied):
+ *   - number  → unquoted Python literal (`12.5`), with quoted-string
+ *     fallback when the raw value isn't finite-numeric so the
+ *     snippet stays runnable
+ *   - boolean → quoted lowercase string (`"true"` / `"false"`), or
+ *     the quoted raw value if it isn't a canonical boolean —
+ *     matches the renderer, which parses query strings and so
+ *     receives `"true"` regardless of whether the caller typed True
+ *     or 'true'. We never emit Python's `True`/`False` literals
+ *     because `requests` would stringify them to `"True"` /
+ *     `"False"` (capital T/F) which the renderer wouldn't recognize.
+ *   - everything else → quoted Python string with `pyString` escaping
+ *
+ * Without `paramSchemas`, every value is emitted as a quoted string —
+ * safe default that matches what the renderer would see if the
+ * snippet were sent unmodified. */
+export function python(input: SnippetInput): string {
+	const hasParams = hasRenderableParams(input);
+	// URL literal: when a version token is set, bake `?_v=` directly
+	// into the URL. requests will merge query params from the URL with
+	// the `params=` dict, so baking `_v` into the URL keeps the params
+	// dict free of reserved underscore-prefixed keys (cleaner
+	// snippet, harder to break by editing).
+	const urlLiteral = input.versionToken
+		? `${input.imageUrl}?_v=${input.versionToken}`
+		: input.imageUrl;
+
+	const lines: string[] = [`import requests`, ``];
+
+	if (hasParams) {
+		const schemaTypes = new Map<string, ParamType>(
+			(input.paramSchemas ?? []).map((s) => [s.name, s.type])
+		);
+		const paramLines = Object.entries(input.params).map(([k, v]) => {
+			const t = schemaTypes.get(k);
+			return `\t${pyString(k)}: ${pyLiteralFor(v, t)},`;
+		});
+		lines.push(`params = {`, ...paramLines, `}`, ``);
+		lines.push(`response = requests.get(`, `\t${pyString(urlLiteral)},`, `\tparams=params,`, `)`);
+	} else {
+		lines.push(`response = requests.get(${pyString(urlLiteral)})`);
+	}
+	lines.push(
+		`response.raise_for_status()`,
+		``,
+		`with open("card.png", "wb") as f:`,
+		`\tf.write(response.content)`
+	);
+	return lines.join('\n');
+}
+
+/** Render a single value as its Python literal. Booleans use the
+ * stringified form (renderer parses query strings, never sees Python
+ * objects); numbers go through unquoted when finite; everything else
+ * is a quoted string. */
+function pyLiteralFor(rawValue: string, type: ParamType | undefined): string {
+	if (type === 'number') {
+		const n = Number(rawValue);
+		return Number.isFinite(n) ? String(n) : pyString(rawValue);
+	}
+	if (type === 'boolean') {
+		const normalized = rawValue.trim().toLowerCase();
+		if (normalized === 'true') return pyString('true');
+		if (normalized === 'false') return pyString('false');
+		return pyString(rawValue);
+	}
+	return pyString(rawValue);
+}
+
+/** Double-quoted Python string literal. Escapes backslash, double
+ * quote, newline, and carriage return — the characters that would
+ * otherwise break out of a `"..."` Python string literal or change
+ * its line layout. Unicode passes through unchanged: Python 3 source
+ * is UTF-8 by default. */
+function pyString(value: string): string {
+	const escaped = value
+		.replace(/\\/g, '\\\\')
+		.replace(/"/g, '\\"')
+		.replace(/\n/g, '\\n')
+		.replace(/\r/g, '\\r');
+	return `"${escaped}"`;
+}
+
 /** Shell-safe `curl -o canvas.png '<URL>'`. Exposed as a free
  * function so the publish-modal docs area can use it on the
  * un-versioned `exampleImageUrl` too (the curl row sits outside the
