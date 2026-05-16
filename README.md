@@ -122,6 +122,37 @@ Flags:
 
 Output is structured JSON-lines logs (`sweep_start`, `expire_done`, `reap_done`, `sweep_end`). Concurrency-safe via `FOR UPDATE SKIP LOCKED` inside a transaction — two simultaneous invocations partition the work instead of double-processing rows.
 
+### Render event log
+
+Canvas logs baked renders (`POST /api/v1/renders`) and editor previews to a narrow `render_events` table — no payload, no IPs in cleartext, just daily-salted hashes — and surfaces the aggregates at [`/account/usage`](#) and [`/admin/usage`](#). One row per render: source (`baked-api` / `baked-app` / `preview` today; on-the-fly public renders log under the `on-the-fly` source once that hook lands), canvas, owner, requester, API key, format, params hash, cache-hit flag, duration, status code, optional `ip_hash`.
+
+Retention defaults to **30 days**. Configure via `RENDER_EVENTS_RETENTION_DAYS`. A daily cron drops rows past the cutoff:
+
+```bash
+# Manual run (dev)
+pnpm events:sweep
+
+# Inside the production container
+docker compose -f docker-compose.prod.yml exec app node scripts/render-events-sweep.mjs
+
+# Cron (daily at 03:05, prod container) — mirrors the renders:sweep schedule
+5 3 * * * docker compose -f /opt/canvas/docker-compose.prod.yml exec -T app \
+  node scripts/render-events-sweep.mjs >> /var/log/canvas/events-sweep.log 2>&1
+```
+
+Flags:
+
+| Flag           | Default    | Notes                                                                                         |
+| -------------- | ---------- | --------------------------------------------------------------------------------------------- |
+| `--dry-run`    | off        | Counts rows that _would_ be deleted; mutates nothing.                                         |
+| `--max-rows=N` | _(no cap)_ | Cap per invocation. The default drains the whole backlog in one transaction via a CTE delete. |
+
+Output is a one-line summary (`swept N rows older than YYYY-MM-DD (retention=30d, 37ms)`) — machine-greppable for log monitors. Errors go to stderr with a non-zero exit. Concurrency-safe via the same `FOR UPDATE SKIP LOCKED` pattern as `renders:sweep`.
+
+**Disable the log entirely.** Set `RENDER_EVENTS_RETENTION_DAYS=0`. The insertion hooks still record events, but every row is past the cutoff on the next sweep — the table drains to zero and `/account/usage` / `/admin/usage` show empty states. Not recommended unless you actively don't want the log; the analytics surfaces become useless without it.
+
+**Privacy: IP hashing.** Set `RENDER_EVENTS_IP_SALT` to a long random string (e.g. `openssl rand -base64 32`). The server hashes each requester IP as `sha256(salt + ':' + utc_date + ':' + ip)` — the date component rotates daily so even a static salt prevents long-term cross-day IP correlation. If the env is unset, `ip_hash` stays `NULL` for every row and a single warning logs at process start. Rotate the salt by replacing the env value; existing hashes become uncorrelatable from new ones automatically (which is the point).
+
 ## URL API
 
 ### Render an image
@@ -262,6 +293,8 @@ See [`.env.example`](.env.example) for all configuration options.
 | `RENDER_QUOTA_PER_USER`         | Baked-render row cap per user. Default `1000`.                                |
 | `RENDER_API_RATE_LIMIT_PER_MIN` | Per-API-key steady rate for `POST /api/v1/renders`. Default `60`.             |
 | `RENDER_API_RATE_LIMIT_BURST`   | Per-API-key burst cap. Default `120`. Reads get 5× both values.               |
+| `RENDER_EVENTS_RETENTION_DAYS`  | Retention window for `render_events`. Default `30`. `0` disables the log.     |
+| `RENDER_EVENTS_IP_SALT`         | Long random salt for hashing requester IPs. Unset = `ip_hash` stays NULL.     |
 | `CANVAS_ADMIN_EMAILS`           | Comma-separated allowlist for `/admin/*`. Empty (default) = 403 for everyone. |
 
 ## Scripts
@@ -279,6 +312,7 @@ pnpm db:migrate    # Run migrations (production)
 pnpm test:unit     # Run vitest unit tests
 pnpm test:e2e      # Run Playwright E2E tests
 pnpm renders:sweep # Expire + reap baked-render rows (see Operations)
+pnpm events:sweep  # Trim render_events past RENDER_EVENTS_RETENTION_DAYS
 ```
 
 ## License
