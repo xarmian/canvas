@@ -9,8 +9,9 @@
  * the same shape scoped to a different user id.
  */
 
-import { sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { db } from '$lib/server/db';
+import { canvases, renderedImages } from '$lib/server/db/schema';
 
 export type UserRenderStats = {
 	renderCount: number;
@@ -56,4 +57,45 @@ export async function getUserRenderStats(userId: string): Promise<UserRenderStat
 			? new Date(agg.most_recent_access).toISOString()
 			: null
 	};
+}
+
+export type RecentRender = {
+	shortId: string;
+	canvasName: string | null;
+	sizeBytes: number;
+	format: string;
+	createdAt: string;
+	lastAccessedAt: string;
+};
+
+/**
+ * Most recently used live renders for `userId`, ordered by
+ * last_accessed_at descending. Shape matches what /account/storage
+ * has historically rendered so the same row component works whether
+ * the page is the session user's own storage or the admin drilldown
+ * for a target user.
+ */
+export async function getUserRecentRenders(userId: string, limit = 10): Promise<RecentRender[]> {
+	const rows = await db
+		.select({
+			shortId: renderedImages.shortId,
+			canvasName: canvases.name,
+			sizeBytes: renderedImages.sizeBytes,
+			format: renderedImages.format,
+			createdAt: renderedImages.createdAt,
+			lastAccessedAt: renderedImages.lastAccessedAt
+		})
+		.from(renderedImages)
+		.leftJoin(canvases, eq(canvases.id, renderedImages.canvasId))
+		.where(and(eq(renderedImages.userId, userId), isNull(renderedImages.deletedAt)))
+		.orderBy(desc(renderedImages.lastAccessedAt))
+		.limit(limit);
+	return rows.map((r) => ({
+		shortId: r.shortId,
+		canvasName: r.canvasName,
+		sizeBytes: r.sizeBytes,
+		format: r.format,
+		createdAt: r.createdAt.toISOString(),
+		lastAccessedAt: r.lastAccessedAt.toISOString()
+	}));
 }
