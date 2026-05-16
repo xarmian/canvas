@@ -40,9 +40,9 @@
 	<div>
 		<h2 class="section-title">Storage administration</h2>
 		<p class="section-blurb">
-			Instance-wide aggregates plus a per-user breakdown sorted by total bytes. Per-user details
-			page is a future drilldown — for now click <code>/i/&lt;shortId&gt;</code> links from individual
-			users' /account/storage view.
+			Instance-wide aggregates plus a per-user breakdown sorted by total bytes. Click <strong
+				>View →</strong
+			> in any row to drill into that user's storage detail.
 		</p>
 	</div>
 </div>
@@ -90,9 +90,10 @@
 					<td>{user.renderCount}</td>
 					<td>{formatBytes(user.totalBytes)}</td>
 					<td>{formatRelative(user.lastActiveAt)}</td>
-					<td class="muted">
-						<!-- Per-user detail page is out of scope for v1; inert label -->
-						—
+					<td>
+						<a class="details-link" href="/admin/users/{user.id}" data-testid="user-details-link">
+							View →
+						</a>
 					</td>
 				</tr>
 			{/each}
@@ -241,6 +242,16 @@
 	}
 
 	.card-footer a:hover {
+		text-decoration: underline;
+	}
+
+	.details-link {
+		color: var(--color-primary);
+		text-decoration: none;
+		font-weight: 500;
+	}
+
+	.details-link:hover {
 		text-decoration: underline;
 	}
 </style>
