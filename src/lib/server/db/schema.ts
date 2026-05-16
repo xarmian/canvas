@@ -204,3 +204,33 @@ export const renderedImages = pgTable(
 			.where(sql`${table.deletedAt} IS NULL AND ${table.expiresAt} IS NOT NULL`)
 	]
 );
+
+// ─── Admin Audit Log ─────────────────────────────────────────────────────────
+// Append-only record of destructive admin actions. Written from
+// `$lib/server/admin-audit.ts`. Deliberately no FK constraints on
+// `actor_id` / `target_user_id`: an audit log must remember who-did-what
+// even when the user rows are later removed. Storing the ids as text +
+// a snapshot of the actor's email at-the-time keeps the log
+// human-readable post-hoc without needing the user row to still exist.
+
+export const adminAuditLog = pgTable(
+	'admin_audit_log',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		actorId: text('actor_id').notNull(),
+		actorEmail: text('actor_email').notNull(),
+		// Stable action name, e.g. 'force_delete_user_renders'. Validation
+		// lives in the writer — the schema is intentionally open so new
+		// admin actions don't require a migration each time.
+		action: text('action').notNull(),
+		targetUserId: text('target_user_id'),
+		// Action-specific structured payload, e.g. { deletedRenderCount: 42 }.
+		payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [
+		index('admin_audit_log_actor_idx').on(table.actorId),
+		index('admin_audit_log_target_idx').on(table.targetUserId),
+		index('admin_audit_log_created_idx').on(table.createdAt)
+	]
+);

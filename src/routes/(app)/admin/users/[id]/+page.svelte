@@ -1,5 +1,52 @@
 <script lang="ts">
+	import { Button, Input, Modal } from '$lib/components/ui';
+	import { toast } from '$lib/stores/toast.svelte';
+	import { invalidateAll } from '$app/navigation';
+
 	let { data } = $props();
+
+	// Force-delete flow state. Typed-confirmation modal (CONVE-41:
+	// always use styled components, never window.confirm). `inFlight`
+	// blocks dismissal + re-submission while the POST is running.
+	let forceDeleteOpen = $state(false);
+	let typedConfirm = $state('');
+	let forceDeleteInFlight = $state(false);
+
+	const typedMatches = $derived(
+		typedConfirm.trim().toLowerCase() === data.targetUser.email.toLowerCase()
+	);
+
+	async function forceDeleteAllRenders() {
+		if (forceDeleteInFlight || !typedMatches) return;
+		forceDeleteInFlight = true;
+		try {
+			const res = await fetch(`/api/admin/users/${data.targetUser.id}/force-delete-renders`, {
+				method: 'POST'
+			});
+			if (!res.ok) {
+				const body = (await res.json().catch(() => ({}))) as { message?: string };
+				toast.error(body?.message ?? `Could not delete renders (HTTP ${res.status})`);
+				return;
+			}
+			const { deleted } = (await res.json()) as { deleted: number };
+			toast.success(
+				`Deleted ${deleted} render${deleted === 1 ? '' : 's'} for ${data.targetUser.email}`
+			);
+			forceDeleteOpen = false;
+			typedConfirm = '';
+			await invalidateAll();
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Network error');
+		} finally {
+			forceDeleteInFlight = false;
+		}
+	}
+
+	function closeForceDelete() {
+		if (forceDeleteInFlight) return;
+		forceDeleteOpen = false;
+		typedConfirm = '';
+	}
 
 	// formatBytes + formatRelative are the same helpers /account/storage
 	// and /admin/storage inline. Extracting them into a shared module is
@@ -176,6 +223,74 @@
 	<div class="card-body muted empty">No data yet.</div>
 </div>
 
+<!-- Danger zone — force-delete all renders for this user. -->
+<div class="card danger-zone" data-testid="user-danger-zone">
+	<header class="card-header">
+		<h3>Danger zone</h3>
+		<p class="card-blurb">
+			Irreversible operations on this user's data. Server-side admin check, audit-logged.
+		</p>
+	</header>
+	<div class="danger-row">
+		<div>
+			<strong>Delete all renders</strong>
+			<p class="danger-blurb">
+				Soft-deletes every live render owned by this user.
+				<code>/i/&lt;shortId&gt;</code> URLs stop working immediately.
+			</p>
+		</div>
+		<Button
+			variant="danger"
+			disabled={data.storageStats.renderCount === 0}
+			onclick={() => (forceDeleteOpen = true)}
+			data-testid="force-delete-renders-button"
+		>
+			Delete all {data.storageStats.renderCount} render{data.storageStats.renderCount === 1
+				? ''
+				: 's'}
+		</Button>
+	</div>
+</div>
+
+<Modal
+	open={forceDeleteOpen}
+	title="Force-delete all renders"
+	dismissible={!forceDeleteInFlight}
+	onClose={closeForceDelete}
+>
+	<p class="modal-message">
+		This will soft-delete <strong>{data.storageStats.renderCount}</strong>
+		render{data.storageStats.renderCount === 1 ? '' : 's'} for
+		<code>{data.targetUser.email}</code>. URLs at <code>/i/&lt;shortId&gt;</code> stop working immediately;
+		blob storage is freed by the sweep job.
+	</p>
+	<label class="confirm-label">
+		Type the user's email <code>{data.targetUser.email}</code> to confirm:
+		<Input
+			type="email"
+			bind:value={typedConfirm}
+			placeholder={data.targetUser.email}
+			autocomplete="off"
+			spellcheck="false"
+			disabled={forceDeleteInFlight}
+			data-testid="force-delete-typed-confirm"
+		/>
+	</label>
+	{#snippet footer()}
+		<Button variant="secondary" onclick={closeForceDelete} disabled={forceDeleteInFlight}>
+			Cancel
+		</Button>
+		<Button
+			variant="danger"
+			disabled={!typedMatches || forceDeleteInFlight}
+			onclick={forceDeleteAllRenders}
+			data-testid="force-delete-confirm-button"
+		>
+			{forceDeleteInFlight ? 'Deleting…' : 'Delete all renders'}
+		</Button>
+	{/snippet}
+</Modal>
+
 <style>
 	.page-header {
 		display: flex;
@@ -333,5 +448,41 @@
 
 	.short-id-link:hover {
 		text-decoration: underline;
+	}
+
+	.danger-zone {
+		border-color: rgb(220, 38, 38, 0.4);
+	}
+
+	.danger-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: var(--spacing-4);
+		padding: var(--spacing-4);
+		border-top: 1px solid var(--color-border);
+	}
+
+	.danger-row > div {
+		display: grid;
+		gap: var(--spacing-1);
+	}
+
+	.danger-blurb {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-size: var(--text-sm);
+		max-width: 36rem;
+	}
+
+	.modal-message {
+		margin: 0 0 var(--spacing-3);
+		line-height: 1.5;
+	}
+
+	.confirm-label {
+		display: grid;
+		gap: var(--spacing-2);
+		font-size: var(--text-sm);
 	}
 </style>
