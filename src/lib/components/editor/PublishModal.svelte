@@ -852,6 +852,12 @@
 		shareUrl,
 		slug,
 		query: exampleQuery,
+		// Pass-through for the TypeScript / Python snippet generators
+		// (TASK-209 / TASK-210). Existing HTML / Markdown / OG / URL /
+		// cURL generators ignore this field. The actual TS/Python tab
+		// wiring lands in TASK-211; until then this just keeps the
+		// SnippetInput shape complete.
+		params: resolvedParams,
 		versionToken,
 		includeParams
 	});
