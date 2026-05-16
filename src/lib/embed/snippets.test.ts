@@ -8,6 +8,9 @@ import {
 	urlSnippet,
 	curlSnippet,
 	curlFor,
+	tsSimple,
+	tsTyped,
+	type ParamSchema,
 	type SnippetInput
 } from './snippets';
 
@@ -20,6 +23,7 @@ function input(overrides: Partial<SnippetInput> = {}): SnippetInput {
 		shareUrl: 'https://canvas.example.com/c/card',
 		slug: 'card',
 		query: '?title=Hello&avatar=https%3A%2F%2Fx',
+		params: { title: 'Hello', avatar: 'https://x' },
 		versionToken: null,
 		includeParams: true,
 		...overrides
@@ -179,6 +183,208 @@ describe('curlSnippet', () => {
 		expect(curlSnippet(input())).toBe(
 			"curl -o canvas.png 'https://canvas.example.com/c/card/image.png?title=Hello&avatar=https%3A%2F%2Fx'"
 		);
+	});
+});
+
+describe('tsSimple', () => {
+	it('emits a Record<string,string> + URLSearchParams fetch when params are present', () => {
+		const out = tsSimple(input());
+		expect(out).toContain('const params: Record<string, string> = {');
+		expect(out).toContain("\ttitle: 'Hello'");
+		expect(out).toContain("\tavatar: 'https://x'");
+		expect(out).toContain('new URLSearchParams(params)');
+		expect(out).toContain('await fetch(url)');
+		expect(out).toContain('await res.blob()');
+	});
+
+	it('quotes object keys that are not valid JS identifiers', () => {
+		const out = tsSimple(input({ params: { 'my-key': 'v', '1bad': 'w' } }));
+		expect(out).toContain("'my-key': 'v'");
+		expect(out).toContain("'1bad': 'w'");
+	});
+
+	it('backslash-escapes single quotes in string values', () => {
+		// Belt-and-suspenders: URLSearchParams would percent-encode it on
+		// the wire, but the snippet shows the raw value to the user.
+		const out = tsSimple(input({ params: { name: "O'Brien" } }));
+		expect(out).toContain("name: 'O\\'Brien'");
+	});
+
+	it('escapes line terminators so multi-line input stays a valid single-quoted literal', () => {
+		// Without escaping, an embedded \n would break out of the JS
+		// string and produce a syntax error in the copied snippet
+		// (Codex review round 1 P2). \u2028 / \u2029 are the JS-specific
+		// line terminators that also escape from single-quoted strings.
+		const out = tsSimple(input({ params: { multiline: 'hello\nworld\rback\u2028line\u2029sep' } }));
+		expect(out).toContain("multiline: 'hello\\nworld\\rback\\u2028line\\u2029sep'");
+	});
+
+	it('escapes backslashes in values so the snippet round-trips through the JS parser', () => {
+		const out = tsSimple(input({ params: { path: 'C:\\Users\\me' } }));
+		expect(out).toContain("path: 'C:\\\\Users\\\\me'");
+	});
+
+	it('appends &_v=<token> to the URL when a version token is set', () => {
+		const out = tsSimple(input({ versionToken: 'abc123' }));
+		expect(out).toContain('}&_v=abc123`;');
+	});
+
+	it('falls back to a bare fetch when includeParams is off', () => {
+		const out = tsSimple(input({ includeParams: false }));
+		expect(out).not.toContain('URLSearchParams');
+		expect(out).toContain("const url = 'https://canvas.example.com/c/card/image.png';");
+		expect(out).toContain('await fetch(url)');
+	});
+
+	it('falls back to a bare fetch when there are no params', () => {
+		const out = tsSimple(input({ params: {} }));
+		expect(out).not.toContain('URLSearchParams');
+		expect(out).toContain('await fetch(url)');
+	});
+
+	it('preserves the version token even when includeParams is off (single ?_v= form)', () => {
+		const out = tsSimple(input({ includeParams: false, versionToken: 'tok' }));
+		expect(out).toContain("const url = 'https://canvas.example.com/c/card/image.png?_v=tok';");
+	});
+});
+
+describe('tsTyped', () => {
+	const fullSchema: ParamSchema[] = [
+		{ name: 'title', type: 'text' },
+		{ name: 'avatar', type: 'url' },
+		{ name: 'gain', type: 'number' },
+		{ name: 'verified', type: 'boolean' },
+		{ name: 'published_at', type: 'date' }
+	];
+
+	it('emits a typed Params object covering every schema entry', () => {
+		const out = tsTyped(
+			input({
+				paramSchemas: fullSchema,
+				params: {
+					title: 'My Token',
+					avatar: 'https://avatars/x.png',
+					gain: '12.5',
+					verified: 'true',
+					published_at: '2026-01-15'
+				}
+			})
+		);
+		expect(out).toContain('type Params = {');
+		expect(out).toContain('\ttitle: string;');
+		expect(out).toContain('\tavatar: string;');
+		expect(out).toContain('\tgain: number;');
+		expect(out).toContain('\tverified: boolean;');
+		expect(out).toContain('\tpublished_at: string;');
+		expect(out).toContain('const params: Params = {');
+		expect(out).toContain("\ttitle: 'My Token'");
+		expect(out).toContain("\tavatar: 'https://avatars/x.png'");
+		expect(out).toContain('\tgain: 12.5');
+		expect(out).toContain('\tverified: true');
+		expect(out).toContain("\tpublished_at: '2026-01-15'");
+	});
+
+	it('quotes the number when the raw value is not finite-numeric', () => {
+		// Falling back to a quoted form keeps the snippet runnable: if the
+		// type says number but the user typed "abc", emitting `abc` would
+		// be a syntax error, so we re-emit as a string and let the type
+		// error guide them.
+		const out = tsTyped(
+			input({
+				paramSchemas: [{ name: 'gain', type: 'number' }],
+				params: { gain: 'abc' }
+			})
+		);
+		expect(out).toContain("\tgain: 'abc'");
+	});
+
+	it("coerces only canonical 'true' / 'false' (case-insensitive, trimmed) to boolean literals", () => {
+		// Renderer is passthrough on booleans, so non-canonical values
+		// must NOT be silently rewritten to `false` — that would change
+		// the rendered output vs. what the bare URL form sends. Anything
+		// non-canonical falls back to a quoted string and lets the TS
+		// type-checker flag the mismatch (same approach as the
+		// NaN-number fallback).
+		const schemas: ParamSchema[] = [
+			{ name: 'a', type: 'boolean' },
+			{ name: 'b', type: 'boolean' },
+			{ name: 'c', type: 'boolean' },
+			{ name: 'd', type: 'boolean' },
+			{ name: 'e', type: 'boolean' }
+		];
+		const out = tsTyped(
+			input({
+				paramSchemas: schemas,
+				params: { a: 'true', b: '  FALSE  ', c: '1', d: 'yes', e: 'maybe' }
+			})
+		);
+		expect(out).toContain('\ta: true');
+		expect(out).toContain('\tb: false');
+		// '1' / 'yes' / 'maybe' are non-canonical → quoted fallback.
+		expect(out).toContain("\tc: '1'");
+		expect(out).toContain("\td: 'yes'");
+		expect(out).toContain("\te: 'maybe'");
+	});
+
+	it('falls back to string for keys present in params but missing from schema', () => {
+		const out = tsTyped(
+			input({
+				paramSchemas: [{ name: 'title', type: 'text' }],
+				params: { title: 'Hello', mystery: 'x' }
+			})
+		);
+		expect(out).toContain('\ttitle: string;');
+		expect(out).toContain('\tmystery: string;');
+		expect(out).toContain("\tmystery: 'x'");
+	});
+
+	it('emits placeholder values for schema entries absent from params', () => {
+		const out = tsTyped(
+			input({
+				paramSchemas: [
+					{ name: 'title', type: 'text' },
+					{ name: 'count', type: 'number' },
+					{ name: 'live', type: 'boolean' }
+				],
+				params: { title: 'Hi' }
+			})
+		);
+		expect(out).toContain('\tcount: number;');
+		expect(out).toContain('\tlive: boolean;');
+		expect(out).toContain('\tcount: 0');
+		expect(out).toContain('\tlive: false');
+	});
+
+	it('falls back to all strings when no paramSchemas are supplied', () => {
+		const out = tsTyped(
+			input({
+				paramSchemas: undefined,
+				params: { title: 'Hello', gain: '12.5' }
+			})
+		);
+		expect(out).toContain('\ttitle: string;');
+		expect(out).toContain('\tgain: string;');
+		expect(out).toContain("\tgain: '12.5'");
+	});
+
+	it('stringifies typed values for URLSearchParams (numbers and booleans pass through String())', () => {
+		const out = tsTyped(
+			input({
+				paramSchemas: [{ name: 'gain', type: 'number' }],
+				params: { gain: '12.5' }
+			})
+		);
+		expect(out).toContain('new URLSearchParams(');
+		expect(out).toContain('Object.fromEntries');
+		expect(out).toContain('String(v)');
+	});
+
+	it('falls back to bare fetch when includeParams is off', () => {
+		const out = tsTyped(
+			input({ paramSchemas: [{ name: 'title', type: 'text' }], includeParams: false })
+		);
+		expect(out).not.toContain('type Params');
+		expect(out).toContain('await fetch(url)');
 	});
 });
 

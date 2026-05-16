@@ -13,6 +13,21 @@
  * resulting name→value map in here as `query`.
  */
 
+/** Canonical TypeScript type for each `canvas_params.type` value.
+ * Sourced from the same enum the renderer and the publish-modal schema
+ * editor use, but kept narrow on purpose — unknown values fall back to
+ * `string` in the typed TS generator so a future schema addition can't
+ * break the snippet pipeline by emitting `: unknown`. */
+export type ParamType = 'text' | 'number' | 'boolean' | 'url' | 'date';
+
+/** Per-parameter schema row consumed by `tsTyped`. The modal already
+ * loads these via `GET /api/canvas/[id]/params`; we only need name +
+ * type to drive the `type Params = { ... }` declaration. */
+export interface ParamSchema {
+	name: string;
+	type: ParamType;
+}
+
 /** Inputs shared by every snippet generator.
  *
  * The modal pre-computes the bare image URL and bare share URL (no
@@ -37,6 +52,21 @@ export interface SnippetInput {
 	 * for URL-encoding; {@link buildQueryString} is the canonical way to
 	 * produce one from a `Record<string, string>`. */
 	query: string;
+	/** Unencoded name → value map — the same source `query` is derived
+	 * from. Required for snippets that emit an object literal rather
+	 * than a query string (TypeScript / Python tabs), so the snippet
+	 * itself shows `URLSearchParams(params)` / `requests.get(..., params=)`
+	 * style construction. URL/HTML/Markdown/OG/cURL generators ignore
+	 * this; pass `{}` if the caller is producing only those. */
+	params: Record<string, string>;
+	/** Per-parameter schema info — name + declared type from the
+	 * canvas_params table. Used by `tsTyped` to generate a `type Params`
+	 * declaration and to coerce values to the right TypeScript literal
+	 * (numbers unquoted, booleans `true`/`false`, everything else
+	 * quoted). Optional — when omitted, `tsTyped` falls back to all
+	 * strings, mirroring `tsSimple` shape with type annotations added.
+	 * Generators that don't care about types ignore this. */
+	paramSchemas?: ParamSchema[];
 	/** Immutable-cache token from `GET /api/canvas/[id]/version` — when
 	 * non-empty, the snippet's image URL appends `&_v=<token>` (or
 	 * `?_v=<token>` if there were no other params), opting the public
@@ -132,6 +162,202 @@ export function urlSnippet(input: SnippetInput): string {
  * story. */
 export function curlSnippet(input: SnippetInput): string {
 	return curlFor(composeImageUrl(input));
+}
+
+/** Map a `canvas_params.type` value to its TypeScript literal type
+ * (i.e. the string that goes after the `:` in `type Params = { x: T }`).
+ * Unknown values defensively fall back to `string` rather than
+ * `unknown` so the snippet stays runnable if the schema vocabulary
+ * grows after this code ships. */
+function tsTypeForParamType(type: ParamType): 'string' | 'number' | 'boolean' {
+	switch (type) {
+		case 'number':
+			return 'number';
+		case 'boolean':
+			return 'boolean';
+		case 'text':
+		case 'url':
+		case 'date':
+			return 'string';
+		default:
+			return 'string';
+	}
+}
+
+/** Render a single JS object value as its TS literal source. Numbers
+ * are emitted unquoted (when the source string is finite-numeric);
+ * booleans become `true`/`false`; everything else becomes a
+ * single-quoted string with backslash- and quote-escaping. NaN /
+ * Infinity / unparseable numeric strings fall back to the quoted form
+ * to keep the snippet runnable and to keep the resulting fetch URL
+ * matching what the renderer would parse back. */
+function tsLiteralFor(rawValue: string, tsType: 'string' | 'number' | 'boolean'): string {
+	if (tsType === 'number') {
+		const n = Number(rawValue);
+		return Number.isFinite(n) ? String(n) : jsString(rawValue);
+	}
+	if (tsType === 'boolean') {
+		// Renderer currently passes string params through verbatim, so
+		// the snippet should preserve whatever the user typed. We only
+		// emit a real boolean literal for the canonical 'true' / 'false'
+		// (case-insensitive, trimmed); anything else falls back to a
+		// quoted string so the snippet stays runnable and the TS type
+		// system surfaces the mismatch — same approach as the NaN case
+		// for numbers above. Avoids silently rewriting 'maybe' to
+		// `false` and diverging from what the bare URL form would send.
+		const normalized = rawValue.trim().toLowerCase();
+		if (normalized === 'true') return 'true';
+		if (normalized === 'false') return 'false';
+		return jsString(rawValue);
+	}
+	return jsString(rawValue);
+}
+
+/** Single-quoted JS string literal. Escapes backslash, single-quote,
+ * and the line terminators \n / \r / U+2028 / U+2029 — the four
+ * characters that would otherwise break out of a single-quoted JS
+ * string and produce a syntax error in the copied snippet (Codex
+ * round 1 P2). Other control characters are left verbatim — modern
+ * editors render them, and an inadvertently pasted NUL or BEL is a
+ * separate problem we can't anticipate from here. Unicode (BMP and
+ * astral) passes through unchanged since JS source allows any
+ * codepoint in a string literal. */
+function jsString(value: string): string {
+	return `'${value
+		.replace(/\\/g, '\\\\')
+		.replace(/'/g, "\\'")
+		.replace(/\n/g, '\\n')
+		.replace(/\r/g, '\\r')
+		.replace(/\u2028/g, '\\u2028')
+		.replace(/\u2029/g, '\\u2029')}'`;
+}
+
+/** Render an object key. Plain identifiers stay unquoted (cleaner
+ * snippet); anything with spaces / hyphens / leading digits gets the
+ * quoted form so the snippet stays syntactically valid. */
+function jsKey(name: string): string {
+	return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) ? name : jsString(name);
+}
+
+/** Compose the URL-construction line used by both TS flavors. When a
+ * version token is set the `&_v=<token>` suffix is appended after the
+ * URLSearchParams expansion — the renderer reads `_v` from the raw
+ * query string, so it must not go through URLSearchParams (which
+ * would re-encode the `_` and the token redundantly, though
+ * harmlessly). */
+function tsUrlLine(input: SnippetInput, searchExpr: string): string {
+	const versionTail = input.versionToken ? `&_v=${input.versionToken}` : '';
+	return `const url = \`${input.imageUrl}?\${${searchExpr}}${versionTail}\`;`;
+}
+
+/** Whether the caller wants params materialized in the snippet. Both
+ * TS flavors collapse to a bare-`fetch(url)` form when the toggle is
+ * off or the canvas has no bindings — the snippet still demonstrates
+ * the right pattern without inventing a params object out of nothing. */
+function hasRenderableParams(input: SnippetInput): boolean {
+	return input.includeParams && Object.keys(input.params).length > 0;
+}
+
+/** TypeScript snippet — untyped `Record<string, string>` flavor. The
+ * "Simple" sub-toggle in the modal's TypeScript tab. Pure raw `fetch`,
+ * no SDK dependency — TASK-213 will replace this with `CanvasClient`
+ * once the SDK lands (blocked by IDEA-204 / IDEA-205). Runs on
+ * Node 18+ (built-in fetch) and any modern browser. */
+export function tsSimple(input: SnippetInput): string {
+	if (!hasRenderableParams(input)) {
+		const url = composeImageUrl(input);
+		return [
+			`// Fetch the rendered image.`,
+			`const url = ${jsString(url)};`,
+			`const res = await fetch(url);`,
+			`const blob = await res.blob();`
+		].join('\n');
+	}
+	const paramLines = Object.entries(input.params).map(([k, v]) => `\t${jsKey(k)}: ${jsString(v)}`);
+	return [
+		`// Fetch the rendered image. URLSearchParams safely encodes`,
+		`// spaces, '+', '%', and unicode in your param values.`,
+		`const params: Record<string, string> = {`,
+		paramLines.join(',\n'),
+		`};`,
+		tsUrlLine(input, 'new URLSearchParams(params)'),
+		`const res = await fetch(url);`,
+		`const blob = await res.blob();`
+	].join('\n');
+}
+
+/** TypeScript snippet — typed `type Params = {...}` flavor. The
+ * "Typed" sub-toggle in the modal's TypeScript tab. Generates the
+ * Params type from `paramSchemas` so the canvas's parameter contract
+ * is enforced at compile time. Values are emitted as native TS
+ * literals (numbers unquoted, booleans `true`/`false`); URLSearchParams
+ * needs strings, so the snippet stringifies before encoding.
+ *
+ * When `paramSchemas` is omitted or doesn't cover every key in
+ * `params`, missing schema entries default to `string` so the snippet
+ * stays runnable. Extra schema entries that aren't in `params` are
+ * still declared in the type and assigned with their default
+ * placeholder (empty string / 0 / false) so the type stays a complete
+ * contract of the canvas's schema, not just the values the user has
+ * typed in. */
+export function tsTyped(input: SnippetInput): string {
+	if (!hasRenderableParams(input)) {
+		const url = composeImageUrl(input);
+		return [
+			`// Fetch the rendered image.`,
+			`const url = ${jsString(url)};`,
+			`const res = await fetch(url);`,
+			`const blob = await res.blob();`
+		].join('\n');
+	}
+	// Build the canonical schema list: union of `paramSchemas` (in
+	// declared order) plus any keys present in `params` but missing
+	// from `paramSchemas` (treated as `text` → string). Declared order
+	// matters because the type/object literals read top-to-bottom.
+	const schemas = input.paramSchemas ?? [];
+	const declared = new Set(schemas.map((s) => s.name));
+	const extras: ParamSchema[] = Object.keys(input.params)
+		.filter((k) => !declared.has(k))
+		.map((name) => ({ name, type: 'text' as const }));
+	const ordered = [...schemas, ...extras];
+
+	const typeLines = ordered.map((s) => `\t${jsKey(s.name)}: ${tsTypeForParamType(s.type)};`);
+	const valueLines = ordered.map((s) => {
+		const ts = tsTypeForParamType(s.type);
+		const raw = input.params[s.name] ?? defaultLiteralForType(ts);
+		return `\t${jsKey(s.name)}: ${tsLiteralFor(raw, ts)}`;
+	});
+	return [
+		`// Type-checked params: the canvas schema is the contract, so`,
+		`// missing keys or wrong types are caught at compile time.`,
+		`type Params = {`,
+		typeLines.join('\n'),
+		`};`,
+		``,
+		`const params: Params = {`,
+		valueLines.join(',\n'),
+		`};`,
+		``,
+		`// URLSearchParams needs string values — stringify per key`,
+		`// before encoding so numbers and booleans flow through.`,
+		`const search = new URLSearchParams(`,
+		`\tObject.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)]))`,
+		`);`,
+		tsUrlLine(input, 'search'),
+		`const res = await fetch(url);`,
+		`const blob = await res.blob();`
+	].join('\n');
+}
+
+/** Placeholder when the caller hasn't supplied a value for a declared
+ * schema key — keeps the typed snippet syntactically valid (and
+ * URL-parseable) without inventing fake data. Empty string for
+ * strings; `0` for numbers; `false` for booleans. The raw string here
+ * is what `tsLiteralFor` will re-format into the right literal form. */
+function defaultLiteralForType(tsType: 'string' | 'number' | 'boolean'): string {
+	if (tsType === 'number') return '0';
+	if (tsType === 'boolean') return 'false';
+	return '';
 }
 
 /** Shell-safe `curl -o canvas.png '<URL>'`. Exposed as a free
