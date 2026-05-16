@@ -3,18 +3,19 @@ import { eq, max } from 'drizzle-orm';
 import type { PageServerLoad } from './$types';
 import { db } from '$lib/server/db';
 import { session, user } from '$lib/server/db/schema';
+import { getUserRenderStats } from '$lib/server/render-stats';
 
 /**
- * Per-user admin drilldown — scaffold (TASK-181 / PLAN-180).
+ * Per-user admin drilldown (PLAN-180).
  *
  * Admin gating is inherited from `(app)/admin/+layout.server.ts` (the
  * shared `requireAdmin(locals.user)` check). We intentionally don't
  * re-check here so the gate stays single-source — change the parent
  * layout, every admin page follows.
  *
- * v1 scaffold returns a minimal user payload + typed empty stubs for
- * the sections downstream tasks (TASK-182..187) will hydrate, so the
- * page renders end-to-end before substance lands.
+ * Hydrated sections: identity card (TASK-182), storage stat tiles
+ * (TASK-183). Still stubbed: recent renders table (TASK-184), API
+ * keys (TASK-187).
  */
 export const load: PageServerLoad = async ({ params }) => {
 	const rows = await db
@@ -53,13 +54,11 @@ export const load: PageServerLoad = async ({ params }) => {
 		lastSignInAt
 	};
 
-	// Hydrated by TASK-183 (per-user storage stat tiles).
-	const storageStats = {
-		renderCount: 0,
-		totalBytes: 0,
-		oldestAt: null as string | null,
-		mostRecentAt: null as string | null
-	};
+	// Reuses the same aggregate /account/storage runs for the session
+	// user, scoped here to the path-param target user. Keeping the
+	// query shared (rather than forking) means the two views can't
+	// drift on what counts as a "live render."
+	const storageStats = await getUserRenderStats(row.id);
 
 	type RecentRender = {
 		id: string;
