@@ -4,6 +4,16 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import { copyToClipboard } from '$lib/share-clipboard';
 	import { nearestParamName } from './param-validation';
+	import {
+		buildQueryString,
+		curlFor,
+		curlSnippet as buildCurlSnippet,
+		htmlSnippet as buildHtmlSnippet,
+		markdownSnippet as buildMarkdownSnippet,
+		ogSnippet as buildOgSnippet,
+		urlSnippet as buildUrlSnippet,
+		type SnippetInput
+	} from '$lib/embed/snippets';
 
 	export interface PublishModalBinding {
 		/** Parameter name as it appears in the URL. */
@@ -817,77 +827,44 @@
 		return sampleFor(b.sourceLabel);
 	}
 
-	function buildQueryString(): string {
-		if (bindings.length === 0) return '';
-		const parts: string[] = [];
+	/** Resolved name→value map driving every snippet. The modal owns
+	 * this translation (bindings + liveValues → flat params) so the
+	 * pure `$lib/embed/snippets` module can stay testable without
+	 * caring about Svelte 5 prop shapes. */
+	let resolvedParams = $derived.by(() => {
+		const out: Record<string, string> = {};
 		for (const b of bindings) {
 			if (!b.name) continue;
-			const value = resolveExampleValue(b);
-			parts.push(`${encodeURIComponent(b.name)}=${encodeURIComponent(value)}`);
+			out[b.name] = resolveExampleValue(b);
 		}
-		return parts.length ? `?${parts.join('&')}` : '';
-	}
-
-	let exampleImageUrl = $derived(`${imageUrl}${buildQueryString()}`);
-	let exampleShareUrl = $derived(`${shareUrl}${buildQueryString()}`);
-
-	/**
-	 * Compose the image URL for embed snippets. Includes the `_v` token
-	 * when loaded (immutable cache) and the example query string when the
-	 * "With params" toggle is on.
-	 */
-	let snippetImageUrl = $derived.by(() => {
-		const query = includeParams ? buildQueryString() : '';
-		const versionPart = versionToken ? `${query ? '&' : '?'}_v=${versionToken}` : '';
-		return `${imageUrl}${query}${versionPart}`;
+		return out;
 	});
 
-	/** HTML <img> snippet — width/height attrs help avoid layout shift on
-	 *  the consuming page. */
-	let htmlSnippet = $derived(
-		`<img src="${snippetImageUrl}" alt="Canvas: ${slug}" width="1200" height="630" />`
-	);
+	let exampleQuery = $derived(buildQueryString(resolvedParams));
+	let exampleImageUrl = $derived(`${imageUrl}${exampleQuery}`);
+	let exampleShareUrl = $derived(`${shareUrl}${exampleQuery}`);
 
-	/** Markdown image snippet. Markdown doesn't support width/height, so
-	 *  we don't try. */
-	let markdownSnippet = $derived(`![Canvas: ${slug}](${snippetImageUrl})`);
-
-	/** OG meta tags (TASK-97). og:image:width and og:image:height help
-	 *  OG previews size correctly without each crawler having to pre-
-	 *  fetch and inspect the binary. og:image:type lets crawlers skip
-	 *  the binary-sniff step (LinkedIn / older Slack are picky about
-	 *  this). og:image:secure_url is emitted only when the URL is
-	 *  https — localhost dev pages serve over http. og:url uses the
-	 *  bare share URL (no `_v` so a copy/paste of the share URL stays
-	 *  user-friendly). */
-	let ogSnippet = $derived.by(() => {
-		// og:url tracks `og:image`'s parameterization: when the user
-		// toggles "Include example params" we emit the parameterized
-		// share URL too, so a parameterized og:image variant doesn't
-		// canonicalize back to the unparameterized page (Codex round 1
-		// P2). Mirrors the share route's behavior of preserving the
-		// non-reserved query params in og:url.
-		const ogUrl = includeParams ? `${shareUrl}${buildQueryString()}` : shareUrl;
-		const lines = [
-			`<meta property="og:image" content="${snippetImageUrl}" />`,
-			`<meta property="og:image:width" content="1200" />`,
-			`<meta property="og:image:height" content="630" />`,
-			`<meta property="og:image:type" content="image/png" />`
-		];
-		if (snippetImageUrl.startsWith('https://')) {
-			lines.push(`<meta property="og:image:secure_url" content="${snippetImageUrl}" />`);
-		}
-		lines.push(`<meta property="og:url" content="${ogUrl}" />`);
-		return lines.join('\n');
+	/** Input bundle passed to every snippet generator in
+	 * `$lib/embed/snippets`. Re-deriving this keeps the per-snippet
+	 * deriveds below trivial. */
+	let snippetInput = $derived<SnippetInput>({
+		imageUrl,
+		shareUrl,
+		slug,
+		query: exampleQuery,
+		versionToken,
+		includeParams
 	});
 
-	/** Plain URL — the snippet is the URL itself. Useful for pasting into
-	 *  Notion / Slack / email where the rich-link unfurler renders the
-	 *  image inline. */
-	let urlSnippet = $derived(snippetImageUrl);
-
-	/** cURL snippet — ready to drop into a terminal, downloads the PNG. */
-	let curlSnippet = $derived(curlFor(snippetImageUrl));
+	let htmlSnippet = $derived(buildHtmlSnippet(snippetInput));
+	let markdownSnippet = $derived(buildMarkdownSnippet(snippetInput));
+	let ogSnippet = $derived(buildOgSnippet(snippetInput));
+	let urlSnippet = $derived(buildUrlSnippet(snippetInput));
+	let curlSnippet = $derived(buildCurlSnippet(snippetInput));
+	/** Convenience alias for the "Open in new tab" link in the embed
+	 * section template — same composed URL the URL/cURL/HTML snippets
+	 * use, just exposed under a name the markup already references. */
+	let snippetImageUrl = $derived(urlSnippet);
 
 	let activeSnippet = $derived(
 		activeTab === 'html'
@@ -900,13 +877,6 @@
 						? curlSnippet
 						: urlSnippet
 	);
-
-	// Shell-safe cURL: single-quote the URL (and escape any single quotes
-	// inside it). Public GET, no auth needed, so this is the whole story.
-	function curlFor(url: string): string {
-		const escaped = url.replace(/'/g, `'\\''`);
-		return `curl -o canvas.png '${escaped}'`;
-	}
 
 	async function togglePublished(next: boolean) {
 		if (busy) return;
