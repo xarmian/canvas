@@ -11,7 +11,12 @@
 		htmlSnippet as buildHtmlSnippet,
 		markdownSnippet as buildMarkdownSnippet,
 		ogSnippet as buildOgSnippet,
+		python as buildPythonSnippet,
+		tsSimple as buildTsSimpleSnippet,
+		tsTyped as buildTsTypedSnippet,
 		urlSnippet as buildUrlSnippet,
+		type ParamSchema,
+		type ParamType,
 		type SnippetInput
 	} from '$lib/embed/snippets';
 
@@ -226,9 +231,19 @@
 		}
 	}
 
-	/** Tab state for the embed-snippet section. */
-	type EmbedTab = 'html' | 'markdown' | 'og' | 'url' | 'curl';
+	/** Tab state for the embed-snippet section. TS/Python tabs added in
+	 * TASK-211 (PLAN-206). Order in this union doubles as the visual
+	 * order in the tab strip below, so any reorder here should update
+	 * EMBED_TABS too. */
+	type EmbedTab = 'html' | 'markdown' | 'og' | 'url' | 'curl' | 'typescript' | 'python';
 	let activeTab = $state<EmbedTab>('html');
+	/** Sub-flavor inside the TypeScript tab — `simple` shows an
+	 * untyped `Record<string, string>` snippet, `typed` generates
+	 * `type Params = {...}` from the canvas schema. State lives on
+	 * the modal so the user's choice persists across activeTab
+	 * switches within a single open. */
+	type TsFlavor = 'simple' | 'typed';
+	let tsFlavor = $state<TsFlavor>('simple');
 	/** Whether to include example query parameter values in the snippets. */
 	let includeParams = $state(false);
 
@@ -847,17 +862,34 @@
 	/** Input bundle passed to every snippet generator in
 	 * `$lib/embed/snippets`. Re-deriving this keeps the per-snippet
 	 * deriveds below trivial. */
+	/** Recognised `canvas_params.type` vocabulary, mirroring the
+	 * narrow union in `$lib/embed/snippets`. Unknown values from the
+	 * API fall back to `text` so the typed-TS snippet stays
+	 * runnable rather than emitting `: unknown` for a field whose
+	 * type the modal happens not to know about (TASK-211). */
+	const KNOWN_PARAM_TYPES: readonly ParamType[] = ['text', 'number', 'boolean', 'url', 'date'];
+	function toParamType(raw: string): ParamType {
+		return (KNOWN_PARAM_TYPES as readonly string[]).includes(raw) ? (raw as ParamType) : 'text';
+	}
+	let paramSchemas = $derived<ParamSchema[]>(
+		paramRows.map((r) => ({ name: r.name, type: toParamType(r.type) }))
+	);
+
 	let snippetInput = $derived<SnippetInput>({
 		imageUrl,
 		shareUrl,
 		slug,
 		query: exampleQuery,
-		// Pass-through for the TypeScript / Python snippet generators
-		// (TASK-209 / TASK-210). Existing HTML / Markdown / OG / URL /
-		// cURL generators ignore this field. The actual TS/Python tab
-		// wiring lands in TASK-211; until then this just keeps the
-		// SnippetInput shape complete.
+		// Unencoded params drive the TS/Python `params = { ... }`
+		// literals (TASK-209 / TASK-210). Existing HTML / Markdown /
+		// OG / URL / cURL generators ignore this field.
 		params: resolvedParams,
+		// Per-param type info drives `tsTyped`'s `type Params = {...}`
+		// declaration and Python's per-key coercion. Undefined when
+		// the schema hasn't loaded yet (modal opens before the params
+		// fetch resolves); both generators degrade gracefully to
+		// all-strings in that case.
+		paramSchemas,
 		versionToken,
 		includeParams
 	});
@@ -867,6 +899,13 @@
 	let ogSnippet = $derived(buildOgSnippet(snippetInput));
 	let urlSnippet = $derived(buildUrlSnippet(snippetInput));
 	let curlSnippet = $derived(buildCurlSnippet(snippetInput));
+	let tsSimpleSnippet = $derived(buildTsSimpleSnippet(snippetInput));
+	let tsTypedSnippet = $derived(buildTsTypedSnippet(snippetInput));
+	let pythonSnippet = $derived(buildPythonSnippet(snippetInput));
+	/** TypeScript tab content depends on the sub-flavor toggle.
+	 * Switching `tsFlavor` flips the snippet without remounting the
+	 * textarea, so the user's selection survives across re-renders. */
+	let typescriptSnippet = $derived(tsFlavor === 'typed' ? tsTypedSnippet : tsSimpleSnippet);
 	/** Convenience alias for the "Open in new tab" link in the embed
 	 * section template — same composed URL the URL/cURL/HTML snippets
 	 * use, just exposed under a name the markup already references. */
@@ -881,8 +920,67 @@
 					? ogSnippet
 					: activeTab === 'curl'
 						? curlSnippet
-						: urlSnippet
+						: activeTab === 'typescript'
+							? typescriptSnippet
+							: activeTab === 'python'
+								? pythonSnippet
+								: urlSnippet
 	);
+
+	/** Per-tab row-count for the snippet textarea. TS/Python are
+	 * multi-line scripts; the existing single-line snippets fit in 2
+	 * rows; OG meta is ~5 short lines. Sized to show the whole
+	 * snippet without scrolling for typical canvases (2-3 params). */
+	let snippetRows = $derived(
+		activeTab === 'typescript' ? 14 : activeTab === 'python' ? 12 : activeTab === 'og' ? 5 : 2
+	);
+
+	/** Canonical embed-tab list. Drives both the visual tab strip and
+	 * the keyboard-nav cycle (ArrowLeft / ArrowRight wrap; Home / End
+	 * jump to ends). Order matters — it's the visual order and the
+	 * tab-cycle order. */
+	const EMBED_TABS: { id: EmbedTab; label: string }[] = [
+		{ id: 'html', label: 'HTML' },
+		{ id: 'markdown', label: 'Markdown' },
+		{ id: 'og', label: 'OG meta' },
+		{ id: 'url', label: 'URL' },
+		{ id: 'curl', label: 'cURL' },
+		{ id: 'typescript', label: 'TypeScript' },
+		{ id: 'python', label: 'Python' }
+	];
+
+	/** ARIA tablist keyboard nav. Standard WAI-ARIA pattern:
+	 * Arrow keys cycle (with wrap), Home/End jump to ends. We
+	 * activate-on-focus rather than activate-on-Enter so the snippet
+	 * preview updates as the user arrows through — matches
+	 * `aria-orientation="horizontal"` semantics and the AddImageModal
+	 * tabs we mirror. Focus shifts to the activated button so
+	 * subsequent Tab navigation continues from the right place. */
+	function onTabKeydown(event: KeyboardEvent, currentId: EmbedTab) {
+		const idx = EMBED_TABS.findIndex((t) => t.id === currentId);
+		if (idx === -1) return;
+		let nextIdx: number | null = null;
+		if (event.key === 'ArrowLeft') nextIdx = (idx - 1 + EMBED_TABS.length) % EMBED_TABS.length;
+		else if (event.key === 'ArrowRight') nextIdx = (idx + 1) % EMBED_TABS.length;
+		else if (event.key === 'Home') nextIdx = 0;
+		else if (event.key === 'End') nextIdx = EMBED_TABS.length - 1;
+		if (nextIdx === null) return;
+		event.preventDefault();
+		const nextTab = EMBED_TABS[nextIdx];
+		activeTab = nextTab.id;
+		// Move focus to the newly-active tab. Queried inside the same
+		// click handler — the button exists already (each tab renders
+		// regardless of activeTab); we just need to find it by its
+		// stable data-testid.
+		queueMicrotask(() => {
+			const root = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+			const tablist = root?.closest('[role="tablist"]');
+			const btn = tablist?.querySelector<HTMLButtonElement>(
+				`[data-testid="embed-tab-${nextTab.id}"]`
+			);
+			btn?.focus();
+		});
+	}
 
 	async function togglePublished(next: boolean) {
 		if (busy) return;
@@ -1189,27 +1287,72 @@
 				{/if}
 			</header>
 
-			<div class="embed-tabs" role="tablist" aria-label="Embed format">
-				{#each [{ id: 'html', label: 'HTML' }, { id: 'markdown', label: 'Markdown' }, { id: 'og', label: 'OG meta' }, { id: 'url', label: 'URL' }, { id: 'curl', label: 'cURL' }] as tab (tab.id)}
+			<div
+				class="embed-tabs"
+				role="tablist"
+				aria-label="Embed format"
+				aria-orientation="horizontal"
+			>
+				{#each EMBED_TABS as tab (tab.id)}
 					<button
 						type="button"
 						role="tab"
 						class="embed-tab"
 						class:active={activeTab === tab.id}
 						aria-selected={activeTab === tab.id}
+						aria-controls="embed-snippet-panel"
+						tabindex={activeTab === tab.id ? 0 : -1}
 						data-testid="embed-tab-{tab.id}"
-						onclick={() => (activeTab = tab.id as EmbedTab)}
+						onclick={() => (activeTab = tab.id)}
+						onkeydown={(e) => onTabKeydown(e, tab.id)}
 					>
 						{tab.label}
 					</button>
 				{/each}
 			</div>
 
-			<div class="embed-snippet">
+			{#if activeTab === 'typescript'}
+				<!--
+					Sub-toggle inside the TypeScript tab — chooses between the
+					untyped Record<string,string> flavor and the schema-driven
+					`type Params = {...}` flavor. Rendered as a two-button
+					segmented control (TASK-211); a checkbox would conflate
+					"both vs neither" with "either-or" semantics.
+				-->
+				<div
+					class="ts-flavor"
+					role="group"
+					aria-label="TypeScript snippet flavor"
+					data-testid="ts-flavor"
+				>
+					<button
+						type="button"
+						class="ts-flavor-btn"
+						class:active={tsFlavor === 'simple'}
+						aria-pressed={tsFlavor === 'simple'}
+						data-testid="ts-flavor-simple"
+						onclick={() => (tsFlavor = 'simple')}
+					>
+						Simple
+					</button>
+					<button
+						type="button"
+						class="ts-flavor-btn"
+						class:active={tsFlavor === 'typed'}
+						aria-pressed={tsFlavor === 'typed'}
+						data-testid="ts-flavor-typed"
+						onclick={() => (tsFlavor = 'typed')}
+					>
+						Typed
+					</button>
+				</div>
+			{/if}
+
+			<div class="embed-snippet" id="embed-snippet-panel" role="tabpanel">
 				<Textarea
 					readonly
 					value={activeSnippet}
-					rows={activeTab === 'og' ? 3 : 2}
+					rows={snippetRows}
 					data-testid="embed-snippet"
 					aria-label="Embed snippet"
 					class="snippet-textarea"
@@ -1758,6 +1901,46 @@
 	 * border-bottom track rather than blowing out the row layout).
 	 */
 	.embed-tab:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
+	}
+
+	/*
+	 * TASK-211: TypeScript sub-flavor toggle. Two-button segmented
+	 * control rendered below the main tab strip when the TS tab is
+	 * active. Visual treatment matches the tab strip so the eye reads
+	 * it as a secondary axis of selection (flavor) rather than a
+	 * separate control surface.
+	 */
+	.ts-flavor {
+		display: inline-flex;
+		gap: 0;
+		margin: 0.4rem 0 0.6rem;
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		overflow: hidden;
+	}
+
+	.ts-flavor-btn {
+		background: transparent;
+		border: 0;
+		padding: 0.3rem 0.7rem;
+		font-size: 0.8rem;
+		color: var(--color-text-subtle);
+		cursor: pointer;
+	}
+
+	.ts-flavor-btn + .ts-flavor-btn {
+		border-left: 1px solid var(--color-border);
+	}
+
+	.ts-flavor-btn.active {
+		background: var(--color-surface-muted);
+		color: var(--color-text);
+		font-weight: 600;
+	}
+
+	.ts-flavor-btn:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
 	}
