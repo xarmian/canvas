@@ -124,7 +124,7 @@ Output is structured JSON-lines logs (`sweep_start`, `expire_done`, `reap_done`,
 
 ### Render event log
 
-Canvas logs baked renders (`POST /api/v1/renders`) and editor previews to a narrow `render_events` table — no payload, no IPs in cleartext, just daily-salted hashes — and surfaces the aggregates at [`/account/usage`](#) and [`/admin/usage`](#). One row per render: source (`baked-api` / `baked-app` / `preview` today; on-the-fly public renders log under the `on-the-fly` source once that hook lands), canvas, owner, requester, API key, format, params hash, cache-hit flag, duration, status code, optional `ip_hash`.
+Canvas logs every render — public on-the-fly URL requests, baked POSTs, and editor previews — to a narrow `render_events` table. No payload, no IPs in cleartext, just daily-salted hashes. The aggregates surface at [`/account/usage`](#) and [`/admin/usage`](#). One row per render: source (`on-the-fly` / `baked-api` / `baked-app` / `preview`), canvas, owner, requester, API key, format, params hash, cache-hit flag, duration, status code, optional `ip_hash`.
 
 Retention defaults to **30 days**. Configure via `RENDER_EVENTS_RETENTION_DAYS`. A daily cron drops rows past the cutoff:
 
