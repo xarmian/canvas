@@ -180,6 +180,11 @@ COPY --chown=node:node scripts/run-migrations.mjs ./scripts/run-migrations.mjs
 # `.mjs` so it works against the production runtime without tsx.
 COPY --chown=node:node scripts/renders-sweep.mjs ./scripts/renders-sweep.mjs
 
+# Retention sweep for `render_events` (TASK-194). Same cron shape as
+# `renders-sweep`; see README "Render event log" for the cron pattern
+# and the `RENDER_EVENTS_RETENTION_DAYS` knob.
+COPY --chown=node:node scripts/render-events-sweep.mjs ./scripts/render-events-sweep.mjs
+
 # Run as the unprivileged `node` user that's baked into the official
 # Node images. The image's process should not have root inside the
 # container — defense-in-depth against any container-escape bug in
