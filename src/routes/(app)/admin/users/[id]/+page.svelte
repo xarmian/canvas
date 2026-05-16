@@ -1,9 +1,21 @@
 <script lang="ts">
 	let { data } = $props();
 
-	// Inline relative-time helper, matching /admin/storage's formatRelative
-	// shape. Worth extracting once a third caller appears; until then,
-	// duplicating ~15 lines keeps the surface small and avoids a churn PR.
+	// formatBytes + formatRelative are the same helpers /account/storage
+	// and /admin/storage inline. Extracting them into a shared module is
+	// the obvious next refactor (three callers now); leaving it for a
+	// dedicated follow-up so this PR stays scoped to the tiles task.
+	function formatBytes(bytes: number): string {
+		if (bytes < 1024) return `${bytes} B`;
+		const kib = bytes / 1024;
+		if (kib < 1024) return `${kib.toFixed(1)} KB`;
+		const mib = kib / 1024;
+		if (mib < 1024) return `${mib.toFixed(2)} MB`;
+		const gib = mib / 1024;
+		if (gib < 1024) return `${gib.toFixed(2)} GB`;
+		return `${(gib / 1024).toFixed(2)} TB`;
+	}
+
 	function formatRelative(value: string | null): string {
 		if (!value) return '—';
 		const date = new Date(value);
@@ -89,23 +101,29 @@
 	</dl>
 </div>
 
-<!-- Stat tiles — TASK-183 hydrates render count, total bytes, oldest, most recent. -->
+<!-- Stat tiles -->
 <div class="stat-grid" data-testid="user-storage-stats">
 	<div class="stat">
 		<div class="stat-label">Renders</div>
 		<div class="stat-value" data-testid="stat-render-count">{data.storageStats.renderCount}</div>
 	</div>
 	<div class="stat">
-		<div class="stat-label">Total bytes</div>
-		<div class="stat-value" data-testid="stat-total-bytes">—</div>
+		<div class="stat-label">Total storage</div>
+		<div class="stat-value" data-testid="stat-total-bytes">
+			{formatBytes(data.storageStats.totalBytes)}
+		</div>
 	</div>
 	<div class="stat">
 		<div class="stat-label">Oldest render</div>
-		<div class="stat-value" data-testid="stat-oldest">—</div>
+		<div class="stat-value" data-testid="stat-oldest">
+			{formatRelative(data.storageStats.oldestCreatedAt)}
+		</div>
 	</div>
 	<div class="stat">
-		<div class="stat-label">Most recent</div>
-		<div class="stat-value" data-testid="stat-most-recent">—</div>
+		<div class="stat-label">Most recently used</div>
+		<div class="stat-value" data-testid="stat-most-recent">
+			{formatRelative(data.storageStats.mostRecentAccessAt)}
+		</div>
 	</div>
 </div>
 

@@ -2,7 +2,8 @@ import { env } from '$env/dynamic/private';
 import type { PageServerLoad } from './$types';
 import { db } from '$lib/server/db';
 import { canvases, renderedImages } from '$lib/server/db/schema';
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
+import { getUserRenderStats } from '$lib/server/render-stats';
 
 /**
  * /account/storage — user-facing storage utilization page.
@@ -14,40 +15,10 @@ import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 export const load: PageServerLoad = async ({ locals }) => {
 	const userId = locals.user!.id;
 
-	// Aggregate stats over the user's live (non-deleted) renders. Cast
-	// `total_bytes` to bigint at the DB so a row containing very large
-	// blobs doesn't overflow JS's safe-integer range during aggregation.
-	// `postgres-js` returns bigints as strings; we convert at the
-	// boundary so the client receives a regular number.
-	const aggRows = await db.execute<{
-		render_count: number;
-		total_bytes: string | number;
-		oldest_created: Date | null;
-		most_recent_access: Date | null;
-	}>(sql`
-        SELECT
-          COUNT(*)::int                AS render_count,
-          COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes,
-          MIN(created_at)              AS oldest_created,
-          MAX(last_accessed_at)        AS most_recent_access
-        FROM rendered_images
-        WHERE user_id = ${userId} AND deleted_at IS NULL
-    `);
-	const agg = aggRows[0] ?? {
-		render_count: 0,
-		total_bytes: 0,
-		oldest_created: null,
-		most_recent_access: null
-	};
-
-	const stats = {
-		renderCount: Number(agg.render_count ?? 0),
-		totalBytes: Number(agg.total_bytes ?? 0),
-		oldestCreatedAt: agg.oldest_created ? new Date(agg.oldest_created).toISOString() : null,
-		mostRecentAccessAt: agg.most_recent_access
-			? new Date(agg.most_recent_access).toISOString()
-			: null
-	};
+	// Aggregate stats over the user's live (non-deleted) renders.
+	// Shared with /admin/users/[id]'s drilldown so the two pages stay
+	// in sync on what "renders / bytes / oldest / most-recent" means.
+	const stats = await getUserRenderStats(userId);
 
 	// Recent 10 renders by last-accessed (the user's most-used permalinks).
 	// Sized for a single-screen card; the full list is a follow-up.
