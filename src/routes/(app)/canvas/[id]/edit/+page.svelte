@@ -16,6 +16,7 @@
 		Keyboard,
 		Sliders,
 		ExternalLink,
+		RotateCw,
 		AlertTriangle as AlertTriangleIcon
 	} from '@lucide/svelte';
 	import CanvasEditor from '$lib/components/editor/Canvas.svelte';
@@ -1278,6 +1279,22 @@
 			<span>Dashboard</span>
 		</a>
 		<span class="canvas-name">{data.canvas.name}</span>
+		<!--
+			Per-canvas renders badge (TASK-196). Same 30-day window as the
+			dashboard card + /account/usage tile so all three numbers
+			agree. Click → /account/usage (no per-canvas filter in v1).
+			Zero is explicit (rather than hidden) so the absence of
+			activity is visible at-a-glance.
+		-->
+		<a
+			class="header-renders-badge"
+			href="/account/usage"
+			data-testid="editor-renders-badge"
+			title="View account usage"
+		>
+			<RotateCw size={12} aria-hidden="true" />
+			<span>{data.renderCount.toLocaleString()} (30d)</span>
+		</a>
 
 		<div class="toolbar-actions">
 			<button
@@ -1866,6 +1883,30 @@
 		   let flex collapse the element entirely, hiding the canvas
 		   name and breaking E2E selectors that target it (TASK-156). */
 		flex-shrink: 0;
+	}
+
+	/* TASK-196: per-canvas renders (30d) pill sitting next to the
+	   canvas-name. Matches the dashboard-card variant visually so the
+	   two surfaces feel like the same control. flex-shrink:0 keeps it
+	   from collapsing when the toolbar gets crowded — same posture as
+	   .canvas-name above (TASK-156 lesson). */
+	.header-renders-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		font-size: 0.75rem;
+		font-variant-numeric: tabular-nums;
+		color: #475569;
+		text-decoration: none;
+		border: 1px solid #e2e8f0;
+		border-radius: 999px;
+		padding: 0.125rem 0.5rem;
+		flex-shrink: 0;
+	}
+
+	.header-renders-badge:hover {
+		color: #1e293b;
+		border-color: #cbd5e1;
 	}
 
 	.toolbar-actions {

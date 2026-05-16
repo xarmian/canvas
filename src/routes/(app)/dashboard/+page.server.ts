@@ -2,6 +2,7 @@ import type { PageServerLoad } from './$types';
 import { db } from '$lib/server/db';
 import { assets, canvases } from '$lib/server/db/schema';
 import { and, eq, desc, like, sql } from 'drizzle-orm';
+import { getCanvasRenderUsageBatch } from '$lib/server/render-events';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	const userId = locals.user!.id;
@@ -33,5 +34,17 @@ export const load: PageServerLoad = async ({ locals }) => {
 		.from(assets)
 		.where(and(eq(assets.userId, userId), like(assets.contentType, 'image/%')));
 
-	return { canvases: userCanvases, assetCount };
+	// Per-canvas render counts for the "renders (30d)" badge (TASK-196).
+	// ONE query for the whole list — the batch helper short-circuits on
+	// an empty id list, so the empty-dashboard case stays free. Canvases
+	// with zero events come back with `{ total: 0 }` so the card can
+	// render `↻ 0 (30d)` explicitly rather than hiding the badge.
+	const canvasIds = userCanvases.map((c) => c.id);
+	const renderTotals = await getCanvasRenderUsageBatch(canvasIds);
+	const renderCounts: Record<string, number> = {};
+	for (const id of canvasIds) {
+		renderCounts[id] = renderTotals.get(id)?.total ?? 0;
+	}
+
+	return { canvases: userCanvases, assetCount, renderCounts };
 };

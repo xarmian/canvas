@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { ConfirmDialog, EmptyState } from '$lib/components/ui';
-	import { SearchX } from '@lucide/svelte';
+	import { RotateCw, SearchX } from '@lucide/svelte';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { copyToClipboard } from '$lib/share-clipboard';
 	import { getTemplate } from '$lib/templates/gallery';
@@ -451,7 +451,26 @@
 											{/each}
 										</div>
 									{/if}
-									<p class="card-meta">Edited {formatRelativeTime(canvas.updatedAt)}</p>
+									<div class="card-footer-row">
+										<p class="card-meta">Edited {formatRelativeTime(canvas.updatedAt)}</p>
+										<!--
+											Per-canvas renders badge (TASK-196). One query for the
+											whole dashboard via `getCanvasRenderUsageBatch` — see the
+											page server. Zero-render canvases still show `↻ 0 (30d)`
+											explicitly (rather than hiding the badge) so the absence
+											of activity is visible, not invisible. Click → general
+											/account/usage page; per-canvas filtering is a follow-up.
+										-->
+										<a
+											class="renders-badge"
+											href="/account/usage"
+											data-testid="card-renders-badge"
+											title="View account usage"
+										>
+											<RotateCw size={12} aria-hidden="true" />
+											<span>{(data.renderCounts[canvas.id] ?? 0).toLocaleString()} (30d)</span>
+										</a>
+									</div>
 								</div>
 								<div class="card-actions">
 									<a href="/canvas/{canvas.id}/edit" class="btn btn-edit">Edit</a>
@@ -1003,6 +1022,40 @@
 		font-size: 0.8rem;
 		color: var(--color-text-subtle);
 		margin: 0.5rem 0 0;
+	}
+
+	/* TASK-196: footer row that pairs "Edited Xd ago" with the renders
+	   (30d) badge. The badge is always present (zero is explicit) so we
+	   use space-between to keep the meta + badge anchored to opposite
+	   ends of the card. */
+	.card-footer-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		margin-top: 0.5rem;
+	}
+
+	.card-footer-row .card-meta {
+		margin: 0;
+	}
+
+	.renders-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		font-size: 0.75rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-text-subtle);
+		text-decoration: none;
+		border: 1px solid var(--color-border);
+		border-radius: 999px;
+		padding: 0.125rem 0.5rem;
+	}
+
+	.renders-badge:hover {
+		color: var(--color-text);
+		border-color: var(--color-border-strong, var(--color-text-subtle));
 	}
 
 	.card-actions {
