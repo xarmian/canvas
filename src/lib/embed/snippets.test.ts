@@ -210,6 +210,20 @@ describe('tsSimple', () => {
 		expect(out).toContain("name: 'O\\'Brien'");
 	});
 
+	it('escapes line terminators so multi-line input stays a valid single-quoted literal', () => {
+		// Without escaping, an embedded \n would break out of the JS
+		// string and produce a syntax error in the copied snippet
+		// (Codex review round 1 P2). \u2028 / \u2029 are the JS-specific
+		// line terminators that also escape from single-quoted strings.
+		const out = tsSimple(input({ params: { multiline: 'hello\nworld\rback\u2028line\u2029sep' } }));
+		expect(out).toContain("multiline: 'hello\\nworld\\rback\\u2028line\\u2029sep'");
+	});
+
+	it('escapes backslashes in values so the snippet round-trips through the JS parser', () => {
+		const out = tsSimple(input({ params: { path: 'C:\\Users\\me' } }));
+		expect(out).toContain("path: 'C:\\\\Users\\\\me'");
+	});
+
 	it('appends &_v=<token> to the URL when a version token is set', () => {
 		const out = tsSimple(input({ versionToken: 'abc123' }));
 		expect(out).toContain('}&_v=abc123`;');
@@ -284,7 +298,13 @@ describe('tsTyped', () => {
 		expect(out).toContain("\tgain: 'abc'");
 	});
 
-	it('coerces boolean strings (true/1/yes/on, case-insensitive) to true', () => {
+	it("coerces only canonical 'true' / 'false' (case-insensitive, trimmed) to boolean literals", () => {
+		// Renderer is passthrough on booleans, so non-canonical values
+		// must NOT be silently rewritten to `false` — that would change
+		// the rendered output vs. what the bare URL form sends. Anything
+		// non-canonical falls back to a quoted string and lets the TS
+		// type-checker flag the mismatch (same approach as the
+		// NaN-number fallback).
 		const schemas: ParamSchema[] = [
 			{ name: 'a', type: 'boolean' },
 			{ name: 'b', type: 'boolean' },
@@ -295,14 +315,15 @@ describe('tsTyped', () => {
 		const out = tsTyped(
 			input({
 				paramSchemas: schemas,
-				params: { a: 'true', b: '1', c: 'YES', d: 'On', e: 'no' }
+				params: { a: 'true', b: '  FALSE  ', c: '1', d: 'yes', e: 'maybe' }
 			})
 		);
 		expect(out).toContain('\ta: true');
-		expect(out).toContain('\tb: true');
-		expect(out).toContain('\tc: true');
-		expect(out).toContain('\td: true');
-		expect(out).toContain('\te: false');
+		expect(out).toContain('\tb: false');
+		// '1' / 'yes' / 'maybe' are non-canonical → quoted fallback.
+		expect(out).toContain("\tc: '1'");
+		expect(out).toContain("\td: 'yes'");
+		expect(out).toContain("\te: 'maybe'");
 	});
 
 	it('falls back to string for keys present in params but missing from schema', () => {

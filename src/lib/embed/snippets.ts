@@ -197,21 +197,39 @@ function tsLiteralFor(rawValue: string, tsType: 'string' | 'number' | 'boolean')
 		return Number.isFinite(n) ? String(n) : jsString(rawValue);
 	}
 	if (tsType === 'boolean') {
-		// The renderer treats 'true' / '1' / 'yes' / 'on' as true; mirror
-		// that here so the typed flavor's literal matches what the bare
-		// URL form would parse the same string as.
-		const truthy = ['true', '1', 'yes', 'on'].includes(rawValue.toLowerCase());
-		return truthy ? 'true' : 'false';
+		// Renderer currently passes string params through verbatim, so
+		// the snippet should preserve whatever the user typed. We only
+		// emit a real boolean literal for the canonical 'true' / 'false'
+		// (case-insensitive, trimmed); anything else falls back to a
+		// quoted string so the snippet stays runnable and the TS type
+		// system surfaces the mismatch — same approach as the NaN case
+		// for numbers above. Avoids silently rewriting 'maybe' to
+		// `false` and diverging from what the bare URL form would send.
+		const normalized = rawValue.trim().toLowerCase();
+		if (normalized === 'true') return 'true';
+		if (normalized === 'false') return 'false';
+		return jsString(rawValue);
 	}
 	return jsString(rawValue);
 }
 
-/** Single-quoted JS string literal. Backslash and single-quote are
- * the only characters that need escaping inside a single-quoted JS
- * string; newlines / unicode pass through verbatim and render in the
- * snippet exactly as the user typed them. */
+/** Single-quoted JS string literal. Escapes backslash, single-quote,
+ * and the line terminators \n / \r / U+2028 / U+2029 — the four
+ * characters that would otherwise break out of a single-quoted JS
+ * string and produce a syntax error in the copied snippet (Codex
+ * round 1 P2). Other control characters are left verbatim — modern
+ * editors render them, and an inadvertently pasted NUL or BEL is a
+ * separate problem we can't anticipate from here. Unicode (BMP and
+ * astral) passes through unchanged since JS source allows any
+ * codepoint in a string literal. */
 function jsString(value: string): string {
-	return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+	return `'${value
+		.replace(/\\/g, '\\\\')
+		.replace(/'/g, "\\'")
+		.replace(/\n/g, '\\n')
+		.replace(/\r/g, '\\r')
+		.replace(/\u2028/g, '\\u2028')
+		.replace(/\u2029/g, '\\u2029')}'`;
 }
 
 /** Render an object key. Plain identifiers stay unquoted (cleaner
