@@ -1,9 +1,45 @@
 <script lang="ts">
-	import { Button, Input, Modal } from '$lib/components/ui';
+	import { Button, ConfirmDialog, Input, Modal } from '$lib/components/ui';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { invalidateAll } from '$app/navigation';
 
 	let { data } = $props();
+
+	type ApiKey = (typeof data.apiKeys)[number];
+
+	// Revoke-API-key flow state. Single-confirm ConfirmDialog (less
+	// destructive than the typed-confirm force-delete). `pendingRevoke`
+	// holds the row we'd act on; `revokeInFlight` blocks double-submit.
+	let pendingRevoke = $state<ApiKey | null>(null);
+	let revokeInFlight = $state(false);
+
+	async function revokeApiKey() {
+		if (!pendingRevoke || revokeInFlight) return;
+		revokeInFlight = true;
+		try {
+			const res = await fetch(
+				`/api/admin/users/${data.targetUser.id}/api-keys/${pendingRevoke.id}`,
+				{ method: 'DELETE' }
+			);
+			if (!res.ok) {
+				const body = (await res.json().catch(() => ({}))) as { message?: string };
+				toast.error(body?.message ?? `Could not revoke key (HTTP ${res.status})`);
+				return;
+			}
+			toast.success(`Revoked key "${pendingRevoke.name}"`);
+			pendingRevoke = null;
+			await invalidateAll();
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Network error');
+		} finally {
+			revokeInFlight = false;
+		}
+	}
+
+	function cancelRevoke() {
+		if (revokeInFlight) return;
+		pendingRevoke = null;
+	}
 
 	// Force-delete flow state. Typed-confirmation modal (CONVE-41:
 	// always use styled components, never window.confirm). `inFlight`
@@ -214,14 +250,85 @@
 	{/if}
 </div>
 
-<!-- API keys — TASK-187 hydrates. -->
+<!-- API keys -->
 <div class="card" data-testid="user-api-keys">
 	<header class="card-header">
 		<h3>API keys</h3>
-		<p class="card-blurb">Read-only list — populated in a follow-up.</p>
+		<p class="card-blurb">
+			Active + revoked keys for this user. Revoke is server-side admin-gated and audit-logged.
+		</p>
 	</header>
-	<div class="card-body muted empty">No data yet.</div>
+	{#if data.apiKeys.length === 0}
+		<div class="card-body muted empty">No API keys for this user.</div>
+	{:else}
+		<table class="keys-table" data-testid="api-keys-table">
+			<thead>
+				<tr>
+					<th scope="col">Name</th>
+					<th scope="col">Prefix</th>
+					<th scope="col">Scopes</th>
+					<th scope="col">Created</th>
+					<th scope="col">Last used</th>
+					<th scope="col">Status</th>
+					<th scope="col" class="actions-col">Actions</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each data.apiKeys as key (key.id)}
+					{@const revoked = key.revokedAt !== null}
+					<tr class:revoked>
+						<td>{key.name}</td>
+						<td><code class="mono">{key.prefix}</code></td>
+						<td class="scopes-cell">
+							{#if key.scopes.length === 0}
+								<span class="muted">—</span>
+							{:else}
+								{key.scopes.join(', ')}
+							{/if}
+						</td>
+						<td>{formatRelative(key.createdAt)}</td>
+						<td>{formatRelative(key.lastUsedAt)}</td>
+						<td>
+							{#if revoked}
+								<span class="badge badge-revoked">
+									Revoked {formatRelative(key.revokedAt)}
+								</span>
+							{:else}
+								<span class="badge badge-active">Active</span>
+							{/if}
+						</td>
+						<td class="actions-col">
+							{#if !revoked}
+								<Button
+									variant="danger"
+									size="sm"
+									disabled={revokeInFlight && pendingRevoke?.id === key.id}
+									onclick={() => (pendingRevoke = key)}
+									data-testid="revoke-key-button-{key.id}"
+								>
+									Revoke
+								</Button>
+							{/if}
+						</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	{/if}
 </div>
+
+<ConfirmDialog
+	open={pendingRevoke !== null}
+	title="Revoke API key"
+	message={pendingRevoke
+		? `Revoke "${pendingRevoke.name}" (${pendingRevoke.prefix}) for ${data.targetUser.email}? Bearer requests using this key will start failing immediately. Revocation is soft — the key row stays in the table for audit.`
+		: ''}
+	confirmLabel={revokeInFlight ? 'Revoking…' : 'Revoke'}
+	cancelLabel="Cancel"
+	variant="danger"
+	onConfirm={revokeApiKey}
+	onCancel={cancelRevoke}
+/>
 
 <!-- Danger zone — force-delete all renders for this user. -->
 <div class="card danger-zone" data-testid="user-danger-zone">
@@ -484,5 +591,57 @@
 		display: grid;
 		gap: var(--spacing-2);
 		font-size: var(--text-sm);
+	}
+
+	.keys-table {
+		width: 100%;
+		border-collapse: collapse;
+	}
+
+	.keys-table th,
+	.keys-table td {
+		text-align: left;
+		padding: var(--spacing-3) var(--spacing-4);
+		border-top: 1px solid var(--color-border);
+		font-size: var(--text-sm);
+		vertical-align: middle;
+	}
+
+	.keys-table th {
+		background: var(--color-surface-muted);
+		font-weight: 600;
+		color: var(--color-text-muted);
+	}
+
+	.keys-table tr.revoked td {
+		color: var(--color-text-muted);
+	}
+
+	.scopes-cell {
+		font-family: var(--font-mono, monospace);
+		font-size: var(--text-xs);
+	}
+
+	.actions-col {
+		text-align: right;
+		white-space: nowrap;
+	}
+
+	.badge {
+		display: inline-block;
+		padding: 0.1rem 0.5rem;
+		border-radius: 999px;
+		font-size: var(--text-xs);
+		font-weight: 600;
+	}
+
+	.badge-active {
+		background: rgba(34, 197, 94, 0.15);
+		color: rgb(21, 128, 61);
+	}
+
+	.badge-revoked {
+		background: var(--color-surface-muted);
+		color: var(--color-text-muted);
 	}
 </style>

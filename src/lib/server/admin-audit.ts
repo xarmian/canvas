@@ -11,6 +11,8 @@
  *
  *   - `force_delete_user_renders` — TASK-186 / PLAN-180.
  *     payload: `{ deletedRenderCount: number }`
+ *   - `revoke_user_api_key` — TASK-187 / PLAN-180.
+ *     payload: `{ keyId: string, keyName: string, keyPrefix: string }`
  *
  * Add new entries to this list when wiring a new action so the
  * vocabulary stays discoverable.

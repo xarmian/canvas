@@ -1,8 +1,8 @@
 import { error } from '@sveltejs/kit';
-import { eq, max } from 'drizzle-orm';
+import { desc, eq, max } from 'drizzle-orm';
 import type { PageServerLoad } from './$types';
 import { db } from '$lib/server/db';
-import { session, user } from '$lib/server/db/schema';
+import { apiKeys, session, user } from '$lib/server/db/schema';
 import { getUserRecentRenders, getUserRenderStats } from '$lib/server/render-stats';
 
 /**
@@ -14,8 +14,7 @@ import { getUserRecentRenders, getUserRenderStats } from '$lib/server/render-sta
  * layout, every admin page follows.
  *
  * Hydrated sections: identity card (TASK-182), storage stat tiles
- * (TASK-183), recent renders table (TASK-184). Still stubbed: API
- * keys (TASK-187).
+ * (TASK-183), recent renders table (TASK-184), API keys (TASK-187).
  */
 export const load: PageServerLoad = async ({ params }) => {
 	const rows = await db
@@ -61,21 +60,38 @@ export const load: PageServerLoad = async ({ params }) => {
 	const storageStats = await getUserRenderStats(row.id);
 	const recentRenders = await getUserRecentRenders(row.id);
 
-	type ApiKeyRow = {
-		id: string;
-		label: string;
-		prefix: string;
-		createdAt: string;
-		lastUsedAt: string | null;
-		revokedAt: string | null;
-	};
-	// Hydrated by TASK-187 (admin view of target user's API keys).
-	const apiKeys: ApiKeyRow[] = [];
+	// All API keys for the target user — active and revoked. Same shape
+	// as /account/api-keys (minus the hashed secret, which never leaves
+	// the server). Revoked keys are kept in the result so the table can
+	// render the soft history; the UI styles them muted with a
+	// "Revoked" badge.
+	const apiKeyRows = await db
+		.select({
+			id: apiKeys.id,
+			name: apiKeys.name,
+			prefix: apiKeys.prefix,
+			scopes: apiKeys.scopes,
+			lastUsedAt: apiKeys.lastUsedAt,
+			revokedAt: apiKeys.revokedAt,
+			createdAt: apiKeys.createdAt
+		})
+		.from(apiKeys)
+		.where(eq(apiKeys.userId, row.id))
+		.orderBy(desc(apiKeys.createdAt));
+	const userApiKeys = apiKeyRows.map((k) => ({
+		id: k.id,
+		name: k.name,
+		prefix: k.prefix,
+		scopes: k.scopes,
+		createdAt: k.createdAt.toISOString(),
+		lastUsedAt: k.lastUsedAt ? k.lastUsedAt.toISOString() : null,
+		revokedAt: k.revokedAt ? k.revokedAt.toISOString() : null
+	}));
 
 	return {
 		targetUser,
 		storageStats,
 		recentRenders,
-		apiKeys
+		apiKeys: userApiKeys
 	};
 };
