@@ -21,6 +21,7 @@ import { resolveForwardUrl } from '$lib/server/forward-url';
 import { validateParams } from '$lib/server/canvas-params';
 import {
 	acquireRenderSlot,
+	getClientIp,
 	RenderBusyError,
 	RENDER_THROTTLE_CONFIG
 } from '$lib/server/render-throttle';
@@ -35,6 +36,7 @@ import {
 import { getStorage } from '$lib/server/storage';
 import { publicAppOrigin, shareUrlFor, imageUrlFor } from '$lib/server/render-permalink';
 import { enforceApiKeyRateLimit } from '$lib/server/api-rate-limit';
+import { recordRenderEvent } from '$lib/server/render-events';
 import type { OutputFormat, FabricCanvasJson } from '$lib/engine';
 
 /** Default user-scoped render quota — overridable by the operator at
@@ -58,6 +60,15 @@ const ALLOWED_KEYS: ReadonlySet<string> = new Set([
 
 const MAX_OG_LENGTH = 300;
 const MAX_PARAM_VALUE_LENGTH = 2_000;
+
+/**
+ * Marker `paramsHash` used when an event fires before the params have
+ * been canonicalized — e.g. a 401/400/429 thrown by `requireApiKey`,
+ * body validation, or the rate-limit gate. The schema's `params_hash`
+ * column is NOT NULL; the value is intentionally non-hex so analytics
+ * queries can recognize "early failure" rows without joining anywhere.
+ */
+const EARLY_FAILURE_PARAMS_HASH = 'pre-hash';
 
 /**
  * Throw a structured JSON 400 response. We throw a `Response` (not
@@ -85,8 +96,110 @@ function clampDpr(raw: unknown): number {
 	return v;
 }
 
-export const POST: RequestHandler = async ({ request, locals, url }) => {
+/** Accumulator for the `render_events` row that the POST handler emits
+ *  on every code path (success, 4xx, 5xx, dedup hit, thrown). Fields
+ *  start at safe defaults so an early-failure event is still legible. */
+type PostEventAccumulator = {
+	/** Distinguishes bearer (`'baked-api'`) from session-cookie (`'baked-app'`)
+	 *  calls. PLAN-163 contract — see note in the handler. */
+	source: 'baked-api' | 'baked-app';
+	apiKeyId: string | null;
+	ownerUserId: string | null;
+	requesterUserId: string | null;
+	canvasId: string | null;
+	format: string;
+	paramsHash: string;
+	cacheHit: boolean;
+	statusCode: number;
+};
+
+/** Extract a status code from a thrown value. Catches SvelteKit's
+ *  `HttpError` (which has `.status` but is not a `Response`) AND the
+ *  raw `Response` instances thrown by `badRequest` / the rate-limit
+ *  gate. Anything else collapses to 500. */
+function captureErrorStatus(err: unknown, event: PostEventAccumulator): void {
+	if (err instanceof Response) {
+		event.statusCode = err.status;
+	} else if (
+		err !== null &&
+		typeof err === 'object' &&
+		'status' in err &&
+		typeof (err as { status: unknown }).status === 'number'
+	) {
+		event.statusCode = (err as { status: number }).status;
+	} else {
+		event.statusCode = 500;
+	}
+}
+
+export const POST: RequestHandler = async ({ request, locals, url, getClientAddress }) => {
+	// `event` accumulates the values needed to emit one `render_events`
+	// row when the handler resolves — success, 4xx, 5xx, or thrown. We
+	// populate it incrementally inside `runPost` and the `finally` block
+	// below fires the row fire-and-forget via `recordRenderEvent`.
+	//
+	// `source` follows the PLAN-163 contract: bearer-auth requests are
+	// `'baked-api'`, session-cookie requests are `'baked-app'`. Today
+	// only the bearer path actually reaches this handler (the route
+	// still 401s session-only callers via `requireApiKey`), but we
+	// resolve the source from `locals` so the upcoming session-auth
+	// task drops in without touching this code.
+	const startedAt = Date.now();
+	const event: PostEventAccumulator = {
+		source: locals.apiKey ? 'baked-api' : 'baked-app',
+		apiKeyId: locals.apiKey?.id ?? null,
+		ownerUserId: null,
+		// `requesterUserId` is the effective caller: API-key owner for
+		// bearer, session user for session-cookie auth.
+		requesterUserId: locals.apiKey?.userId ?? locals.user?.id ?? null,
+		canvasId: null,
+		format: 'png',
+		paramsHash: EARLY_FAILURE_PARAMS_HASH,
+		cacheHit: false,
+		statusCode: 500
+	};
+	try {
+		return await runPost({ event, request, locals, url });
+	} catch (err) {
+		captureErrorStatus(err, event);
+		throw err;
+	} finally {
+		// `getClientIp` returns the string `'unknown'` when no socket
+		// address is available (e.g. some vitest contexts). Coerce that to
+		// `null` so we don't hash the same sentinel into every event's
+		// `ip_hash` column — `recordRenderEvent` stores null when the IP
+		// is falsy.
+		const rawIp = getClientIp(request.headers, getClientAddress() ?? null);
+		void recordRenderEvent({
+			source: event.source,
+			apiKeyId: event.apiKeyId,
+			ownerUserId: event.ownerUserId,
+			requesterUserId: event.requesterUserId,
+			canvasId: event.canvasId,
+			format: event.format,
+			paramsHash: event.paramsHash,
+			cacheHit: event.cacheHit,
+			durationMs: Date.now() - startedAt,
+			statusCode: event.statusCode,
+			ip: rawIp === 'unknown' ? null : rawIp
+		});
+	}
+};
+
+async function runPost({
+	event,
+	request,
+	locals,
+	url
+}: {
+	event: PostEventAccumulator;
+	request: Request;
+	locals: App.Locals;
+	url: URL;
+}): Promise<Response> {
 	const apiKey = requireApiKey(locals, 'render:create');
+	event.apiKeyId = apiKey.id;
+	event.requesterUserId = apiKey.userId;
 	// Per-API-key rate gate. Throws a structured 429 with Retry-After +
 	// X-RateLimit headers on exhaustion; returns a `decorate(response)`
 	// closure for the success path that attaches the limit headers to
@@ -135,6 +248,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 		});
 	}
 	const format = rawFormat as OutputFormat;
+	event.format = format;
 
 	const rawForwardUrl = (body as Record<string, unknown>).forwardUrl;
 	if (rawForwardUrl !== undefined && rawForwardUrl !== null && typeof rawForwardUrl !== 'string') {
@@ -184,6 +298,8 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 			headers: { 'Content-Type': 'application/json' }
 		});
 	}
+	event.canvasId = canvas.id;
+	event.ownerUserId = canvas.userId;
 
 	// Strict validation — API integrators want to know when they
 	// misconfigure a binding. Lenient mode is intentionally for the
@@ -259,6 +375,11 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 		ogDescription
 	});
 	const contentHash = createHash('sha256').update(contentHashInput).digest('hex');
+	// The render_events `params_hash` is the same content hash that
+	// drives dedup in `rendered_images`. Sharing it means `cache_hit`
+	// accounting in the analytics layer aligns 1:1 with the actual
+	// dedup decision made below.
+	event.paramsHash = contentHash;
 
 	const appUrl = publicAppOrigin(url.origin);
 
@@ -288,6 +409,8 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 					console.warn(`[renders] lastAccessedAt bump failed id=${existingId}`, err);
 				});
 		});
+		event.cacheHit = true;
+		event.statusCode = 200;
 		const ext = FORMAT_EXTENSIONS[existing.format as OutputFormat]?.ext ?? 'png';
 		return decorate(
 			json(
@@ -314,6 +437,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 		.from(renderedImages)
 		.where(and(eq(renderedImages.userId, apiKey.userId), isNull(renderedImages.deletedAt)));
 	if (count >= quotaLimit) {
+		event.statusCode = 429;
 		return new Response(
 			JSON.stringify({ error: 'quota_exceeded', limit: quotaLimit, current: count }),
 			{ status: 429, headers: { 'Content-Type': 'application/json' } }
@@ -328,6 +452,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 		releaseSlot = await acquireRenderSlot();
 	} catch (err) {
 		if (err instanceof RenderBusyError) {
+			event.statusCode = 503;
 			return new Response(
 				JSON.stringify({ error: 'render_busy', retryAfterSeconds: err.retryAfterSeconds }),
 				{
@@ -424,6 +549,8 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 						)
 						.limit(1);
 					if (winner) {
+						event.cacheHit = true;
+						event.statusCode = 200;
 						const winnerExt = FORMAT_EXTENSIONS[winner.format as OutputFormat]?.ext ?? 'png';
 						return decorate(
 							json(
@@ -457,6 +584,8 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 			throw lastErr ?? new Error('Could not allocate a unique shortId');
 		}
 
+		event.cacheHit = false;
+		event.statusCode = 201;
 		const ext = FORMAT_EXTENSIONS[inserted.format as OutputFormat]?.ext ?? 'png';
 		return decorate(
 			json(
@@ -488,7 +617,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 	} finally {
 		releaseSlot();
 	}
-};
+}
 
 // ─── GET /api/v1/renders (list) ──────────────────────────────────────────
 //
