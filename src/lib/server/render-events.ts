@@ -29,7 +29,7 @@
  *   counter, so they're always consistent with the event log.
  */
 import { createHash } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { and, gte, inArray, lt, sql } from 'drizzle-orm';
 import { env } from '$env/dynamic/private';
 import { db as defaultDb } from './db';
 import { renderEvents } from './db/schema';
@@ -505,18 +505,31 @@ export async function getCanvasRenderUsageBatch(
 	const result = new Map<string, { total: number }>();
 	if (canvasIds.length === 0) return result;
 	const { from, to } = resolveDateRange(opts);
-	const rows = await client.execute<{ canvas_id: string; total: string | number }>(sql`
-		SELECT
-			canvas_id,
-			COUNT(*)::int AS total
-		FROM render_events
-		WHERE canvas_id = ANY(${canvasIds}::uuid[])
-			AND created_at >= ${from}
-			AND created_at < ${to}
-		GROUP BY canvas_id
-	`);
+	// NOTE: don't interpolate `${canvasIds}` into a raw `sql\`ANY(... ::uuid[])\`` —
+	// drizzle's `sql` tag spreads array values as scalar placeholders, producing
+	// `ANY(($1, $2)::uuid[])` (an invalid tuple cast). Use the query builder's
+	// `inArray`, which emits `column IN ($1, $2, …)` — safe for any non-empty
+	// id list within the Postgres bind-parameter limit.
+	const rows = await client
+		.select({
+			canvasId: renderEvents.canvasId,
+			total: sql<number>`COUNT(*)::int`
+		})
+		.from(renderEvents)
+		.where(
+			and(
+				inArray(renderEvents.canvasId, canvasIds),
+				gte(renderEvents.createdAt, from),
+				lt(renderEvents.createdAt, to)
+			)
+		)
+		.groupBy(renderEvents.canvasId);
 	for (const id of canvasIds) result.set(id, { total: 0 });
-	for (const r of rows) result.set(r.canvas_id, { total: Number(r.total) });
+	for (const r of rows) {
+		// `canvasId` is nullable in the schema, but `inArray` filters out NULL
+		// rows by definition — the narrow appeases TS without changing behavior.
+		if (r.canvasId) result.set(r.canvasId, { total: Number(r.total) });
+	}
 	return result;
 }
 
@@ -536,29 +549,39 @@ export async function getApiKeyRenderUsageBatch(
 	>();
 	if (keyIds.length === 0) return result;
 	const { from, to } = resolveDateRange(opts);
-	const rows = await client.execute<{
-		api_key_id: string;
-		total: string | number;
-		last429: Date | string | null;
-		last_error: Date | string | null;
-	}>(sql`
-		SELECT
-			api_key_id,
-			COUNT(*)::int AS total,
-			MAX(created_at) FILTER (WHERE status_code = 429) AS last429,
-			MAX(created_at) FILTER (WHERE status_code >= 500) AS last_error
-		FROM render_events
-		WHERE api_key_id = ANY(${keyIds}::uuid[])
-			AND created_at >= ${from}
-			AND created_at < ${to}
-		GROUP BY api_key_id
-	`);
+	// See `getCanvasRenderUsageBatch` for why we use `inArray` rather than a
+	// raw `ANY(... ::uuid[])` cast. The `MAX(...) FILTER (...)` aggregates
+	// are inlined via `sql<T>\`\`` so the query builder can still bind the
+	// id list correctly.
+	const rows = await client
+		.select({
+			apiKeyId: renderEvents.apiKeyId,
+			total: sql<number>`COUNT(*)::int`,
+			last429: sql<
+				Date | string | null
+			>`MAX(${renderEvents.createdAt}) FILTER (WHERE ${renderEvents.statusCode} = 429)`,
+			lastError: sql<
+				Date | string | null
+			>`MAX(${renderEvents.createdAt}) FILTER (WHERE ${renderEvents.statusCode} >= 500)`
+		})
+		.from(renderEvents)
+		.where(
+			and(
+				inArray(renderEvents.apiKeyId, keyIds),
+				gte(renderEvents.createdAt, from),
+				lt(renderEvents.createdAt, to)
+			)
+		)
+		.groupBy(renderEvents.apiKeyId);
 	for (const id of keyIds) result.set(id, { total: 0, last429At: null, lastErrorAt: null });
 	for (const r of rows) {
-		result.set(r.api_key_id, {
+		// `apiKeyId` is nullable in the schema, but `inArray` filters out NULL
+		// rows — the narrow keeps TS happy without changing behavior.
+		if (!r.apiKeyId) continue;
+		result.set(r.apiKeyId, {
 			total: Number(r.total),
 			last429At: r.last429 ? new Date(r.last429).toISOString() : null,
-			lastErrorAt: r.last_error ? new Date(r.last_error).toISOString() : null
+			lastErrorAt: r.lastError ? new Date(r.lastError).toISOString() : null
 		});
 	}
 	return result;
