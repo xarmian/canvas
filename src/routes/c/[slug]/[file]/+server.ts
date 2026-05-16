@@ -22,6 +22,7 @@ import {
 	RenderBusyError,
 	RENDER_THROTTLE_CONFIG
 } from '$lib/server/render-throttle';
+import { recordRenderEvent } from '$lib/server/render-events';
 
 const renderCache = getDefaultRenderCache();
 
@@ -150,280 +151,385 @@ function pickCacheControl(requestedVersion: string | null, currentVersionToken: 
 	return 'public, max-age=60, s-maxage=300';
 }
 
-export const GET: RequestHandler = async ({ params, url, request, getClientAddress }) => {
-	// Parse format from filename
-	const formatInfo = parseFormat(params.file);
-	if (!formatInfo) {
-		error(404, 'Not found. Use image.png, image.jpg, image.webp, or image.avif');
-	}
+/** Accumulator for the `render_events` row this handler emits on every
+ *  code path (success, 304, 429, 503, error, thrown). Fields start at
+ *  safe defaults so an early-failure event is still legible. The
+ *  `finally` block at the bottom of GET fires the event fire-and-forget
+ *  via `recordRenderEvent`. */
+type OnTheFlyEventAccumulator = {
+	canvasId: string | null;
+	ownerUserId: string | null;
+	requesterUserId: string | null;
+	format: string;
+	paramsHash: string;
+	cacheHit: boolean;
+	statusCode: number;
+};
 
-	// Load canvas by slug (must be published)
-	const [canvas] = await db.select().from(canvases).where(eq(canvases.slug, params.slug));
+/** Marker `paramsHash` for events that fire before `cacheKey()` has
+ *  been built — early 4xx paths (bad format / canvas missing) and
+ *  unexpected throws before validation. Non-hex so analytics can
+ *  recognize "pre-hash" rows without a join. */
+const ON_THE_FLY_EARLY_FAILURE_HASH = 'pre-hash';
 
-	if (!canvas || !canvas.published) {
-		error(404, 'Canvas not found or not published');
-	}
-
-	// Parse URL query parameters. `_v`, `_dpr`, `_strict` are reserved
-	// underscore-prefixed flags and are not forwarded to the renderer.
-	// Underscore prefix is namespace-style and unlikely to collide with
-	// a user-defined param name (people bind `v`, `dpr`, `strict`
-	// without thinking, but rarely `_v`/`_dpr`/`_strict`).
-	const queryParams: Record<string, string> = {};
-	let requestedVersion: string | null = null;
-	let dprParam: string | null = null;
-	let strictParam: string | null = null;
-	for (const [key, value] of url.searchParams) {
-		if (key === '_v') {
-			requestedVersion = value;
-			continue;
+export const GET: RequestHandler = async ({ params, url, request, locals, getClientAddress }) => {
+	// Event accumulator + start clock for the `render_events` row this
+	// handler emits on every code path. The `finally` block at the bottom
+	// fires the event fire-and-forget; `recordRenderEvent` itself catches
+	// + logs any DB error so observability can never break the render.
+	const startedAt = Date.now();
+	const event: OnTheFlyEventAccumulator = {
+		canvasId: null,
+		ownerUserId: null,
+		// Public route: no API-key auth on this path. `requesterUserId` is
+		// the session user if the visitor happens to be logged in,
+		// otherwise null (true anonymous render).
+		requesterUserId: locals.user?.id ?? null,
+		format: 'png',
+		paramsHash: ON_THE_FLY_EARLY_FAILURE_HASH,
+		cacheHit: false,
+		statusCode: 500
+	};
+	try {
+		// Parse format from filename
+		const formatInfo = parseFormat(params.file);
+		if (!formatInfo) {
+			error(404, 'Not found. Use image.png, image.jpg, image.webp, or image.avif');
 		}
-		if (key === '_dpr') {
-			dprParam = value;
-			continue;
-		}
-		if (key === '_strict') {
-			strictParam = value;
-			continue;
-		}
-		queryParams[key] = value;
-	}
-	const dpr = parseDpr(dprParam);
-	// `?_strict=1` opts into the legacy strict-validation behavior
-	// (returns 400 on missing-required / type-mismatch). The default —
-	// lenient — fills missing required params from defaults / empty
-	// string and emits a `Canvas-Param-Warnings` header. Strict mode
-	// is intended for API integrators wiring up validation logic; the
-	// public render path is owned by social crawlers that drop the card
-	// silently on 400, so the lenient path keeps the preview working.
-	const strict = strictParam === '1' || strictParam === 'true';
+		event.format = formatInfo.format;
 
-	// Validation runs BEFORE cache lookup so a previously-cached URL
-	// can't bypass newly-enforced required/type constraints. (The
-	// schema rows are read on every request anyway; we'd just be
-	// trading a Postgres roundtrip for a stale cache hit.)
-	const paramDefs = await db
-		.select()
-		.from(canvasParams)
-		.where(eq(canvasParams.canvasId, canvas.id));
+		// Load canvas by slug (must be published)
+		const [canvas] = await db.select().from(canvases).where(eq(canvases.slug, params.slug));
 
-	const validation = validateParams(queryParams, paramDefs, { lenient: !strict });
-	if (!validation.ok) {
-		// Strict mode (or the unrecoverable `ok: false` shape) — return
-		// a structured JSON 400 to API integrators. Lenient validation
-		// always returns `ok: true`, so this branch only runs when the
-		// caller explicitly opted in via `?_strict=1`.
-		return new Response(
-			JSON.stringify({
-				error: 'invalid_param',
-				field: validation.field,
-				message: validation.reason
-			}),
-			{
-				status: 400,
-				headers: { 'Content-Type': 'application/json' }
+		if (!canvas || !canvas.published) {
+			error(404, 'Canvas not found or not published');
+		}
+		event.canvasId = canvas.id;
+		event.ownerUserId = canvas.userId;
+
+		// Parse URL query parameters. `_v`, `_dpr`, `_strict` are reserved
+		// underscore-prefixed flags and are not forwarded to the renderer.
+		// Underscore prefix is namespace-style and unlikely to collide with
+		// a user-defined param name (people bind `v`, `dpr`, `strict`
+		// without thinking, but rarely `_v`/`_dpr`/`_strict`).
+		const queryParams: Record<string, string> = {};
+		let requestedVersion: string | null = null;
+		let dprParam: string | null = null;
+		let strictParam: string | null = null;
+		for (const [key, value] of url.searchParams) {
+			if (key === '_v') {
+				requestedVersion = value;
+				continue;
 			}
+			if (key === '_dpr') {
+				dprParam = value;
+				continue;
+			}
+			if (key === '_strict') {
+				strictParam = value;
+				continue;
+			}
+			queryParams[key] = value;
+		}
+		const dpr = parseDpr(dprParam);
+		// `?_strict=1` opts into the legacy strict-validation behavior
+		// (returns 400 on missing-required / type-mismatch). The default —
+		// lenient — fills missing required params from defaults / empty
+		// string and emits a `Canvas-Param-Warnings` header. Strict mode
+		// is intended for API integrators wiring up validation logic; the
+		// public render path is owned by social crawlers that drop the card
+		// silently on 400, so the lenient path keeps the preview working.
+		const strict = strictParam === '1' || strictParam === 'true';
+
+		// Validation runs BEFORE cache lookup so a previously-cached URL
+		// can't bypass newly-enforced required/type constraints. (The
+		// schema rows are read on every request anyway; we'd just be
+		// trading a Postgres roundtrip for a stale cache hit.)
+		const paramDefs = await db
+			.select()
+			.from(canvasParams)
+			.where(eq(canvasParams.canvasId, canvas.id));
+
+		const validation = validateParams(queryParams, paramDefs, { lenient: !strict });
+		if (!validation.ok) {
+			// Strict mode (or the unrecoverable `ok: false` shape) — return
+			// a structured JSON 400 to API integrators. Lenient validation
+			// always returns `ok: true`, so this branch only runs when the
+			// caller explicitly opted in via `?_strict=1`.
+			event.statusCode = 400;
+			return new Response(
+				JSON.stringify({
+					error: 'invalid_param',
+					field: validation.field,
+					message: validation.reason
+				}),
+				{
+					status: 400,
+					headers: { 'Content-Type': 'application/json' }
+				}
+			);
+		}
+		Object.assign(queryParams, validation.resolved);
+
+		// Build a header listing param names that fell back to defaults so
+		// the render is observable to anyone debugging "why does my card
+		// look wrong?" without changing the response status. Comma-
+		// separated; only added when there's at least one warning so
+		// well-formed requests don't pay header bytes.
+		const paramWarnings = validation.warnings;
+		const paramWarningsHeader =
+			paramWarnings.length > 0 ? paramWarnings.map((w) => w.field).join(', ') : null;
+
+		// Compute the live font set BEFORE cache lookup. The cache key
+		// includes a fingerprint of the user's current font library so any
+		// add/delete of any font busts every cached render for that user.
+		// Critically, the fingerprint is built from asset IDs (not just
+		// family names) so delete-then-reupload of the same filename also
+		// busts the cache — re-uploading produces a new asset row with a
+		// new UUID even though the derived family is identical.
+		// Read live descriptors once and reuse them for both (a) the cache-key
+		// fingerprint and (b) the sanitize step inside renderForUser. Passing
+		// the same set through closes the TOCTOU window where the route would
+		// otherwise build the key against one snapshot and the helper would
+		// sanitize/render against a fresher one — producing bytes that don't
+		// match their cache key on font upload/delete during the request.
+		const liveDescriptors = await getLiveUserFontDescriptors(canvas.userId);
+		const liveFamilies = new Set(liveDescriptors.map((d) => d.family));
+		const fontSetVersion = fontSetVersionFromDescriptors(liveDescriptors);
+
+		// Asset-reference fingerprint (TASK-117). Walk the templateJson
+		// for `asset://` ids and look up their current `(id, storage_key)`
+		// rows owner-scoped. A delete drops entries from the fingerprint;
+		// a replace yields a new storage_key. Either way, the cache key
+		// changes and the next render is fresh — without requiring a
+		// canvas edit. Empty fingerprint when the canvas has no
+		// `asset://` refs (skips the DB roundtrip entirely).
+		const referencedAssetIds = collectAssetReferences(
+			canvas.templateJson as unknown as FabricCanvasJson | null
 		);
-	}
-	Object.assign(queryParams, validation.resolved);
+		const assetEntries =
+			referencedAssetIds.length > 0
+				? await loadAssetFingerprint(referencedAssetIds, canvas.userId)
+				: [];
+		const assetSetVersion = assetSetVersionFromEntries(assetEntries);
 
-	// Build a header listing param names that fell back to defaults so
-	// the render is observable to anyone debugging "why does my card
-	// look wrong?" without changing the response status. Comma-
-	// separated; only added when there's at least one warning so
-	// well-formed requests don't pay header bytes.
-	const paramWarnings = validation.warnings;
-	const paramWarningsHeader =
-		paramWarnings.length > 0 ? paramWarnings.map((w) => w.field).join(', ') : null;
+		// Cache key uses the resolved params (post-default), so two requests
+		// that differ only by relying-on-default vs explicit value hit the
+		// same cache entry — and a now-required param that was previously
+		// cached as missing won't serve from cache (the validation above
+		// already returned 400).
+		// Include canvas.updatedAt so any edit (templateJson, dimensions,
+		// background, even canvasParams flag changes that wouldn't change
+		// the rendered bytes but might change validation behavior) busts
+		// the cache. updatedAt is auto-refreshed on every PATCH via Drizzle
+		// $onUpdate.
+		const version = canvas.updatedAt.toISOString();
+		const key = cacheKey(
+			params.slug,
+			version,
+			queryParams,
+			formatInfo.format,
+			fontSetVersion,
+			assetSetVersion,
+			dpr
+		);
+		const etag = buildEtag(key);
+		// `paramsHash` for the render-events row uses the same key the cache
+		// is keyed by — so the analytics-layer `cache_hit` rate aligns 1:1
+		// with the actual cache decision below. SHA-256 truncated to a hex
+		// digest keeps it compact and consistent with `buildEtag`'s shape.
+		event.paramsHash = createHash('sha256').update(key).digest('hex');
+		const updatedAtMs = canvas.updatedAt.getTime().toString();
+		const lastModified = canvas.updatedAt.toUTCString();
+		// Mix the asset-set fingerprint into `_v` (TASK-117) so a stale
+		// `_v` from an embed-code snippet stops matching the immutable-
+		// cache opt-in once a referenced asset is mutated. Otherwise a
+		// 1-year CDN cache would keep serving the pre-mutation render.
+		const versionToken = buildContentVersionToken(updatedAtMs, fontSetVersion, assetSetVersion);
+		const cacheControl = pickCacheControl(requestedVersion, versionToken);
 
-	// Compute the live font set BEFORE cache lookup. The cache key
-	// includes a fingerprint of the user's current font library so any
-	// add/delete of any font busts every cached render for that user.
-	// Critically, the fingerprint is built from asset IDs (not just
-	// family names) so delete-then-reupload of the same filename also
-	// busts the cache — re-uploading produces a new asset row with a
-	// new UUID even though the derived family is identical.
-	// Read live descriptors once and reuse them for both (a) the cache-key
-	// fingerprint and (b) the sanitize step inside renderForUser. Passing
-	// the same set through closes the TOCTOU window where the route would
-	// otherwise build the key against one snapshot and the helper would
-	// sanitize/render against a fresher one — producing bytes that don't
-	// match their cache key on font upload/delete during the request.
-	const liveDescriptors = await getLiveUserFontDescriptors(canvas.userId);
-	const liveFamilies = new Set(liveDescriptors.map((d) => d.family));
-	const fontSetVersion = fontSetVersionFromDescriptors(liveDescriptors);
+		// Conditional GET: 304 short-circuits before we touch storage / cache.
+		// Per RFC 9110: when If-None-Match is present the recipient MUST
+		// ignore If-Modified-Since. Without that ordering, a canvas edited
+		// within the same wall-second as a previous fetch would: send a new
+		// ETag (cache miss) but the second-rounded Last-Modified would
+		// still match If-Modified-Since → false 304 → consumer keeps the
+		// stale render.
+		const ifNoneMatch = request.headers.get('if-none-match');
+		if (ifNoneMatch !== null) {
+			if (ifNoneMatchHits(ifNoneMatch, etag)) {
+				const headers: Record<string, string> = {
+					ETag: etag,
+					'Cache-Control': cacheControl,
+					'Last-Modified': lastModified,
+					Vary: 'Accept'
+				};
+				if (paramWarningsHeader) headers['Canvas-Param-Warnings'] = paramWarningsHeader;
+				// 304 counts as a cache hit for analytics — the consumer
+				// served from their local cache, so no render happened, and
+				// the upstream cache would've been a hit too if we'd taken
+				// the FsRenderCache path below.
+				event.cacheHit = true;
+				event.statusCode = 304;
+				return new Response(null, { status: 304, headers });
+			}
+			// ETag didn't match — fall through to a full render. Skip the
+			// If-Modified-Since branch entirely per RFC 9110.
+		}
+		// Note: we deliberately do NOT honor If-Modified-Since 304s. The
+		// rendered bytes depend on the canvas owner's font library too, and
+		// font upload/delete doesn't bump canvas.updatedAt. A client validating
+		// purely with If-Modified-Since after a font change would get a false
+		// 304. ETag (which includes the font fingerprint) is the strong
+		// validator — clients that send both headers are well-served by the
+		// If-None-Match branch above. Last-Modified is still emitted so HTTP
+		// archivers and explorer tools can show a timestamp.
 
-	// Asset-reference fingerprint (TASK-117). Walk the templateJson
-	// for `asset://` ids and look up their current `(id, storage_key)`
-	// rows owner-scoped. A delete drops entries from the fingerprint;
-	// a replace yields a new storage_key. Either way, the cache key
-	// changes and the next render is fresh — without requiring a
-	// canvas edit. Empty fingerprint when the canvas has no
-	// `asset://` refs (skips the DB roundtrip entirely).
-	const referencedAssetIds = collectAssetReferences(
-		canvas.templateJson as unknown as FabricCanvasJson | null
-	);
-	const assetEntries =
-		referencedAssetIds.length > 0
-			? await loadAssetFingerprint(referencedAssetIds, canvas.userId)
-			: [];
-	const assetSetVersion = assetSetVersionFromEntries(assetEntries);
-
-	// Cache key uses the resolved params (post-default), so two requests
-	// that differ only by relying-on-default vs explicit value hit the
-	// same cache entry — and a now-required param that was previously
-	// cached as missing won't serve from cache (the validation above
-	// already returned 400).
-	// Include canvas.updatedAt so any edit (templateJson, dimensions,
-	// background, even canvasParams flag changes that wouldn't change
-	// the rendered bytes but might change validation behavior) busts
-	// the cache. updatedAt is auto-refreshed on every PATCH via Drizzle
-	// $onUpdate.
-	const version = canvas.updatedAt.toISOString();
-	const key = cacheKey(
-		params.slug,
-		version,
-		queryParams,
-		formatInfo.format,
-		fontSetVersion,
-		assetSetVersion,
-		dpr
-	);
-	const etag = buildEtag(key);
-	const updatedAtMs = canvas.updatedAt.getTime().toString();
-	const lastModified = canvas.updatedAt.toUTCString();
-	// Mix the asset-set fingerprint into `_v` (TASK-117) so a stale
-	// `_v` from an embed-code snippet stops matching the immutable-
-	// cache opt-in once a referenced asset is mutated. Otherwise a
-	// 1-year CDN cache would keep serving the pre-mutation render.
-	const versionToken = buildContentVersionToken(updatedAtMs, fontSetVersion, assetSetVersion);
-	const cacheControl = pickCacheControl(requestedVersion, versionToken);
-
-	// Conditional GET: 304 short-circuits before we touch storage / cache.
-	// Per RFC 9110: when If-None-Match is present the recipient MUST
-	// ignore If-Modified-Since. Without that ordering, a canvas edited
-	// within the same wall-second as a previous fetch would: send a new
-	// ETag (cache miss) but the second-rounded Last-Modified would
-	// still match If-Modified-Since → false 304 → consumer keeps the
-	// stale render.
-	const ifNoneMatch = request.headers.get('if-none-match');
-	if (ifNoneMatch !== null) {
-		if (ifNoneMatchHits(ifNoneMatch, etag)) {
+		const cachedBuf = await renderCache.get(key, formatInfo.format);
+		if (cachedBuf) {
 			const headers: Record<string, string> = {
-				ETag: etag,
+				'Content-Type': formatInfo.contentType,
 				'Cache-Control': cacheControl,
+				ETag: etag,
 				'Last-Modified': lastModified,
-				Vary: 'Accept'
+				Vary: 'Accept',
+				'X-Cache': 'HIT'
 			};
 			if (paramWarningsHeader) headers['Canvas-Param-Warnings'] = paramWarningsHeader;
-			return new Response(null, { status: 304, headers });
+			event.cacheHit = true;
+			event.statusCode = 200;
+			return new Response(new Uint8Array(cachedBuf), { headers });
 		}
-		// ETag didn't match — fall through to a full render. Skip the
-		// If-Modified-Since branch entirely per RFC 9110.
-	}
-	// Note: we deliberately do NOT honor If-Modified-Since 304s. The
-	// rendered bytes depend on the canvas owner's font library too, and
-	// font upload/delete doesn't bump canvas.updatedAt. A client validating
-	// purely with If-Modified-Since after a font change would get a false
-	// 304. ETag (which includes the font fingerprint) is the strong
-	// validator — clients that send both headers are well-served by the
-	// If-None-Match branch above. Last-Modified is still emitted so HTTP
-	// archivers and explorer tools can show a timestamp.
 
-	const cachedBuf = await renderCache.get(key, formatInfo.format);
-	if (cachedBuf) {
-		const headers: Record<string, string> = {
-			'Content-Type': formatInfo.contentType,
-			'Cache-Control': cacheControl,
-			ETag: etag,
-			'Last-Modified': lastModified,
-			Vary: 'Accept',
-			'X-Cache': 'HIT'
-		};
-		if (paramWarningsHeader) headers['Canvas-Param-Warnings'] = paramWarningsHeader;
-		return new Response(new Uint8Array(cachedBuf), { headers });
-	}
-
-	// Cache miss → we're going to do real CPU work. Apply throttle layers
-	// in this order: per-IP rate limit first (cheap, fails fast), then the
-	// process-wide concurrency semaphore (waits up to QUEUE_TIMEOUT_MS for
-	// a slot). Both are intentionally bypassed on cache hit above so a hot
-	// URL can absorb burst traffic without burning rate budget.
-	const ip = getClientIp(request.headers, getClientAddress());
-	const limit = checkRateLimit(ip);
-	if (!limit.allowed) {
-		console.warn(
-			`[render] rate-limited ip=${ip} slug=${params.slug} retryAfter=${limit.retryAfterSeconds}s`
-		);
-		return new Response('Too Many Requests', {
-			status: 429,
-			headers: {
-				'Retry-After': String(limit.retryAfterSeconds),
-				'X-RateLimit-Limit': String(limit.limit),
-				'X-RateLimit-Remaining': '0'
-			}
-		});
-	}
-
-	let releaseSlot: () => void;
-	try {
-		releaseSlot = await acquireRenderSlot();
-	} catch (err) {
-		if (err instanceof RenderBusyError) {
+		// Cache miss → we're going to do real CPU work. Apply throttle layers
+		// in this order: per-IP rate limit first (cheap, fails fast), then the
+		// process-wide concurrency semaphore (waits up to QUEUE_TIMEOUT_MS for
+		// a slot). Both are intentionally bypassed on cache hit above so a hot
+		// URL can absorb burst traffic without burning rate budget.
+		const ip = getClientIp(request.headers, getClientAddress());
+		const limit = checkRateLimit(ip);
+		if (!limit.allowed) {
 			console.warn(
-				`[render] queue-timeout ip=${ip} slug=${params.slug} concurrency=${RENDER_THROTTLE_CONFIG.concurrency}`
+				`[render] rate-limited ip=${ip} slug=${params.slug} retryAfter=${limit.retryAfterSeconds}s`
 			);
-			return new Response('Service Unavailable', {
-				status: 503,
+			event.statusCode = 429;
+			return new Response('Too Many Requests', {
+				status: 429,
 				headers: {
-					'Retry-After': String(err.retryAfterSeconds),
+					'Retry-After': String(limit.retryAfterSeconds),
 					'X-RateLimit-Limit': String(limit.limit),
-					'X-RateLimit-Remaining': String(limit.remaining)
+					'X-RateLimit-Remaining': '0'
 				}
 			});
 		}
+
+		let releaseSlot: () => void;
+		try {
+			releaseSlot = await acquireRenderSlot();
+		} catch (err) {
+			if (err instanceof RenderBusyError) {
+				console.warn(
+					`[render] queue-timeout ip=${ip} slug=${params.slug} concurrency=${RENDER_THROTTLE_CONFIG.concurrency}`
+				);
+				event.statusCode = 503;
+				return new Response('Service Unavailable', {
+					status: 503,
+					headers: {
+						'Retry-After': String(err.retryAfterSeconds),
+						'X-RateLimit-Limit': String(limit.limit),
+						'X-RateLimit-Remaining': String(limit.remaining)
+					}
+				});
+			}
+			throw err;
+		}
+
+		try {
+			// Delegate the render pipeline (font registration + sanitize stale
+			// fontFamily refs + asset-reference resolution + render) to the
+			// shared helper introduced in TASK-168. The helper is owned by the
+			// Programmatic Render API (`POST /api/v1/renders`) and we now share
+			// it from this live route so a fix in one place propagates to both.
+			//
+			// The cache/HTTP plumbing (ETag short-circuit, per-IP rate limit,
+			// render-slot semaphore, FsRenderCache get/set, cache-control
+			// negotiation against `?_v=`) stays inline — those are concerns of
+			// this route, not of the render pipeline.
+			const { buffer } = await renderForUser(canvas, queryParams, {
+				format: formatInfo.format,
+				quality: 85,
+				dpr,
+				// Pin the helper to the same font-family snapshot we already
+				// fingerprinted into the cache key above. Without this, a font
+				// mutation between the two reads would leave the cached bytes
+				// labeled with a stale fontSetVersion.
+				liveFamilies
+			});
+
+			// Persist to filesystem cache. The FsRenderCache handles LRU
+			// eviction internally based on CACHE_MAX_MB.
+			await renderCache.set(key, formatInfo.format, buffer);
+
+			const headers: Record<string, string> = {
+				'Content-Type': formatInfo.contentType,
+				'Cache-Control': cacheControl,
+				ETag: etag,
+				'Last-Modified': lastModified,
+				Vary: 'Accept',
+				'X-Cache': 'MISS',
+				'X-RateLimit-Limit': String(limit.limit),
+				'X-RateLimit-Remaining': String(limit.remaining)
+			};
+			if (paramWarningsHeader) headers['Canvas-Param-Warnings'] = paramWarningsHeader;
+			event.cacheHit = false;
+			event.statusCode = 200;
+			return new Response(new Uint8Array(buffer), { headers });
+		} finally {
+			releaseSlot();
+		}
+	} catch (err) {
+		// Capture status from anything thrown along the way — SvelteKit's
+		// `error(...)` throws an HttpError with `.status`; nothing else
+		// in this handler throws a `Response`, but we accept it
+		// defensively for symmetry with the baked POST handler.
+		if (err instanceof Response) {
+			event.statusCode = err.status;
+		} else if (
+			err !== null &&
+			typeof err === 'object' &&
+			'status' in err &&
+			typeof (err as { status: unknown }).status === 'number'
+		) {
+			event.statusCode = (err as { status: number }).status;
+		} else {
+			event.statusCode = 500;
+		}
 		throw err;
-	}
-
-	try {
-		// Delegate the render pipeline (font registration + sanitize stale
-		// fontFamily refs + asset-reference resolution + render) to the
-		// shared helper introduced in TASK-168. The helper is owned by the
-		// Programmatic Render API (`POST /api/v1/renders`) and we now share
-		// it from this live route so a fix in one place propagates to both.
-		//
-		// The cache/HTTP plumbing (ETag short-circuit, per-IP rate limit,
-		// render-slot semaphore, FsRenderCache get/set, cache-control
-		// negotiation against `?_v=`) stays inline — those are concerns of
-		// this route, not of the render pipeline.
-		const { buffer } = await renderForUser(canvas, queryParams, {
-			format: formatInfo.format,
-			quality: 85,
-			dpr,
-			// Pin the helper to the same font-family snapshot we already
-			// fingerprinted into the cache key above. Without this, a font
-			// mutation between the two reads would leave the cached bytes
-			// labeled with a stale fontSetVersion.
-			liveFamilies
-		});
-
-		// Persist to filesystem cache. The FsRenderCache handles LRU
-		// eviction internally based on CACHE_MAX_MB.
-		await renderCache.set(key, formatInfo.format, buffer);
-
-		const headers: Record<string, string> = {
-			'Content-Type': formatInfo.contentType,
-			'Cache-Control': cacheControl,
-			ETag: etag,
-			'Last-Modified': lastModified,
-			Vary: 'Accept',
-			'X-Cache': 'MISS',
-			'X-RateLimit-Limit': String(limit.limit),
-			'X-RateLimit-Remaining': String(limit.remaining)
-		};
-		if (paramWarningsHeader) headers['Canvas-Param-Warnings'] = paramWarningsHeader;
-		return new Response(new Uint8Array(buffer), { headers });
 	} finally {
-		releaseSlot();
+		// Skip the row entirely when the canvas never resolved — those
+		// 404s are spammy probe traffic with no useful identity (no
+		// canvasId, no ownerUserId, no paramsHash). Storing them
+		// would clutter the table without informing any surface.
+		if (event.canvasId !== null) {
+			// Hash the requester IP with the same helper the rate limiter
+			// uses so the trust-proxy posture is consistent (TRUST_PROXY=1
+			// honors XFF; default rejects spoofed values). The 'unknown'
+			// sentinel becomes null so we don't hash a placeholder into
+			// every IP-less event's `ip_hash`.
+			const rawIp = getClientIp(request.headers, getClientAddress() ?? null);
+			void recordRenderEvent({
+				source: 'on-the-fly',
+				canvasId: event.canvasId,
+				ownerUserId: event.ownerUserId,
+				requesterUserId: event.requesterUserId,
+				apiKeyId: null,
+				format: event.format,
+				paramsHash: event.paramsHash,
+				cacheHit: event.cacheHit,
+				durationMs: Date.now() - startedAt,
+				statusCode: event.statusCode,
+				ip: rawIp === 'unknown' ? null : rawIp
+			});
+		}
 	}
 };
