@@ -10,6 +10,7 @@ import {
 	curlFor,
 	tsSimple,
 	tsTyped,
+	python,
 	type ParamSchema,
 	type SnippetInput
 } from './snippets';
@@ -385,6 +386,116 @@ describe('tsTyped', () => {
 		);
 		expect(out).not.toContain('type Params');
 		expect(out).toContain('await fetch(url)');
+	});
+});
+
+describe('python', () => {
+	it('emits import + params dict + GET + raise_for_status + binary write', () => {
+		const out = python(input());
+		expect(out).toContain('import requests');
+		expect(out).toContain('params = {');
+		expect(out).toContain('\t"title": "Hello",');
+		expect(out).toContain('\t"avatar": "https://x",');
+		expect(out).toContain('response = requests.get(');
+		expect(out).toContain('\t"https://canvas.example.com/c/card/image.png",');
+		expect(out).toContain('\tparams=params,');
+		expect(out).toContain('response.raise_for_status()');
+		expect(out).toContain('with open("card.png", "wb") as f:');
+		expect(out).toContain('\tf.write(response.content)');
+	});
+
+	it('emits number params as unquoted Python literals when schema says number', () => {
+		const out = python(
+			input({
+				paramSchemas: [{ name: 'gain', type: 'number' }],
+				params: { gain: '12.5' }
+			})
+		);
+		expect(out).toContain('\t"gain": 12.5,');
+		expect(out).not.toContain('"gain": "12.5"');
+	});
+
+	it('falls back to quoted string for number type when value is not finite-numeric', () => {
+		const out = python(
+			input({
+				paramSchemas: [{ name: 'gain', type: 'number' }],
+				params: { gain: 'abc' }
+			})
+		);
+		expect(out).toContain('\t"gain": "abc",');
+	});
+
+	it('emits boolean params as quoted lowercase strings ("true"/"false") not Python True/False', () => {
+		// Python's str(True) is "True" with capital T — would NOT match the
+		// renderer's expectation. Stay quoted-lowercase so the wire-level
+		// representation matches what the renderer parses.
+		const out = python(
+			input({
+				paramSchemas: [
+					{ name: 'a', type: 'boolean' },
+					{ name: 'b', type: 'boolean' },
+					{ name: 'c', type: 'boolean' }
+				],
+				params: { a: 'true', b: 'FALSE', c: 'maybe' }
+			})
+		);
+		expect(out).toContain('\t"a": "true",');
+		expect(out).toContain('\t"b": "false",');
+		expect(out).toContain('\t"c": "maybe",');
+		expect(out).not.toContain('True');
+		expect(out).not.toContain('False');
+	});
+
+	it('falls back to quoted strings everywhere when no paramSchemas are supplied', () => {
+		const out = python(
+			input({
+				paramSchemas: undefined,
+				params: { title: 'Hello', gain: '12.5', verified: 'true' }
+			})
+		);
+		expect(out).toContain('\t"title": "Hello",');
+		expect(out).toContain('\t"gain": "12.5",');
+		expect(out).toContain('\t"verified": "true",');
+	});
+
+	it('escapes double-quotes, backslashes, and line terminators in string values', () => {
+		const out = python(
+			input({
+				params: {
+					quoted: 'say "hi"',
+					path: 'C:\\Users\\me',
+					multiline: 'a\nb\rc'
+				}
+			})
+		);
+		expect(out).toContain('\t"quoted": "say \\"hi\\"",');
+		expect(out).toContain('\t"path": "C:\\\\Users\\\\me",');
+		expect(out).toContain('\t"multiline": "a\\nb\\rc",');
+	});
+
+	it('falls back to a bare GET (no params= kwarg) when includeParams is off', () => {
+		const out = python(input({ includeParams: false }));
+		expect(out).not.toContain('params = {');
+		expect(out).not.toContain('params=params');
+		expect(out).toContain('response = requests.get("https://canvas.example.com/c/card/image.png")');
+	});
+
+	it('falls back to a bare GET when there are no params', () => {
+		const out = python(input({ params: {} }));
+		expect(out).not.toContain('params = {');
+		expect(out).toContain('response = requests.get("https://canvas.example.com/c/card/image.png")');
+	});
+
+	it('bakes the version token into the URL literal as ?_v=', () => {
+		const out = python(input({ versionToken: 'abc123' }));
+		expect(out).toContain('\t"https://canvas.example.com/c/card/image.png?_v=abc123",');
+	});
+
+	it('bakes the version token into the URL even in the no-params bare-GET path', () => {
+		const out = python(input({ includeParams: false, versionToken: 'tok' }));
+		expect(out).toContain(
+			'response = requests.get("https://canvas.example.com/c/card/image.png?_v=tok")'
+		);
 	});
 });
 
