@@ -141,36 +141,54 @@ async function runSweep(sql, args, retentionDays) {
 		// `maxRows = null` → no LIMIT (operator wants to drain the
 		// backlog in one pass). The empty fragment keeps Postgres happy.
 		const limitClause = args.maxRows === null ? tx`` : tx`LIMIT ${args.maxRows}`;
-		const rows = await tx`
-			SELECT id
-			FROM render_events
-			WHERE created_at < ${cutoff}
-			ORDER BY created_at ASC
-			${limitClause}
-			FOR UPDATE SKIP LOCKED
-		`;
 
 		if (args.dryRun) {
+			// Dry-run: just count. We don't need the ids — and selecting them
+			// for a large backlog is unnecessary memory pressure when nothing
+			// will be deleted.
+			const [{ would_sweep }] = await tx`
+				SELECT COUNT(*)::int AS would_sweep
+				FROM (
+					SELECT 1
+					FROM render_events
+					WHERE created_at < ${cutoff}
+					ORDER BY created_at ASC
+					${limitClause}
+				) AS s
+			`;
 			return {
-				swept: rows.length,
-				wouldSweep: rows.length,
+				swept: 0,
+				wouldSweep: Number(would_sweep),
 				dryRun: true,
 				cutoff,
 				ms: Date.now() - start
 			};
 		}
 
-		let swept = 0;
-		if (rows.length > 0) {
-			const ids = rows.map((r) => r.id);
-			const result = await tx`
-				DELETE FROM render_events
-				WHERE id IN ${tx(ids)}
-			`;
-			swept = result.count;
-		}
+		// Single-statement CTE delete (Codex round 1, P1). The earlier
+		// implementation selected ids into the client and re-expanded them
+		// as `IN ($1, $2, …)` parameters in the DELETE — a backlog over
+		// Postgres's 65535-parameter limit would blow up there and delete
+		// nothing. Materializing the victim set inside a CTE keeps the
+		// ids server-side end-to-end. The CTE still uses
+		// `FOR UPDATE SKIP LOCKED` so concurrent sweepers partition the
+		// work, and Postgres holds the row locks for the surrounding
+		// transaction (committed implicitly by `sql.begin`).
+		const result = await tx`
+			WITH victims AS (
+				SELECT id
+				FROM render_events
+				WHERE created_at < ${cutoff}
+				ORDER BY created_at ASC
+				${limitClause}
+				FOR UPDATE SKIP LOCKED
+			)
+			DELETE FROM render_events
+			WHERE id IN (SELECT id FROM victims)
+		`;
+		const swept = Number(result.count ?? 0);
 
-		return { swept, wouldSweep: rows.length, dryRun: false, cutoff, ms: Date.now() - start };
+		return { swept, wouldSweep: swept, dryRun: false, cutoff, ms: Date.now() - start };
 	});
 }
 
