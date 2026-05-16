@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm';
+import { sql, desc } from 'drizzle-orm';
 import {
 	pgTable,
 	text,
@@ -202,6 +202,71 @@ export const renderedImages = pgTable(
 		index('rendered_images_expires_at_live_idx')
 			.on(table.expiresAt)
 			.where(sql`${table.deletedAt} IS NULL AND ${table.expiresAt} IS NOT NULL`)
+	]
+);
+
+// ─── Render Events ───────────────────────────────────────────────────────────
+// Append-only observation log for every render path (on-the-fly, baked,
+// preview). Powers per-canvas / per-key / per-account usage counters and
+// the instance-wide admin dashboard. Rows are immutable — there is no
+// `deletedAt` column, and retention is enforced by a scheduled sweep on
+// `created_at`. FKs are `set null` so revoking a key or deleting a canvas
+// leaves the historical events readable for aggregate reporting.
+//
+// `ownerUserId` / `requesterUserId` are `text` (not `uuid`) to match the
+// better-auth `user.id` column type — every other table in this schema
+// references users that way.
+//
+// Indexes are tailored to the read patterns we have today:
+//   • (canvas_id, created_at DESC)     — per-canvas usage card / chart
+//   • (owner_user_id, created_at DESC) — /account/usage queries
+//   • (api_key_id, created_at DESC)    — per-key counters (partial: skips
+//                                        events without a key so the
+//                                        session-cookie traffic doesn't
+//                                        bloat the index)
+//   • (created_at)                     — daily retention sweep range scan
+
+export const renderEvents = pgTable(
+	'render_events',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		// Which render path emitted this event. Free-form text instead of an
+		// enum so new sources (e.g. 'baked-app-revalidate') don't need a
+		// migration; valid values today are
+		// 'on-the-fly' | 'baked-api' | 'baked-app' | 'preview'.
+		source: text('source').notNull(),
+		canvasId: uuid('canvas_id').references(() => canvases.id, { onDelete: 'set null' }),
+		// `text` to match `user.id` from auth-schema. Owner is the canvas owner
+		// at render-time; requester is whoever invoked the render (may differ
+		// for baked/api paths where the requester is the API consumer).
+		ownerUserId: text('owner_user_id').references(() => user.id, { onDelete: 'set null' }),
+		requesterUserId: text('requester_user_id').references(() => user.id, { onDelete: 'set null' }),
+		apiKeyId: uuid('api_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
+		// 'png' | 'jpg' | 'webp' | 'avif'. Open text so renderer-side format
+		// additions don't need a schema change.
+		format: text('format').notNull(),
+		// sha256 hex of the canonicalized resolved params. Used to compute
+		// cache-hit rates without storing the params themselves.
+		paramsHash: text('params_hash').notNull(),
+		cacheHit: boolean('cache_hit').notNull(),
+		durationMs: integer('duration_ms').notNull(),
+		statusCode: integer('status_code').notNull(),
+		// sha256(salt + ':' + yyyy-mm-dd + ':' + ip). Null when no salt is
+		// configured so we never store an identifiable IP fingerprint by
+		// accident.
+		ipHash: text('ip_hash'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [
+		index('render_events_canvas_id_created_at_idx').on(table.canvasId, desc(table.createdAt)),
+		index('render_events_owner_user_id_created_at_idx').on(
+			table.ownerUserId,
+			desc(table.createdAt)
+		),
+		index('render_events_api_key_id_created_at_idx')
+			.on(table.apiKeyId, desc(table.createdAt))
+			.where(sql`${table.apiKeyId} IS NOT NULL`),
+		index('render_events_created_at_idx').on(table.createdAt)
 	]
 );
 
