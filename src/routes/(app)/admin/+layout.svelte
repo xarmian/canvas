@@ -6,7 +6,8 @@
 	// Forward-compatible nav: more admin sections will land here as
 	// /admin/users etc. ship.
 	const sections: { href: string; label: string; testid: string }[] = [
-		{ href: '/admin/storage', label: 'Storage', testid: 'admin-nav-storage' }
+		{ href: '/admin/storage', label: 'Storage', testid: 'admin-nav-storage' },
+		{ href: '/admin/usage', label: 'Usage', testid: 'admin-nav-usage' }
 	];
 
 	let pathname = $derived(page.url.pathname);
