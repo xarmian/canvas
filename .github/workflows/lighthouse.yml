@@ -18,20 +18,22 @@ on:
   pull_request:
     paths:
       # Public surfaces — landing + share page + their server loaders.
-      - 'src/routes/+page.svelte'
-      - 'src/routes/+page.server.ts'
-      - 'src/routes/+layout.svelte'
-      - 'src/routes/c/**'
+      - 'apps/web/src/routes/+page.svelte'
+      - 'apps/web/src/routes/+page.server.ts'
+      - 'apps/web/src/routes/+layout.svelte'
+      - 'apps/web/src/routes/c/**'
       # Anything that affects the shipped bundle.
-      - 'src/app.html'
-      - 'src/app.css'
-      - 'src/lib/components/ui/**'
+      - 'apps/web/src/app.html'
+      - 'apps/web/src/app.css'
+      - 'apps/web/src/lib/components/ui/**'
       - 'package.json'
+      - 'apps/web/package.json'
       - 'pnpm-lock.yaml'
-      - 'svelte.config.js'
-      - 'vite.config.ts'
+      - 'pnpm-workspace.yaml'
+      - 'apps/web/svelte.config.js'
+      - 'apps/web/vite.config.ts'
       # The config itself.
-      - 'lighthouserc.cjs'
+      - 'apps/web/lighthouserc.cjs'
       - '.github/workflows/lighthouse.yml'
   push:
     branches: [main]
@@ -99,5 +101,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lighthouse-report
-          path: .lighthouseci/
+          # LHCI runs under the web workspace (cwd=apps/web), so its
+          # report directory lands there too. (Codex round 1 P3.)
+          path: apps/web/.lighthouseci/
           retention-days: 14

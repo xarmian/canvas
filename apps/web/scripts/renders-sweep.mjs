@@ -30,11 +30,20 @@
  *                              S3_ENDPOINT / KEY / SECRET / BUCKET /
  *                              REGION).
  */
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
 import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { DeleteObjectCommand, S3Client } from '@aws-sdk/client-s3';
+
+// .env lives at the monorepo root. Local invocations via
+// `pnpm renders:sweep` run with cwd=apps/web (the workspace
+// delegator), so the default `dotenv/config` would look for a
+// non-existent `apps/web/.env`. The production Docker runner passes
+// env vars via docker-compose so the file load is a no-op there.
+// (Codex round 2 P2.)
+loadEnv({ path: fileURLToPath(new URL('../../../.env', import.meta.url)) });
 
 // ─── arg parsing ──────────────────────────────────────────────────────────
 
