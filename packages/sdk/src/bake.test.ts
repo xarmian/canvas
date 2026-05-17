@@ -278,7 +278,10 @@ describe('bake() — error mapping', () => {
 		await expect(makeClient().bake('og-card')).rejects.toBeInstanceOf(CanvasNotFoundError);
 	});
 
-	it('429 rate_limited → RateLimitError', async () => {
+	it('429 rate_limited → RateLimitError (with retry disabled to isolate the mapping)', async () => {
+		// `retryOn429: false` short-circuits the retry path TASK-223 added
+		// so this test stays focused on the error mapping. The dedicated
+		// retry behavior is covered in retry.test.ts.
 		(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
 			jsonResponse(
 				429,
@@ -286,8 +289,13 @@ describe('bake() — error mapping', () => {
 				{ 'Retry-After': '12', 'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '0' }
 			)
 		);
+		const client = new CanvasClient({
+			baseUrl: BASE_URL,
+			apiKey: API_KEY,
+			retryOn429: false
+		});
 		try {
-			await makeClient().bake('og-card');
+			await client.bake('og-card');
 		} catch (err) {
 			expect(err).toBeInstanceOf(RateLimitError);
 			const rl = err as RateLimitError;

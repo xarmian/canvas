@@ -20,7 +20,35 @@
  */
 import type { CanvasClient } from './client.js';
 import { CanvasError } from './errors.js';
-import { throwFromResponse } from './from-response.js';
+import {
+	extractErrorCode,
+	parseRateLimitHeaders,
+	parseRetryAfter,
+	throwFromResponse
+} from './from-response.js';
+
+/**
+ * Cancellable sleep — `setTimeout` that bails early if the provided
+ * AbortSignal trips. Used by the retry path to honor `Retry-After`
+ * without making the wait uncancellable.
+ */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted) {
+			reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+			return;
+		}
+		const timer = setTimeout(() => {
+			signal?.removeEventListener('abort', onAbort);
+			resolve();
+		}, ms);
+		const onAbort = () => {
+			clearTimeout(timer);
+			reject(signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+		};
+		signal?.addEventListener('abort', onAbort, { once: true });
+	});
+}
 
 /** HTTP methods the SDK uses. */
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -115,29 +143,105 @@ export async function request<T>(
 		init.body = JSON.stringify(options.body);
 	}
 
-	let response: Response;
-	try {
-		response = await fetch(url, init);
-	} catch (err) {
-		// `fetch` throws on DNS failure, TCP reset, CORS preflight
-		// rejection, AbortSignal trips — every reason that doesn't
-		// produce a `Response`. Wrap so consumers only have one error
-		// hierarchy to catch. Preserve the original via `cause`.
-		throw new CanvasError(
-			err instanceof Error ? `Network request failed: ${err.message}` : 'Network request failed.',
-			{ cause: err }
-		);
-	}
+	// Retry loop. The body is the same across attempts (we serialized
+	// once above), so re-issuing the request is cheap and side-effect-
+	// free from the caller's POV. The server is responsible for the
+	// idempotency of the underlying operation — POST /api/v1/renders
+	// dedupes by content hash, DELETE is naturally idempotent at the
+	// row level, GET is read-only.
+	let attempt = 0;
+	while (true) {
+		let response: Response;
+		try {
+			response = await fetch(url, init);
+		} catch (err) {
+			// `fetch` throws on DNS failure, TCP reset, CORS preflight
+			// rejection, AbortSignal trips — every reason that doesn't
+			// produce a `Response`. Wrap so consumers only have one
+			// error hierarchy to catch. Preserve the original via
+			// `cause`.
+			throw new CanvasError(
+				err instanceof Error
+					? `Network request failed: ${err.message}`
+					: 'Network request failed.',
+				{ cause: err }
+			);
+		}
 
-	if (!response.ok) {
+		// Update `client.lastRateLimit` on every response — success
+		// AND failure — so callers can read the latest triplet right
+		// after `catch (err)` blocks as well as after `await`.
+		client.lastRateLimit = parseRateLimitHeaders(response.headers);
+
+		if (response.ok) {
+			// Empty body (204 No Content, or an endpoint that returns
+			// nothing on success) yields `undefined` cast as T —
+			// callers that ask for `void` get sensible semantics, and
+			// DELETE-style operations don't need a fake JSON body
+			// server-side.
+			const text = await response.text();
+			const data = (text.length > 0 ? (JSON.parse(text) as T) : (undefined as T));
+			return { data, response };
+		}
+
+		// Non-2xx. Decide whether to retry.
+		//
+		// We retry ONLY on `error: "rate_limited"` (or a bare 429 with
+		// no body code — likely an infra-level rate limit). Importantly,
+		// `error: "quota_exceeded"` ALSO comes back at HTTP 429 and
+		// must NOT be retried — it's a hard ceiling, not a transient
+		// throttle, and retrying would just thrash and double-charge
+		// quota counters.
+		const shouldRetry =
+			response.status === 429 &&
+			client.retryOn429 &&
+			attempt < client.maxRetries;
+
+		if (shouldRetry) {
+			// Clone so reading the body for code extraction here
+			// doesn't prevent throwFromResponse from reading it below
+			// in the giving-up branch.
+			const cloned = response.clone();
+			const text = await cloned.text();
+			let parsed: unknown = null;
+			if (text.length > 0) {
+				try {
+					parsed = JSON.parse(text);
+				} catch {
+					/* non-JSON 429 — treat as bare 429, retryable */
+				}
+			}
+			const code = extractErrorCode(parsed);
+
+			// Quota is the only 429 we explicitly do NOT retry. Other
+			// 429s (rate_limited, or bare 429 with no code) flow into
+			// the retry path.
+			if (code !== 'quota_exceeded') {
+				// `Retry-After` per RFC 9110 accepts either delta-seconds
+				// (numeric) OR an HTTP-date. Canvas's own server emits
+				// numeric, but infra in front (nginx/cloudflare/proxies)
+				// can send the date form for "bare 429" paths — those
+				// would silently fall back to 1s under a numeric-only
+				// parser (Codex round 1). Try numeric first, then date,
+				// then default to 1s.
+				const retryAfterMs = parseRetryAfter(response.headers.get('Retry-After'));
+				try {
+					await sleep(retryAfterMs, options.signal);
+				} catch (err) {
+					throw new CanvasError(
+						err instanceof Error
+							? `Request aborted during retry wait: ${err.message}`
+							: 'Request aborted during retry wait.',
+						{ cause: err }
+					);
+				}
+				attempt++;
+				continue;
+			}
+		}
+
+		// Either non-429, retry disabled, retries exhausted, or
+		// quota_exceeded — surface the typed error.
 		await throwFromResponse(response);
 	}
-
-	// Empty body (204 No Content, or an endpoint that returns nothing
-	// on success) yields `undefined` cast as T — callers that ask for
-	// `void` get sensible semantics, and DELETE-style operations don't
-	// need a fake JSON body server-side.
-	const text = await response.text();
-	const data = (text.length > 0 ? (JSON.parse(text) as T) : (undefined as T));
-	return { data, response };
 }
