@@ -32,6 +32,13 @@ export interface RequestOptions {
 	/** Path under `client.baseUrl`. Must start with `/`. */
 	path: string;
 	/**
+	 * Query parameters appended to the path. `null` and `undefined`
+	 * values are dropped; numbers/booleans are coerced to strings.
+	 * Mirrors the public `image()` param-coercion rules so callers
+	 * see consistent behavior across surfaces.
+	 */
+	query?: Record<string, string | number | boolean | null | undefined>;
+	/**
 	 * Body to JSON-serialize. Omit for GET/DELETE. Pass `null` to send
 	 * a literal `null` JSON body (rare; the server doesn't accept it
 	 * on any v1 endpoint today).
@@ -78,7 +85,20 @@ export async function request<T>(
 		);
 	}
 
-	const url = `${client.baseUrl}${options.path}`;
+	// Build the URL: baseUrl + path + optional query string. The query
+	// builder uses URLSearchParams so encoding matches what the server
+	// route's `url.searchParams` reader consumes — same parity story
+	// as `image()`.
+	let url = `${client.baseUrl}${options.path}`;
+	if (options.query !== undefined) {
+		const search = new URLSearchParams();
+		for (const [key, value] of Object.entries(options.query)) {
+			if (value === null || value === undefined) continue;
+			search.set(key, String(value));
+		}
+		const queryString = search.toString();
+		if (queryString.length > 0) url = `${url}?${queryString}`;
+	}
 
 	const headers = new Headers();
 	headers.set('Accept', 'application/json');

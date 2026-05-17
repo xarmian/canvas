@@ -12,7 +12,10 @@ export type {
 	BakeOptions,
 	CanvasClientConfig,
 	ImageParamValue,
-	ImageParams
+	ImageParams,
+	ListOptions,
+	RenderDetail,
+	RenderList
 } from './client.js';
 
 export {

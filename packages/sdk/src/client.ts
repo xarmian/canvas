@@ -58,6 +58,89 @@ export interface BakeOptions {
 	signal?: AbortSignal;
 }
 
+/** Forwarded shortId format — used by `get()` and `delete()`. */
+function isValidShortId(value: unknown): value is string {
+	if (typeof value !== 'string') return false;
+	const trimmed = value.trim();
+	if (trimmed.length === 0) return false;
+	// Reject anything that could escape the path segment. The server
+	// itself enforces `[A-Za-z0-9_-]{10}` and 404s outliers, so
+	// duplicating the regex here would just create drift if the
+	// server changes its rules. The slash/?/# guard catches the
+	// dangerous-input cases (path traversal, query injection) without
+	// over-constraining future shortId schemes.
+	return !/[/?#\\]/.test(trimmed);
+}
+
+/**
+ * Full detail row returned by GET `/api/v1/renders/{shortId}` and
+ * by each item in the GET `/api/v1/renders` list response. Richer
+ * than `BakedRender` — carries the canvas join fields, dimensions,
+ * and timestamp lifecycle.
+ *
+ * Note: `BakedRender` (the POST response) and `RenderDetail` (the
+ * GET response) deliberately don't share a parent interface — POST
+ * returns `deduplicated`, GET returns the join + dimensions, and
+ * conflating them would require optional fields on every property.
+ */
+export interface RenderDetail {
+	/** Short, opaque, URL-safe identifier. */
+	id: string;
+	/** Canonical share URL — `${baseUrl}/i/${id}`. */
+	url: string;
+	/** Direct image URL — `${baseUrl}/i/${id}/image.${ext}`. */
+	imageUrl: string;
+	/** UUID of the source canvas, or `null` if the canvas was deleted after render. */
+	canvasId: string | null;
+	/** Slug of the source canvas at GET time. `null` mirrors `canvasId`. */
+	canvasSlug: string | null;
+	/** Display name of the source canvas at GET time. `null` mirrors `canvasId`. */
+	canvasName: string | null;
+	/** Output format the renderer produced. */
+	format: BakeFormat;
+	/** Encoded byte size of the stored image. */
+	sizeBytes: number;
+	/** Image width in pixels. */
+	width: number;
+	/** Image height in pixels. */
+	height: number;
+	/** Resolved forward URL after param substitution, or `null` if none was set. */
+	forwardUrl: string | null;
+	/** Baked-in OpenGraph title for the `/i/{id}` share page. */
+	ogTitle: string | null;
+	/** Baked-in OpenGraph description for the `/i/{id}` share page. */
+	ogDescription: string | null;
+	/** ISO-8601 timestamp the row was created. */
+	createdAt: string;
+	/** ISO-8601 timestamp of the most recent `/i/{id}/image.{ext}` hit. */
+	lastAccessedAt: string;
+	/** ISO-8601 expiry timestamp, or `null` if the render has no TTL. */
+	expiresAt: string | null;
+}
+
+/** Options for `client.list()`. */
+export interface ListOptions {
+	/**
+	 * Filter to renders made from a specific canvas (slug or UUID).
+	 * Cross-user references return an empty page rather than a 404.
+	 */
+	canvas?: string;
+	/** Page size. Server enforces a max (rejects out-of-range with `invalid_limit`). */
+	limit?: number;
+	/** Opaque cursor from a previous response's `nextCursor`. */
+	cursor?: string;
+	/** Forwarded to `fetch` for caller-side cancellation. */
+	signal?: AbortSignal;
+}
+
+/** Page of renders returned by `client.list()`. */
+export interface RenderList {
+	/** This page's items, newest first. */
+	items: RenderDetail[];
+	/** Cursor for the next page, or `null` when this is the last page. */
+	nextCursor: string | null;
+}
+
 /**
  * Response shape from POST `/api/v1/renders` (and the dedup-hit
  * 200 variant). Mirrors what the server actually emits.
@@ -259,5 +342,78 @@ export class CanvasClient {
 			signal: opts.signal
 		});
 		return data;
+	}
+
+	/**
+	 * List baked renders, newest first. Paginated via an opaque
+	 * `nextCursor` — pass it back as `cursor` on the next call to get
+	 * the following page.
+	 *
+	 * @example
+	 *   let cursor: string | null = null;
+	 *   do {
+	 *     const page = await client.list({ canvas: 'og-card', limit: 50, cursor });
+	 *     for (const item of page.items) console.log(item.id);
+	 *     cursor = page.nextCursor;
+	 *   } while (cursor !== null);
+	 */
+	async list(opts: ListOptions = {}): Promise<RenderList> {
+		const { data } = await request<RenderList>(this, {
+			method: 'GET',
+			path: '/api/v1/renders',
+			query: {
+				canvas: opts.canvas,
+				limit: opts.limit,
+				cursor: opts.cursor
+			},
+			signal: opts.signal
+		});
+		return data;
+	}
+
+	/**
+	 * Fetch a single render's full detail by its short id.
+	 *
+	 * @throws `TypeError` when `shortId` is empty or contains
+	 *   path-unsafe characters (`/`, `?`, `#`, `\`).
+	 * @throws `CanvasNotFoundError` when the id doesn't exist, is
+	 *   soft-deleted, or belongs to a different user. The server
+	 *   collapses all three into the same 404 to avoid leaking
+	 *   existence.
+	 */
+	async get(shortId: string, opts: { signal?: AbortSignal } = {}): Promise<RenderDetail> {
+		if (!isValidShortId(shortId)) {
+			throw new TypeError(`CanvasClient.get: shortId must be a non-empty path-safe string`);
+		}
+		const { data } = await request<RenderDetail>(this, {
+			method: 'GET',
+			path: `/api/v1/renders/${encodeURIComponent(shortId.trim())}`,
+			signal: opts.signal
+		});
+		return data;
+	}
+
+	/**
+	 * Soft-delete a render by its short id. The DB row is marked
+	 * deleted immediately; storage cleanup is best-effort on the
+	 * server side and converges via the sweep CLI.
+	 *
+	 * **Not idempotent across calls** — a second DELETE on the same
+	 * id 404s. Catch `CanvasNotFoundError` if you need idempotent
+	 * deletion semantics.
+	 *
+	 * @throws `TypeError` when `shortId` is empty or path-unsafe.
+	 * @throws `CanvasNotFoundError` on 404 (id missing or already
+	 *   deleted).
+	 */
+	async delete(shortId: string, opts: { signal?: AbortSignal } = {}): Promise<void> {
+		if (!isValidShortId(shortId)) {
+			throw new TypeError(`CanvasClient.delete: shortId must be a non-empty path-safe string`);
+		}
+		await request<void>(this, {
+			method: 'DELETE',
+			path: `/api/v1/renders/${encodeURIComponent(shortId.trim())}`,
+			signal: opts.signal
+		});
 	}
 }
