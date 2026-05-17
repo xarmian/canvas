@@ -28,7 +28,7 @@ async function readBody(res: Response): Promise<unknown> {
 }
 
 /** Extract the `error` code string from a JSON body, when present. */
-function extractCode(body: unknown): string | undefined {
+export function extractErrorCode(body: unknown): string | undefined {
 	if (body !== null && typeof body === 'object' && 'error' in body) {
 		const value = (body as { error: unknown }).error;
 		return typeof value === 'string' ? value : undefined;
@@ -96,7 +96,7 @@ export function parseRateLimitHeaders(headers: Headers): RateLimitInfo {
  */
 export async function throwFromResponse(res: Response): Promise<never> {
 	const body = await readBody(res);
-	const code = extractCode(body);
+	const code = extractErrorCode(body);
 
 	// 1. Rate limit — anchored on body code, not status, so a future
 	//    server change that moves rate_limited to 503 still surfaces

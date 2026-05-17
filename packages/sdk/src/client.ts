@@ -12,6 +12,7 @@
  * (`client.lastRateLimit`) lands in TASK-223.
  */
 
+import type { RateLimitInfo } from './errors.js';
 import { request } from './request.js';
 
 /**
@@ -178,6 +179,21 @@ export interface CanvasClientConfig {
 	 * (`bake`, `list`, etc.).
 	 */
 	apiKey?: string;
+	/**
+	 * When `true` (default), a 429 response with body `error:
+	 * "rate_limited"` triggers a single retry after honoring the
+	 * `Retry-After` header. `quota_exceeded` responses (also at HTTP
+	 * 429) are never retried — they're not transient. Set to `false`
+	 * to surface every 429 immediately.
+	 */
+	retryOn429?: boolean;
+	/**
+	 * Maximum number of retries on retryable 429 responses. Default
+	 * is `1` (so up to 2 attempts total). Set to `0` for no retries.
+	 * Future versions may extend this to other retryable categories;
+	 * the field is reserved for that.
+	 */
+	maxRetries?: number;
 }
 
 /**
@@ -213,6 +229,20 @@ export class CanvasClient {
 	readonly baseUrl: string;
 	/** API key from config, or `undefined` if none was provided. */
 	readonly apiKey: string | undefined;
+	/** Effective retry-on-429 setting (see config). */
+	readonly retryOn429: boolean;
+	/** Effective maxRetries setting (see config). */
+	readonly maxRetries: number;
+	/**
+	 * Latest `X-RateLimit-Limit/-Remaining/-Reset` triplet parsed off
+	 * the most recent response (success OR failure). `null` until the
+	 * first response lands.
+	 *
+	 * Stripe-style "you have N requests left this window" UX without
+	 * the caller having to re-parse headers. Updated by the SDK
+	 * internals — treat it as read-only from outside.
+	 */
+	lastRateLimit: RateLimitInfo | null = null;
 
 	constructor(config: CanvasClientConfig) {
 		if (!config || typeof config !== 'object') {
@@ -230,11 +260,19 @@ export class CanvasClient {
 				`CanvasClient: config.baseUrl is not a valid URL: ${config.baseUrl}`
 			);
 		}
+		if (
+			config.maxRetries !== undefined &&
+			(!Number.isInteger(config.maxRetries) || config.maxRetries < 0)
+		) {
+			throw new TypeError('CanvasClient: config.maxRetries must be a non-negative integer');
+		}
 		// Strip exactly one trailing slash. `client.image()` always
 		// joins with a leading `/c/...`, so a normalized baseUrl
 		// produces clean URLs regardless of operator preference.
 		this.baseUrl = config.baseUrl.replace(/\/+$/, '');
 		this.apiKey = config.apiKey;
+		this.retryOn429 = config.retryOn429 ?? true;
+		this.maxRetries = config.maxRetries ?? 1;
 	}
 
 	/**
