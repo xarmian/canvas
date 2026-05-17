@@ -69,10 +69,14 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          # `npm config set registry` is implicit via the default
-          # https://registry.npmjs.org/. The action also sets up
-          # the `~/.npmrc` to use the NPM_TOKEN env var for auth.
-          registry-url: 'https://registry.npmjs.org'
+          # NB: deliberately NOT setting `registry-url` here. That
+          # option creates an `.npmrc` keyed on `NODE_AUTH_TOKEN`,
+          # and changesets/action@v1 won't overwrite an existing
+          # `.npmrc` — the publish step would then fail auth.
+          # Letting the action write its own `.npmrc` from the
+          # `NPM_TOKEN` env var below uses the default
+          # https://registry.npmjs.org/ registry, which is what we
+          # want. (Codex round 1.)
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
