@@ -15,7 +15,8 @@ export type {
 	ImageParams,
 	ListOptions,
 	RenderDetail,
-	RenderList
+	RenderList,
+	SignedUrlOptions
 } from './client.js';
 
 export {
