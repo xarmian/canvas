@@ -129,7 +129,7 @@ export type RenderEventInput = {
 export function resolveDateRange(
 	opts?: DateRangeOpts,
 	now: Date = new Date()
-): { from: Date; to: Date } {
+): { from: Date; to: Date; fromIso: string; toIso: string } {
 	const days = opts?.days ?? DEFAULT_DAYS;
 	const to = opts?.to ?? now;
 	const from = opts?.from ?? new Date(to.getTime() - days * MS_PER_DAY);
@@ -138,7 +138,15 @@ export function resolveDateRange(
 			`resolveDateRange: from must be strictly before to (from=${from.toISOString()} to=${to.toISOString()})`
 		);
 	}
-	return { from, to };
+	// fromIso / toIso exist alongside the Date pair because postgres-js
+	// (via Drizzle 0.45.2) throws `ERR_INVALID_ARG_TYPE: Received an
+	// instance of Date` when serializing a bare Date inside a raw
+	// `sql\`...${date}...\`` template — Date params only round-trip
+	// safely through Drizzle's typed query builders (gte/lt/eq), not
+	// through the template tag. Always use the Iso strings for raw
+	// SQL params and the Date pair for JS-side math
+	// (enumerateDayBuckets, error messages, comparisons).
+	return { from, to, fromIso: from.toISOString(), toIso: to.toISOString() };
 }
 
 /** Format a Date as `YYYY-MM-DD` in UTC. */
@@ -225,7 +233,7 @@ export async function getUserRenderUsage(
 	opts?: DateRangeOpts,
 	client: RenderEventDb = defaultDb
 ): Promise<UserRenderUsage> {
-	const { from, to } = resolveDateRange(opts);
+	const { from, to, fromIso, toIso } = resolveDateRange(opts);
 	const days = enumerateDayBuckets(from, to);
 	const [byDayRows, summaryRows, topCanvasRows, topApiKeyRows] = await Promise.all([
 		client.execute<{ date: string; total: string | number }>(sql`
@@ -234,8 +242,8 @@ export async function getUserRenderUsage(
 				COUNT(*)::int AS total
 			FROM render_events
 			WHERE owner_user_id = ${userId}
-				AND created_at >= ${from}
-				AND created_at < ${to}
+				AND created_at >= ${fromIso}
+				AND created_at < ${toIso}
 			GROUP BY date
 			ORDER BY date
 		`),
@@ -245,8 +253,8 @@ export async function getUserRenderUsage(
 				COUNT(*) FILTER (WHERE status_code < 400)::int AS total
 			FROM render_events
 			WHERE owner_user_id = ${userId}
-				AND created_at >= ${from}
-				AND created_at < ${to}
+				AND created_at >= ${fromIso}
+				AND created_at < ${toIso}
 		`),
 		client.execute<{ canvas_id: string; canvas_name: string | null; total: string | number }>(sql`
 			SELECT
@@ -256,8 +264,8 @@ export async function getUserRenderUsage(
 			FROM render_events re
 			LEFT JOIN canvases c ON c.id = re.canvas_id
 			WHERE re.owner_user_id = ${userId}
-				AND re.created_at >= ${from}
-				AND re.created_at < ${to}
+				AND re.created_at >= ${fromIso}
+				AND re.created_at < ${toIso}
 				AND re.canvas_id IS NOT NULL
 			GROUP BY re.canvas_id, c.name
 			ORDER BY total DESC
@@ -271,8 +279,8 @@ export async function getUserRenderUsage(
 			FROM render_events re
 			LEFT JOIN api_keys k ON k.id = re.api_key_id
 			WHERE re.owner_user_id = ${userId}
-				AND re.created_at >= ${from}
-				AND re.created_at < ${to}
+				AND re.created_at >= ${fromIso}
+				AND re.created_at < ${toIso}
 				AND re.api_key_id IS NOT NULL
 			GROUP BY re.api_key_id, k.name
 			ORDER BY total DESC
@@ -309,7 +317,7 @@ export async function getCanvasRenderUsage(
 	opts?: DateRangeOpts,
 	client: RenderEventDb = defaultDb
 ): Promise<CanvasRenderUsage> {
-	const { from, to } = resolveDateRange(opts);
+	const { from, to, fromIso, toIso } = resolveDateRange(opts);
 	const days = enumerateDayBuckets(from, to);
 	const [byDayRows, summaryRows] = await Promise.all([
 		client.execute<{ date: string; total: string | number }>(sql`
@@ -318,8 +326,8 @@ export async function getCanvasRenderUsage(
 				COUNT(*)::int AS total
 			FROM render_events
 			WHERE canvas_id = ${canvasId}
-				AND created_at >= ${from}
-				AND created_at < ${to}
+				AND created_at >= ${fromIso}
+				AND created_at < ${toIso}
 			GROUP BY date
 			ORDER BY date
 		`),
@@ -329,8 +337,8 @@ export async function getCanvasRenderUsage(
 				COUNT(*) FILTER (WHERE status_code < 400)::int AS total
 			FROM render_events
 			WHERE canvas_id = ${canvasId}
-				AND created_at >= ${from}
-				AND created_at < ${to}
+				AND created_at >= ${fromIso}
+				AND created_at < ${toIso}
 		`)
 	]);
 
@@ -359,7 +367,9 @@ export async function getApiKeyRenderUsage(
 	opts?: DateRangeOpts,
 	client: RenderEventDb = defaultDb
 ): Promise<ApiKeyRenderUsage> {
-	const { from, to } = resolveDateRange(opts);
+	// Only the ISO strings are needed — this function uses raw sql with
+	// timestamp comparisons, no JS-side Date math.
+	const { fromIso, toIso } = resolveDateRange(opts);
 	const [row] = await client.execute<{
 		total: string | number;
 		last429: Date | string | null;
@@ -373,8 +383,8 @@ export async function getApiKeyRenderUsage(
 			MAX(created_at) FILTER (WHERE status_code < 400) AS last_used
 		FROM render_events
 		WHERE api_key_id = ${apiKeyId}
-			AND created_at >= ${from}
-			AND created_at < ${to}
+			AND created_at >= ${fromIso}
+			AND created_at < ${toIso}
 	`);
 	const r = row ?? { total: 0, last429: null, last_error: null, last_used: null };
 	return {
@@ -394,7 +404,7 @@ export async function getInstanceRenderUsage(
 	opts?: DateRangeOpts,
 	client: RenderEventDb = defaultDb
 ): Promise<InstanceRenderUsage> {
-	const { from, to } = resolveDateRange(opts);
+	const { from, to, fromIso, toIso } = resolveDateRange(opts);
 	const days = enumerateDayBuckets(from, to);
 	const [byDayRows, summaryRows, topCanvasRows, topUserRows, topApiKeyRows] = await Promise.all([
 		client.execute<{ date: string; total: string | number }>(sql`
@@ -402,7 +412,7 @@ export async function getInstanceRenderUsage(
 				to_char(date_trunc('day', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS date,
 				COUNT(*)::int AS total
 			FROM render_events
-			WHERE created_at >= ${from} AND created_at < ${to}
+			WHERE created_at >= ${fromIso} AND created_at < ${toIso}
 			GROUP BY date
 			ORDER BY date
 		`),
@@ -411,7 +421,7 @@ export async function getInstanceRenderUsage(
 				COUNT(*) FILTER (WHERE cache_hit AND status_code < 400)::int AS hits,
 				COUNT(*) FILTER (WHERE status_code < 400)::int AS total
 			FROM render_events
-			WHERE created_at >= ${from} AND created_at < ${to}
+			WHERE created_at >= ${fromIso} AND created_at < ${toIso}
 		`),
 		client.execute<{ canvas_id: string; canvas_name: string | null; total: string | number }>(sql`
 			SELECT
@@ -420,7 +430,7 @@ export async function getInstanceRenderUsage(
 				COUNT(*)::int AS total
 			FROM render_events re
 			LEFT JOIN canvases c ON c.id = re.canvas_id
-			WHERE re.created_at >= ${from} AND re.created_at < ${to}
+			WHERE re.created_at >= ${fromIso} AND re.created_at < ${toIso}
 				AND re.canvas_id IS NOT NULL
 			GROUP BY re.canvas_id, c.name
 			ORDER BY total DESC
@@ -439,7 +449,7 @@ export async function getInstanceRenderUsage(
 				COUNT(*)::int AS total
 			FROM render_events re
 			LEFT JOIN "user" u ON u.id = re.owner_user_id
-			WHERE re.created_at >= ${from} AND re.created_at < ${to}
+			WHERE re.created_at >= ${fromIso} AND re.created_at < ${toIso}
 				AND re.owner_user_id IS NOT NULL
 			GROUP BY re.owner_user_id, u.name, u.email
 			ORDER BY total DESC
@@ -452,7 +462,7 @@ export async function getInstanceRenderUsage(
 				COUNT(*)::int AS total
 			FROM render_events re
 			LEFT JOIN api_keys k ON k.id = re.api_key_id
-			WHERE re.created_at >= ${from} AND re.created_at < ${to}
+			WHERE re.created_at >= ${fromIso} AND re.created_at < ${toIso}
 				AND re.api_key_id IS NOT NULL
 			GROUP BY re.api_key_id, k.name
 			ORDER BY total DESC
@@ -504,6 +514,8 @@ export async function getCanvasRenderUsageBatch(
 ): Promise<Map<string, { total: number }>> {
 	const result = new Map<string, { total: number }>();
 	if (canvasIds.length === 0) return result;
+	// Only the Date pair is needed — this function uses the typed
+	// query builder (gte/lt), which serializes Date params safely.
 	const { from, to } = resolveDateRange(opts);
 	// NOTE: don't interpolate `${canvasIds}` into a raw `sql\`ANY(... ::uuid[])\`` —
 	// drizzle's `sql` tag spreads array values as scalar placeholders, producing
@@ -548,6 +560,8 @@ export async function getApiKeyRenderUsageBatch(
 		{ total: number; last429At: string | null; lastErrorAt: string | null }
 	>();
 	if (keyIds.length === 0) return result;
+	// Only the Date pair is needed — this function uses the typed
+	// query builder (gte/lt), which serializes Date params safely.
 	const { from, to } = resolveDateRange(opts);
 	// See `getCanvasRenderUsageBatch` for why we use `inArray` rather than a
 	// raw `ANY(... ::uuid[])` cast. The `MAX(...) FILTER (...)` aggregates
