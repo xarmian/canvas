@@ -19,7 +19,7 @@ import {
 	QuotaExceededError,
 	RateLimitError
 } from './index.js';
-import { parseRetryAfter } from './request.js';
+import { parseRetryAfter } from './from-response.js';
 
 const BASE_URL = 'https://canvas.example.com';
 const API_KEY = 'sk_test_abc123';
@@ -317,6 +317,55 @@ describe('parseRetryAfter — RFC 9110 forms (Codex round 1 P2)', () => {
 
 	it('rejects negative delta-seconds (regex-only match)', () => {
 		expect(parseRetryAfter('-5')).toBe(1000);
+	});
+});
+
+describe('RateLimitError.retryAfterSeconds parses HTTP-date too (Codex round 2)', () => {
+	it('disabled-retry path surfaces correct retryAfterSeconds from HTTP-date Retry-After', async () => {
+		// Codex round 2: without parseRetryAfter in from-response.ts,
+		// a manual `catch` on a date-form Retry-After 429 would see
+		// retryAfterSeconds: 0 even though the retry path would honor
+		// the value correctly. Lock the parity in.
+		const now = Date.now();
+		const httpDate = new Date(now + 45_000).toUTCString();
+		(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+			new Response('', { status: 429, headers: { 'Retry-After': httpDate } })
+		);
+		const client = new CanvasClient({
+			baseUrl: BASE_URL,
+			apiKey: API_KEY,
+			retryOn429: false
+		});
+		try {
+			await client.bake('og-card');
+		} catch (err) {
+			expect(err).toBeInstanceOf(RateLimitError);
+			const rl = err as RateLimitError;
+			// 45 seconds ahead — allow ±1s slack for the time tick
+			// between now-capture and the call.
+			expect(rl.retryAfterSeconds).toBeGreaterThanOrEqual(44);
+			expect(rl.retryAfterSeconds).toBeLessThanOrEqual(46);
+		}
+	});
+
+	it('body retryAfterSeconds wins over header when present', async () => {
+		// Server-emitted Canvas API responses include both — the
+		// explicit numeric field is more authoritative.
+		(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+			new Response(JSON.stringify({ error: 'rate_limited', retryAfterSeconds: 7 }), {
+				status: 429,
+				headers: {
+					'Content-Type': 'application/json',
+					'Retry-After': new Date(Date.now() + 60_000).toUTCString()
+				}
+			})
+		);
+		const client = new CanvasClient({ baseUrl: BASE_URL, apiKey: API_KEY, retryOn429: false });
+		try {
+			await client.bake('og-card');
+		} catch (err) {
+			expect((err as RateLimitError).retryAfterSeconds).toBe(7);
+		}
 	});
 });
 

@@ -58,6 +58,43 @@ function readStringField(body: unknown, key: string): string | null {
 	return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+/**
+ * Parse a `Retry-After` header value into a delay in milliseconds.
+ * RFC 9110 allows two forms:
+ *
+ * - **delta-seconds** — a non-negative integer of seconds to wait.
+ * - **HTTP-date** — e.g. `Fri, 17 May 2026 14:23:00 GMT`. The
+ *   resulting delay is `date - now`.
+ *
+ * Returns 1000 (1s default) when the header is missing, unparseable,
+ * or already in the past. The 1s floor keeps callers off a busy loop
+ * without making a transient stall pin the request.
+ *
+ * Lives here (not in request.ts) so both the retry loop AND the
+ * `throwFromResponse` path use the same parser when constructing
+ * a `RateLimitError.retryAfterSeconds` — otherwise a manual `catch`
+ * on a date-form Retry-After would see `retryAfterSeconds: 0` even
+ * though the retry loop would honor the value correctly.
+ */
+export function parseRetryAfter(raw: string | null, now: number = Date.now()): number {
+	if (raw === null) return 1000;
+	const trimmed = raw.trim();
+	if (trimmed.length === 0) return 1000;
+	// Numeric (delta-seconds) form — fast path, what Canvas's own
+	// server emits.
+	if (/^\d+$/.test(trimmed)) {
+		const seconds = Number(trimmed);
+		return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : 1000;
+	}
+	// HTTP-date form. `Date.parse` accepts RFC 1123 (the form RFC 9110
+	// mandates), RFC 850, and asctime — broad enough that we don't
+	// need to be picky about format. NaN on garbage.
+	const epoch = Date.parse(trimmed);
+	if (!Number.isFinite(epoch)) return 1000;
+	const delta = epoch - now;
+	return delta > 0 ? delta : 1000;
+}
+
 /** Parse the rate-limit triplet off a response's headers. */
 export function parseRateLimitHeaders(headers: Headers): RateLimitInfo {
 	return {
@@ -102,17 +139,20 @@ export async function throwFromResponse(res: Response): Promise<never> {
 	//    server change that moves rate_limited to 503 still surfaces
 	//    as RateLimitError.
 	if (code === 'rate_limited') {
-		// `retryAfterSeconds` comes from the body, but fall back to the
-		// `Retry-After` header (also set by the server) so a malformed
-		// body still produces a usable error.
-		const retryAfter =
-			readNumberField(body, 'retryAfterSeconds') ?? readIntHeader(res.headers, 'Retry-After');
+		// `retryAfterSeconds` comes from the body when the server sets
+		// it explicitly (Canvas's own server does). Otherwise fall back
+		// to the `Retry-After` header — and parse it through
+		// `parseRetryAfter` so infra-layer date-form values also map
+		// to a useful seconds count. (Codex round 2.)
+		const bodyRetry = readNumberField(body, 'retryAfterSeconds');
+		const headerRetryMs = parseRetryAfter(res.headers.get('Retry-After'));
+		const retryAfter = bodyRetry ?? Math.ceil(headerRetryMs / 1000);
 		throw new RateLimitError(
-			retryAfter !== null
+			retryAfter > 0
 				? `Rate limit exceeded; retry after ${retryAfter}s.`
 				: 'Rate limit exceeded.',
 			{
-				retryAfterSeconds: retryAfter ?? 0,
+				retryAfterSeconds: retryAfter,
 				rateLimit: parseRateLimitHeaders(res.headers),
 				body
 			}
@@ -160,8 +200,11 @@ export async function throwFromResponse(res: Response): Promise<never> {
 		throw new CanvasNotFoundError('Canvas not found or not accessible.', { body });
 	}
 	if (res.status === 429) {
+		// Same parser as the body-coded branch above so date-form
+		// Retry-After from infra proxies maps correctly. (Codex round 2.)
+		const headerRetryMs = parseRetryAfter(res.headers.get('Retry-After'));
 		throw new RateLimitError('Rate limit exceeded.', {
-			retryAfterSeconds: readIntHeader(res.headers, 'Retry-After') ?? 0,
+			retryAfterSeconds: Math.ceil(headerRetryMs / 1000),
 			rateLimit: parseRateLimitHeaders(res.headers),
 			body
 		});

@@ -20,38 +20,12 @@
  */
 import type { CanvasClient } from './client.js';
 import { CanvasError } from './errors.js';
-import { extractErrorCode, parseRateLimitHeaders, throwFromResponse } from './from-response.js';
-
-/**
- * Parse a `Retry-After` header value into a delay in milliseconds.
- * RFC 9110 allows two forms:
- *
- * - **delta-seconds** — a non-negative integer of seconds to wait.
- * - **HTTP-date** — e.g. `Fri, 17 May 2026 14:23:00 GMT`. The
- *   resulting delay is `date - now`.
- *
- * Returns 1000 (1s default) when the header is missing, unparseable,
- * or already in the past. The 1s floor keeps callers off a busy loop
- * without making a transient stall pin the request.
- */
-export function parseRetryAfter(raw: string | null, now: number = Date.now()): number {
-	if (raw === null) return 1000;
-	const trimmed = raw.trim();
-	if (trimmed.length === 0) return 1000;
-	// Numeric (delta-seconds) form first — cheapest path, and the
-	// one Canvas's own server emits.
-	if (/^\d+$/.test(trimmed)) {
-		const seconds = Number(trimmed);
-		return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : 1000;
-	}
-	// HTTP-date form. `Date.parse` accepts RFC 1123 (the form RFC 9110
-	// mandates), RFC 850, and asctime — broad enough that we don't
-	// need to be picky about format. NaN on garbage.
-	const epoch = Date.parse(trimmed);
-	if (!Number.isFinite(epoch)) return 1000;
-	const delta = epoch - now;
-	return delta > 0 ? delta : 1000;
-}
+import {
+	extractErrorCode,
+	parseRateLimitHeaders,
+	parseRetryAfter,
+	throwFromResponse
+} from './from-response.js';
 
 /**
  * Cancellable sleep — `setTimeout` that bails early if the provided
