@@ -49,6 +49,9 @@
 		"dev": "tsup --watch",
 		"check": "tsc --noEmit",
 		"clean": "rm -rf dist",
+		"test": "vitest run",
+		"test:unit": "vitest run",
+		"test:watch": "vitest",
 		"prepack": "pnpm run build",
 		"prepublishOnly": "pnpm run build"
 	},
