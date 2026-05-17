@@ -28,6 +28,7 @@
 		"test:all": "pnpm -r test:unit"
 	},
 	"devDependencies": {
+		"@changesets/cli": "2.31.0",
 		"@types/node": "^24",
 		"eslint": "^10.2.0",
 		"prettier": "^3.8.1",
