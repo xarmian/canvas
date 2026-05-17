@@ -196,7 +196,7 @@ By default, a single retryable 429 triggers one retry after honoring `Retry-Afte
 - **`error: "rate_limited"`** (or a bare 429 with no body code) → retried once. If the retry also fails, throws `RateLimitError`.
 - **`error: "quota_exceeded"`** → **never retried.** It's a hard ceiling, not a transient throttle. Throws `QuotaExceededError` immediately.
 
-`Retry-After` accepts both RFC 9110 forms: delta-seconds (`Retry-After: 12`) and HTTP-date (`Retry-After: Fri, 17 May 2026 14:23:00 GMT`). Defaults to 1 second when the header is missing or unparseable.
+`Retry-After` accepts both RFC 9110 forms: delta-seconds (`Retry-After: 12`) and HTTP-date (`Retry-After: Sun, 17 May 2026 14:23:00 GMT`). Defaults to 1 second when the header is missing or unparseable.
 
 The retry wait is **cancellable** — pass an `AbortSignal` and aborting mid-wait throws `CanvasError` cleanly without firing the retry.
 
