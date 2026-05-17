@@ -61,6 +61,7 @@
 		"@size-limit/esbuild-why": "12.1.0",
 		"@size-limit/preset-small-lib": "12.1.0",
 		"@types/node": "^24.12.2",
+		"esbuild": "0.28.0",
 		"size-limit": "12.1.0",
 		"tsup": "^8.3.5"
 	}
