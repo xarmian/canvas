@@ -34,15 +34,46 @@ describe('CanvasClient.signedUrl() — stub (TASK-224)', () => {
 		await expect(result).rejects.toThrow();
 	});
 
-	it.each([
-		['expiresIn', { expiresIn: 60 }],
-		['expiresAt (epoch ms)', { expiresAt: Date.now() + 60_000 }],
-		['expiresAt (ISO string)', { expiresAt: '2026-12-31T00:00:00Z' }]
-	])('accepts the documented argument shape: %s', async (_label, opts) => {
-		// TypeScript-side guarantee that the surface compiles for
-		// every supported call-site. Drain the rejection so the
-		// Promise doesn't surface as unhandled.
-		const promise = client.signedUrl('og-card', { title: 'Hello' }, opts);
+	it('accepts expiresIn form', async () => {
+		const promise = client.signedUrl('og-card', { title: 'Hello' }, { expiresIn: 60 });
 		await expect(promise).rejects.toThrow();
+	});
+
+	it('accepts expiresAt as epoch ms', async () => {
+		const promise = client.signedUrl(
+			'og-card',
+			{ title: 'Hello' },
+			{ expiresAt: Date.now() + 60_000 }
+		);
+		await expect(promise).rejects.toThrow();
+	});
+
+	it('accepts expiresAt as ISO string', async () => {
+		const promise = client.signedUrl(
+			'og-card',
+			{ title: 'Hello' },
+			{ expiresAt: '2026-12-31T00:00:00Z' }
+		);
+		await expect(promise).rejects.toThrow();
+	});
+
+	it('TYPE: rejects neither / both expiry forms at compile time (Codex round 1)', async () => {
+		// `@ts-expect-error` is itself the assertion — `tsc --noEmit`
+		// fails if these comments are present on a line that DOESN'T
+		// produce an error, so this test passes only if the union
+		// types correctly forbid invalid shapes.
+
+		// Neither — must have at least one.
+		// @ts-expect-error — `expiresIn` or `expiresAt` is required.
+		const p1 = client.signedUrl('og-card', {}, {});
+		// Both — exclusive union rejects this.
+		const p2 = client.signedUrl(
+			'og-card',
+			{},
+			// @ts-expect-error — cannot supply both expiresIn AND expiresAt.
+			{ expiresIn: 60, expiresAt: Date.now() + 60_000 }
+		);
+		// Drain the rejections so vitest doesn't flag them.
+		await Promise.allSettled([p1, p2]);
 	});
 });

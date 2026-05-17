@@ -146,22 +146,25 @@ export interface RenderList {
  * Options for `client.signedUrl()` (stub — implementation lands in
  * [IDEA-205](https://github.com/xarmian/canvas)).
  *
+ * Modeled as an exclusive union so callers can't supply neither or
+ * both expiry forms — invalid call-sites surface as TypeScript
+ * errors instead of runtime surprises (Codex round 1).
+ *
  * @experimental Shape may change before IDEA-205 lands. Locked in
  *   here so callers can build code against the eventual surface
  *   without a breaking change at release time.
  */
-export interface SignedUrlOptions {
-	/**
-	 * Seconds until the signature expires. Exactly one of `expiresIn`
-	 * or `expiresAt` must be provided.
-	 */
-	expiresIn?: number;
-	/**
-	 * Absolute expiry timestamp (epoch milliseconds or ISO-8601 string).
-	 * Exactly one of `expiresIn` or `expiresAt` must be provided.
-	 */
-	expiresAt?: number | string;
-}
+export type SignedUrlOptions =
+	| {
+			/** Seconds until the signature expires. */
+			expiresIn: number;
+			expiresAt?: never;
+	  }
+	| {
+			/** Absolute expiry timestamp (epoch ms OR ISO-8601 string). */
+			expiresAt: number | string;
+			expiresIn?: never;
+	  };
 
 /**
  * Response shape from POST `/api/v1/renders` (and the dedup-hit
