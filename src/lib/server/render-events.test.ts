@@ -52,15 +52,25 @@ describe('resolveDateRange', () => {
 		expect(to.getTime() - from.getTime()).toBe(7 * 24 * 60 * 60 * 1000);
 	});
 
-	it('uses both from and to when provided', () => {
+	it('uses both from and to when provided, with ISO mirrors', () => {
 		const from = new Date('2026-05-01T00:00:00Z');
 		const to = new Date('2026-05-15T00:00:00Z');
-		expect(resolveDateRange({ from, to }, now)).toEqual({ from, to });
+		expect(resolveDateRange({ from, to }, now)).toEqual({
+			from,
+			to,
+			fromIso: from.toISOString(),
+			toIso: to.toISOString()
+		});
 	});
 
 	it('infers `to` as now when only `from` is provided', () => {
 		const from = new Date('2026-05-10T00:00:00Z');
-		expect(resolveDateRange({ from }, now)).toEqual({ from, to: now });
+		expect(resolveDateRange({ from }, now)).toEqual({
+			from,
+			to: now,
+			fromIso: from.toISOString(),
+			toIso: now.toISOString()
+		});
 	});
 
 	it('infers `from` as to - days when only `to` is provided', () => {

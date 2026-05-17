@@ -69,7 +69,7 @@ export const load: PageServerLoad = async () => {
 					COUNT(DISTINCT api_key_id)::int    AS distinct_api_keys,
 					percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms)::int AS p95_ms
 				FROM render_events
-				WHERE created_at >= ${range.from} AND created_at < ${range.to}
+				WHERE created_at >= ${range.fromIso} AND created_at < ${range.toIso}
 			`),
 
 			// (4) Top canvases with owner email + hit rate. Hit rate is
@@ -92,7 +92,7 @@ export const load: PageServerLoad = async () => {
 				FROM render_events re
 				LEFT JOIN canvases c ON c.id = re.canvas_id
 				LEFT JOIN "user" u   ON u.id = re.owner_user_id
-				WHERE re.created_at >= ${range.from} AND re.created_at < ${range.to}
+				WHERE re.created_at >= ${range.fromIso} AND re.created_at < ${range.toIso}
 					AND re.canvas_id IS NOT NULL
 				GROUP BY re.canvas_id, c.name, u.email
 				ORDER BY total DESC
@@ -115,7 +115,7 @@ export const load: PageServerLoad = async () => {
 					COUNT(*) FILTER (WHERE re.status_code < 400)::int AS qualifying
 				FROM render_events re
 				LEFT JOIN "user" u ON u.id = re.owner_user_id
-				WHERE re.created_at >= ${range.from} AND re.created_at < ${range.to}
+				WHERE re.created_at >= ${range.fromIso} AND re.created_at < ${range.toIso}
 					AND re.owner_user_id IS NOT NULL
 				GROUP BY re.owner_user_id, u.email
 				ORDER BY total DESC
@@ -141,7 +141,7 @@ export const load: PageServerLoad = async () => {
 				FROM render_events re
 				LEFT JOIN api_keys k ON k.id = re.api_key_id
 				LEFT JOIN "user" u   ON u.id = k.user_id
-				WHERE re.created_at >= ${range.from} AND re.created_at < ${range.to}
+				WHERE re.created_at >= ${range.fromIso} AND re.created_at < ${range.toIso}
 					AND re.api_key_id IS NOT NULL
 				GROUP BY re.api_key_id, k.name, k.prefix, u.email
 				ORDER BY total DESC
