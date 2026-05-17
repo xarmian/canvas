@@ -1,6 +1,8 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
+	// Explicit entry list — tests live alongside source under src/*.test.ts
+	// and must not ship in the tarball.
 	entry: ['src/index.ts'],
 	// Dual format. `type: module` in package.json makes .js the ESM
 	// output and .cjs the CJS output, lining up with the `exports` map.
