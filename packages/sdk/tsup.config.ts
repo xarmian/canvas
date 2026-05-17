@@ -33,5 +33,12 @@ export default defineConfig({
 	// Match the engines field — node 18+ supports es2022 natively, and
 	// modern bundlers (Vite/Next/Edge) handle it as input without
 	// further transpile.
-	target: 'es2022'
+	target: 'es2022',
+	// `platform: 'neutral'` (TASK-225 / IDEA-203 "no Node-only deps"
+	// constraint) — tells esbuild not to pre-bundle `node:*` built-ins
+	// the way `platform: 'node'` would. If any node-only import sneaks
+	// into the source or a transitive dep, the build fails instead of
+	// shipping a runtime that breaks on Edge/Workers. Paired with the
+	// import-hygiene.test.ts source scan for defense in depth.
+	platform: 'neutral'
 });
