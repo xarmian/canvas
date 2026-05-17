@@ -1,0 +1,113 @@
+# Changesets release workflow for @canvas-images/sdk (TASK-230).
+#
+# Two modes, both driven by changesets/action@v1 on push to main:
+#
+# 1. **Open / update the release PR.** When there are pending
+#    `.changeset/*.md` files on main, the action opens (or updates an
+#    existing) "Version Packages" PR that consumes them, bumps
+#    versions, and updates CHANGELOG.md. Reviewing + merging that PR
+#    is the gate for a release.
+#
+# 2. **Publish.** When the release PR merges (= no pending
+#    changesets remain on main), the action runs the configured
+#    `publish` command — `pnpm changeset publish` — which calls
+#    `npm publish` per package. Provenance is requested via
+#    `publishConfig.provenance: true` in the SDK package.json plus
+#    the `id-token: write` permission below.
+#
+# Requirements:
+#
+# - **NPM_TOKEN** secret — an npm automation token with publish
+#   rights on the `@canvas-images` scope. The token must be set as
+#   a *publish*-type automation token (not granular) for provenance
+#   to work.
+# - Workspace lint/build/test runs first as a gate — a broken main
+#   shouldn't open a release PR.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Required:
+# - contents: write          → changesets opens branches + commits
+# - pull-requests: write     → changesets opens + updates the PR
+# - id-token: write          → npm provenance via OIDC
+# - actions: read            → standard
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+  actions: read
+
+concurrency:
+  # Only one release run at a time. A second push to main while a
+  # release is in-flight queues behind the first.
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # changesets needs full history to enumerate prior
+          # versions for changelog generation.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # Same pin as lighthouse + sdk workflows.
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          # NB: deliberately NOT setting `registry-url` here. That
+          # option creates an `.npmrc` keyed on `NODE_AUTH_TOKEN`,
+          # and changesets/action@v1 won't overwrite an existing
+          # `.npmrc` — the publish step would then fail auth.
+          # Letting the action write its own `.npmrc` from the
+          # `NPM_TOKEN` env var below uses the default
+          # https://registry.npmjs.org/ registry, which is what we
+          # want. (Codex round 1.)
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Gate: don't open a release PR (or publish) from a broken
+      # main. SDK is the only published package today; build/test
+      # IT specifically rather than running the whole workspace.
+      - name: Build SDK
+        run: pnpm --filter @canvas-images/sdk build
+
+      - name: Test SDK
+        run: pnpm --filter @canvas-images/sdk test
+
+      - name: Size budget
+        run: pnpm --filter @canvas-images/sdk size
+
+      # The action itself. When changesets are pending, opens/updates
+      # the "Version Packages" PR. When none are pending, publishes.
+      # `version` and `publish` are both configured so the action
+      # picks the right mode based on repo state.
+      - name: Changesets — version or publish
+        uses: changesets/action@v1
+        with:
+          # `version` updates package.json + CHANGELOG.md from pending
+          # changesets. The action commits the result to the release
+          # branch and opens/updates the PR.
+          version: pnpm exec changeset version
+          # `publish` runs when there are no pending changesets (the
+          # release PR has merged). `--access public` is implied by
+          # publishConfig.access but explicit is clearer in logs.
+          publish: pnpm exec changeset publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
