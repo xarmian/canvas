@@ -54,11 +54,15 @@ jobs:
       - name: Type check
         run: pnpm --filter @canvas-images/sdk check
 
+      - name: Build
+        # MUST run before tests — the edge-bundle smoke (TASK-226)
+        # scans `dist/index.js` for `node:*` specifiers, and that
+        # check silently skips when `dist/` is absent. Building first
+        # makes the test exercise the actual published artifact.
+        run: pnpm --filter @canvas-images/sdk build
+
       - name: Unit tests
         run: pnpm --filter @canvas-images/sdk test
-
-      - name: Build
-        run: pnpm --filter @canvas-images/sdk build
 
       - name: Size budget (size-limit)
         # Fails the job with a clear "size limit exceeded" message if
