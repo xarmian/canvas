@@ -5,6 +5,13 @@
 		"module": "esnext",
 		"moduleResolution": "bundler",
 		"lib": ["es2022", "dom"],
+		// Under moduleResolution: bundler TS doesn't auto-discover
+		// @types/node. Listed explicitly so the test files
+		// (import-hygiene.test.ts uses node:fs) typecheck. The
+		// PUBLISHED source intentionally avoids any node-only imports
+		// — guarded both by tsup's platform: 'neutral' build setting
+		// and the hygiene test itself.
+		"types": ["node"],
 		"declaration": true,
 		"outDir": "dist",
 		"rootDir": "src",
