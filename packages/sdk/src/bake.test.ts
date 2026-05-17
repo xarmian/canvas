@@ -193,6 +193,22 @@ describe('bake() — request shape', () => {
 		expect(body.canvas).toBe('og-card');
 	});
 
+	it('preserves a "__proto__" param key (Codex round 1 P2)', async () => {
+		// Regression: assigning to `stringParams['__proto__']` on a
+		// plain `{}` mutates the prototype chain instead of setting an
+		// own property — JSON.stringify then drops the param silently.
+		// The null-prototype `stringParams` object avoids this.
+		const client = makeClient();
+		const params: Record<string, string> = Object.create(null);
+		params['__proto__'] = 'evil';
+		params['title'] = 'normal';
+		await client.bake('og-card', params);
+		const { init } = lastFetchCall();
+		const body = JSON.parse(init.body as string);
+		expect(body.params['__proto__']).toBe('evil');
+		expect(body.params['title']).toBe('normal');
+	});
+
 	it('passes through AbortSignal', async () => {
 		const client = makeClient();
 		const controller = new AbortController();

@@ -227,7 +227,13 @@ export class CanvasClient {
 		// `image()` coercion rules (null/undefined dropped, everything
 		// else coerced via `String(v)`) so a single object shape feeds
 		// both the URL builder and the bake endpoint.
-		const stringParams: Record<string, string> = {};
+		//
+		// Use a null-prototype object so a computed `'__proto__'` key
+		// becomes a normal own property instead of mutating the
+		// prototype chain (which would silently drop the param from
+		// JSON.stringify). `image()` is unaffected because
+		// URLSearchParams.set() handles `__proto__` as a regular key.
+		const stringParams: Record<string, string> = Object.create(null);
 		for (const [key, value] of Object.entries(params)) {
 			if (value === null || value === undefined) continue;
 			stringParams[key] = String(value);
