@@ -23,6 +23,37 @@ import { CanvasError } from './errors.js';
 import { extractErrorCode, parseRateLimitHeaders, throwFromResponse } from './from-response.js';
 
 /**
+ * Parse a `Retry-After` header value into a delay in milliseconds.
+ * RFC 9110 allows two forms:
+ *
+ * - **delta-seconds** — a non-negative integer of seconds to wait.
+ * - **HTTP-date** — e.g. `Fri, 17 May 2026 14:23:00 GMT`. The
+ *   resulting delay is `date - now`.
+ *
+ * Returns 1000 (1s default) when the header is missing, unparseable,
+ * or already in the past. The 1s floor keeps callers off a busy loop
+ * without making a transient stall pin the request.
+ */
+export function parseRetryAfter(raw: string | null, now: number = Date.now()): number {
+	if (raw === null) return 1000;
+	const trimmed = raw.trim();
+	if (trimmed.length === 0) return 1000;
+	// Numeric (delta-seconds) form first — cheapest path, and the
+	// one Canvas's own server emits.
+	if (/^\d+$/.test(trimmed)) {
+		const seconds = Number(trimmed);
+		return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : 1000;
+	}
+	// HTTP-date form. `Date.parse` accepts RFC 1123 (the form RFC 9110
+	// mandates), RFC 850, and asctime — broad enough that we don't
+	// need to be picky about format. NaN on garbage.
+	const epoch = Date.parse(trimmed);
+	if (!Number.isFinite(epoch)) return 1000;
+	const delta = epoch - now;
+	return delta > 0 ? delta : 1000;
+}
+
+/**
  * Cancellable sleep — `setTimeout` that bails early if the provided
  * AbortSignal trips. Used by the retry path to honor `Retry-After`
  * without making the wait uncancellable.
@@ -212,15 +243,14 @@ export async function request<T>(
 			// 429s (rate_limited, or bare 429 with no code) flow into
 			// the retry path.
 			if (code !== 'quota_exceeded') {
-				// `Retry-After` is in seconds per RFC 9110. Default to
-				// 1s if the header is missing or unparseable — better
-				// than busy-looping but cheap enough to recover.
-				const rawRetry = response.headers.get('Retry-After');
-				const parsedRetry = rawRetry !== null ? Number(rawRetry) : NaN;
-				const retryAfterMs =
-					Number.isFinite(parsedRetry) && parsedRetry >= 0
-						? Math.trunc(parsedRetry) * 1000
-						: 1000;
+				// `Retry-After` per RFC 9110 accepts either delta-seconds
+				// (numeric) OR an HTTP-date. Canvas's own server emits
+				// numeric, but infra in front (nginx/cloudflare/proxies)
+				// can send the date form for "bare 429" paths — those
+				// would silently fall back to 1s under a numeric-only
+				// parser (Codex round 1). Try numeric first, then date,
+				// then default to 1s.
+				const retryAfterMs = parseRetryAfter(response.headers.get('Retry-After'));
 				try {
 					await sleep(retryAfterMs, options.signal);
 				} catch (err) {

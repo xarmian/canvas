@@ -19,6 +19,7 @@ import {
 	QuotaExceededError,
 	RateLimitError
 } from './index.js';
+import { parseRetryAfter } from './request.js';
 
 const BASE_URL = 'https://canvas.example.com';
 const API_KEY = 'sk_test_abc123';
@@ -284,6 +285,56 @@ describe('retry configuration', () => {
 		const client = new CanvasClient({ baseUrl: BASE_URL });
 		expect(client.retryOn429).toBe(true);
 		expect(client.maxRetries).toBe(1);
+	});
+});
+
+describe('parseRetryAfter — RFC 9110 forms (Codex round 1 P2)', () => {
+	it('parses delta-seconds form', () => {
+		expect(parseRetryAfter('5')).toBe(5000);
+		expect(parseRetryAfter('0')).toBe(0);
+		expect(parseRetryAfter('120')).toBe(120_000);
+	});
+
+	it('parses HTTP-date form (RFC 1123)', () => {
+		const now = Date.parse('2026-05-17T12:00:00Z');
+		// 30 seconds in the future, RFC 1123 format.
+		const future = new Date(now + 30_000).toUTCString();
+		expect(parseRetryAfter(future, now)).toBe(30_000);
+	});
+
+	it('returns 1s default when the HTTP-date is in the past', () => {
+		const now = Date.parse('2026-05-17T12:00:00Z');
+		const past = new Date(now - 60_000).toUTCString();
+		expect(parseRetryAfter(past, now)).toBe(1000);
+	});
+
+	it('returns 1s default for null / empty / garbage', () => {
+		expect(parseRetryAfter(null)).toBe(1000);
+		expect(parseRetryAfter('')).toBe(1000);
+		expect(parseRetryAfter('   ')).toBe(1000);
+		expect(parseRetryAfter('not a header value')).toBe(1000);
+	});
+
+	it('rejects negative delta-seconds (regex-only match)', () => {
+		expect(parseRetryAfter('-5')).toBe(1000);
+	});
+});
+
+describe('retry honors RFC 9110 HTTP-date Retry-After', () => {
+	it('waits until the date specified in Retry-After header', async () => {
+		const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+		// 0ms-in-the-future date so we don't have to wait in tests.
+		const httpDate = new Date(Date.now()).toUTCString();
+		fetchMock
+			.mockResolvedValueOnce(
+				jsonResponse(429, { error: 'rate_limited' }, { 'Retry-After': httpDate })
+			)
+			.mockResolvedValueOnce(jsonResponse(201, SAMPLE_BAKED));
+
+		const client = new CanvasClient({ baseUrl: BASE_URL, apiKey: API_KEY });
+		const result = await client.bake('og-card');
+		expect(result).toEqual(SAMPLE_BAKED);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 });
 
