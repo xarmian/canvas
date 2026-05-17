@@ -52,10 +52,15 @@
 		"test": "vitest run",
 		"test:unit": "vitest run",
 		"test:watch": "vitest",
+		"size": "size-limit",
+		"size:why": "size-limit --why",
 		"prepack": "pnpm run build",
 		"prepublishOnly": "pnpm run build"
 	},
 	"devDependencies": {
+		"@size-limit/esbuild-why": "12.1.0",
+		"@size-limit/preset-small-lib": "12.1.0",
+		"size-limit": "12.1.0",
 		"tsup": "^8.3.5"
 	}
 }

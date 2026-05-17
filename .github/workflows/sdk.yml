@@ -1,0 +1,66 @@
+# SDK build + size budget — enforces the IDEA-203 <5KB min+gzip
+# ceiling in CI. Fails the PR if the @canvas-images/sdk bundle
+# regresses past the size-limit config.
+#
+# Triggers narrowly on packages/sdk/** so unrelated PRs don't pay
+# the matrix. Root manifest + lockfile are included because a
+# devDep bump in those can shift the build output.
+
+name: SDK
+
+on:
+  pull_request:
+    paths:
+      - 'packages/sdk/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig.base.json'
+      - 'tsconfig.json'
+      - '.github/workflows/sdk.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/sdk/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig.base.json'
+      - 'tsconfig.json'
+      - '.github/workflows/sdk.yml'
+
+jobs:
+  sdk:
+    name: SDK build, test, size
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # Same pin as the lighthouse workflow.
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm --filter @canvas-images/sdk check
+
+      - name: Unit tests
+        run: pnpm --filter @canvas-images/sdk test
+
+      - name: Build
+        run: pnpm --filter @canvas-images/sdk build
+
+      - name: Size budget (size-limit)
+        # Fails the job with a clear "size limit exceeded" message if
+        # any entry in .size-limit.cjs is over budget.
+        run: pnpm --filter @canvas-images/sdk size
