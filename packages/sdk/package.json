@@ -1,0 +1,58 @@
+{
+	"name": "@canvas-images/sdk",
+	"version": "0.0.0",
+	"description": "TypeScript client for the Canvas Render API. Self-host friendly, ESM-first, edge-safe.",
+	"license": "MIT",
+	"author": "Canvas contributors",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/xarmian/canvas.git",
+		"directory": "packages/sdk"
+	},
+	"homepage": "https://github.com/xarmian/canvas/tree/main/packages/sdk#readme",
+	"bugs": "https://github.com/xarmian/canvas/issues",
+	"keywords": [
+		"canvas",
+		"sdk",
+		"image",
+		"og-image",
+		"render"
+	],
+	"type": "module",
+	"sideEffects": false,
+	"engines": {
+		"node": ">=18"
+	},
+	"exports": {
+		".": {
+			"import": {
+				"types": "./dist/index.d.ts",
+				"default": "./dist/index.js"
+			},
+			"require": {
+				"types": "./dist/index.d.cts",
+				"default": "./dist/index.cjs"
+			}
+		},
+		"./package.json": "./package.json"
+	},
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"build": "tsup",
+		"dev": "tsup --watch",
+		"check": "tsc --noEmit",
+		"clean": "rm -rf dist",
+		"prepack": "pnpm run build",
+		"prepublishOnly": "pnpm run build"
+	},
+	"devDependencies": {
+		"tsup": "^8.3.5"
+	}
+}
