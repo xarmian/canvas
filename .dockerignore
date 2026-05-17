@@ -13,8 +13,9 @@ apps/web/.svelte-kit
 .local-storage
 .cache
 
-# SDK package — not needed by the web runtime image.
+# SDK package + example apps — not needed by the web runtime image.
 packages
+examples
 
 # Local config / secrets
 .env
