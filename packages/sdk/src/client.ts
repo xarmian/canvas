@@ -143,6 +143,27 @@ export interface RenderList {
 }
 
 /**
+ * Options for `client.signedUrl()` (stub — implementation lands in
+ * [IDEA-205](https://github.com/xarmian/canvas)).
+ *
+ * @experimental Shape may change before IDEA-205 lands. Locked in
+ *   here so callers can build code against the eventual surface
+ *   without a breaking change at release time.
+ */
+export interface SignedUrlOptions {
+	/**
+	 * Seconds until the signature expires. Exactly one of `expiresIn`
+	 * or `expiresAt` must be provided.
+	 */
+	expiresIn?: number;
+	/**
+	 * Absolute expiry timestamp (epoch milliseconds or ISO-8601 string).
+	 * Exactly one of `expiresIn` or `expiresAt` must be provided.
+	 */
+	expiresAt?: number | string;
+}
+
+/**
  * Response shape from POST `/api/v1/renders` (and the dedup-hit
  * 200 variant). Mirrors what the server actually emits.
  */
@@ -453,5 +474,37 @@ export class CanvasClient {
 			path: `/api/v1/renders/${encodeURIComponent(shortId.trim())}`,
 			signal: opts.signal
 		});
+	}
+
+	/**
+	 * Build a signed, time-limited image URL.
+	 *
+	 * @experimental **Not yet implemented.** This method is a typed
+	 *   placeholder for the surface that lands in
+	 *   [IDEA-205](https://github.com/xarmian/canvas) (Signed-URL
+	 *   endpoint + SDK helper). It throws at runtime so consumers
+	 *   can see the eventual shape now and write call-sites that
+	 *   won't need to change when the implementation arrives.
+	 *
+	 *   Exact semantics of `expiresIn` vs `expiresAt`, the
+	 *   signature algorithm, and the resulting URL format are all
+	 *   subject to IDEA-205's design.
+	 *
+	 * @throws Always throws `Error('signedUrl is not yet implemented
+	 *   — see IDEA-205')`.
+	 */
+	signedUrl(
+		_slug: string,
+		_params: ImageParams,
+		_opts: SignedUrlOptions
+	): Promise<string> {
+		// Throw inside an async-returning function via a rejected
+		// Promise so callers using `await` see a rejection instead of
+		// a synchronous throw. Matches the eventual real
+		// implementation's contract (signing is async — likely Web
+		// Crypto under the hood).
+		return Promise.reject(
+			new Error('signedUrl is not yet implemented — see IDEA-205')
+		);
 	}
 }
