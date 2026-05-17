@@ -49,6 +49,35 @@ Returns a rendered PNG in ~35ms.
 | Storage    | S3-compatible (MinIO)          |
 | Deployment | Docker Compose                 |
 
+## Repository Layout
+
+Canvas is a **pnpm monorepo**:
+
+```
+canvas/
+├── apps/
+│   └── web/               # The SvelteKit application
+│       ├── src/           # App source
+│       ├── e2e/           # Playwright tests
+│       ├── drizzle/       # Database schema + migrations
+│       ├── scripts/       # App-level scripts (sweeps, migrate runner)
+│       └── package.json   # name: "web"
+├── packages/
+│   └── sdk/               # @canvas-images/sdk (TypeScript client) — coming soon
+├── scripts/
+│   └── deploy.sh          # Production deploy (operates on docker-compose.prod.yml)
+├── Dockerfile             # Workspace-aware multi-stage build
+├── docker-compose*.yml
+├── pnpm-workspace.yaml    # workspaces: apps/*, packages/*
+├── tsconfig.base.json     # Shared TypeScript compiler options
+├── tsconfig.json          # Root project references
+└── package.json           # Delegators: root scripts forward to `pnpm --filter web …`
+```
+
+All root-level scripts (`pnpm dev`, `pnpm build`, `pnpm test:unit`, `pnpm db:*`, etc.) delegate to the web workspace. Run them from anywhere — the repo root is the canonical entry point. Aggregated variants exist too: `pnpm build:all`, `pnpm check:all`, `pnpm lint:all`, `pnpm test:all` run across every workspace package.
+
+The single workspace-wide `.env` lives at the repo root and feeds both `vite dev`/`vite build` (via `envDir`) and the drizzle / sweep scripts (via explicit `dotenv` path).
+
 ## Quick Start
 
 ### Prerequisites
