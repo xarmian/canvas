@@ -249,6 +249,46 @@ describe('throwFromResponse — InvalidParamError', () => {
 			expect((err as InvalidParamError).field).toBe(null);
 		}
 	});
+
+	// Regression coverage for codex round 1: the server emits 11+
+	// distinct `invalid_*` codes (invalid_params, invalid_canvas,
+	// invalid_format, invalid_cursor, invalid_og_title, …) — an
+	// enumerated allow-list would silently drop new server validators
+	// into the generic 400 fallback and lose field/message context.
+	// The blanket "400 → InvalidParam, pass body through" policy
+	// preserves the actionable details for every code.
+	it.each([
+		['invalid_params', { error: 'invalid_params', message: 'params must be an object of string values' }],
+		[
+			'invalid_params with field',
+			{ error: 'invalid_params', field: 'title', message: 'must be a string' }
+		],
+		['invalid_canvas', { error: 'invalid_canvas', message: 'canvas (slug or uuid) is required' }],
+		[
+			'invalid_format',
+			{ error: 'invalid_format', message: 'format must be one of png, jpeg, webp, avif' }
+		],
+		['invalid_cursor', { error: 'invalid_cursor', message: 'cursor must be opaque' }],
+		[
+			'invalid_og_title',
+			{ error: 'invalid_og_title', message: 'ogTitle exceeds limit' }
+		],
+		[
+			'unknown future invalid_* code',
+			{ error: 'invalid_brand_new_thing', field: 'whatever', message: 'made up' }
+		]
+	])('passes %s through with full body context', async (_label, body) => {
+		const res = jsonResponse(400, body);
+		try {
+			await throwFromResponse(res);
+		} catch (err) {
+			expect(err).toBeInstanceOf(InvalidParamError);
+			const ip = err as InvalidParamError;
+			expect(ip.code).toBe((body as { error: string }).error);
+			expect(ip.message).toBe((body as { message: string }).message);
+			expect(ip.field).toBe((body as { field?: string }).field ?? null);
+		}
+	});
 });
 
 describe('throwFromResponse — base CanvasError fallback', () => {

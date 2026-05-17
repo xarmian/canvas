@@ -78,10 +78,16 @@ export function parseRateLimitHeaders(headers: Headers): RateLimitInfo {
  * 2. **`code === 'quota_exceeded'`** → `QuotaExceededError` (server
  *    currently emits this at 429 too — same disambiguation rationale).
  * 3. **`code === 'canvas_not_found'`** → `CanvasNotFoundError`.
- * 4. **`code === 'invalid_param' | 'invalid_forward_url' | 'invalid_dpr'`**
- *    → `InvalidParamError`.
+ * 4. **HTTP 400** → `InvalidParamError` carrying whatever `code` /
+ *    `field` / `message` the body has. The server emits 11+ distinct
+ *    `invalid_*` codes (`invalid_param`, `invalid_params`,
+ *    `invalid_canvas`, `invalid_format`, `invalid_dpr`,
+ *    `invalid_forward_url`, `invalid_og_title`, `invalid_cursor`, …);
+ *    enumerating them in the SDK would mean every new server-side
+ *    validator drifts the mapping. A blanket "400 → InvalidParam,
+ *    pass through whatever the body says" is more durable.
  * 5. Status-only fallbacks: 404 → `CanvasNotFoundError`, 429 → generic
- *    `RateLimitError`, 400 → generic `InvalidParamError`.
+ *    `RateLimitError`.
  * 6. Otherwise → base `CanvasError`.
  *
  * The caller is responsible for only invoking this when `!res.ok` —
@@ -134,18 +140,19 @@ export async function throwFromResponse(res: Response): Promise<never> {
 		throw new CanvasNotFoundError('Canvas not found or not accessible.', { body });
 	}
 
-	// 4. Invalid-param family. `invalid_param` is the only variant that
-	//    carries a `field`; the other two come with just a `message`.
-	if (code === 'invalid_param' || code === 'invalid_forward_url' || code === 'invalid_dpr') {
-		const field = readStringField(body, 'field');
-		const message =
-			readStringField(body, 'message') ??
-			(code === 'invalid_param'
-				? 'Invalid render param.'
-				: code === 'invalid_forward_url'
-					? 'Invalid forwardUrl.'
-					: 'Invalid dpr.');
-		throw new InvalidParamError(message, { code, field, body });
+	// 4. Any 400 → InvalidParamError. The server emits 11+ distinct
+	//    `invalid_*` codes (validated for params, canvas, format, dpr,
+	//    forwardUrl, og fields, cursor, …) and may add more; the SDK
+	//    bundles them all under InvalidParamError and passes the
+	//    server's `code` / `field` / `message` through verbatim so
+	//    callers can branch on `err.code` if they need precise
+	//    handling.
+	if (res.status === 400) {
+		throw new InvalidParamError(readStringField(body, 'message') ?? 'Invalid request.', {
+			code: code ?? 'invalid_request',
+			field: readStringField(body, 'field'),
+			body
+		});
 	}
 
 	// 5. Status-only fallbacks for unknown body codes.
@@ -156,13 +163,6 @@ export async function throwFromResponse(res: Response): Promise<never> {
 		throw new RateLimitError('Rate limit exceeded.', {
 			retryAfterSeconds: readIntHeader(res.headers, 'Retry-After') ?? 0,
 			rateLimit: parseRateLimitHeaders(res.headers),
-			body
-		});
-	}
-	if (res.status === 400) {
-		throw new InvalidParamError('Invalid request.', {
-			code: code ?? 'invalid_request',
-			field: null,
 			body
 		});
 	}
