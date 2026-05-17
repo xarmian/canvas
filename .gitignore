@@ -6,6 +6,10 @@ node_modules/
 build/
 dist/
 
+# size-limit --why bundle explainer artifacts (committed by accident
+# in an earlier round; the script generates these per entry name)
+packages/sdk/esbuild-why-*.html
+
 # Environment
 .env
 .env.local
