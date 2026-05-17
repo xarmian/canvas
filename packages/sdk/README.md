@@ -25,10 +25,13 @@ const result = await client.bake('og-card', { title: 'Hello' });
 
 - **ESM first, CJS shim.** Works in Vite / Next / Edge runtimes out of the box.
 - **No Node-only deps.** Default path uses Web Crypto.
-- **Tree-shakeable.** A consumer using only `client.image(...)` shouldn't pay for the baked-render code path.
-- **Small bundle.** Target <5kb min+gzip for the core.
+- **Small bundle.** **<5 KB min+gzip** for the full client surface, enforced in CI via [size-limit](https://github.com/ai/size-limit) — see [`.size-limit.cjs`](./.size-limit.cjs). Current measurement: ~2.65 KB gzipped.
 - **Self-host friendly.** `baseUrl` required; no hosted-tier assumption.
 - **Typed errors.** `RateLimitError`, `QuotaExceededError`, `CanvasNotFoundError`, `InvalidParamError`.
+
+### A note on tree-shaking
+
+The SDK is class-based (`CanvasClient`), so a consumer importing the class brings every method along — bundlers can't tree-shake unused class methods, full stop. In practice this means an app that only calls `client.image()` ships the same ~2.65 KB as one that uses `bake/list/get/delete`. The 5 KB ceiling covers the whole surface; if a tighter "image-only" budget ever matters, the path is to split `image()` into a standalone function or a subpath export (`@canvas-images/sdk/image`).
 
 ## License
 
