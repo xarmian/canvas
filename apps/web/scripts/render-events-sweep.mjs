@@ -26,8 +26,13 @@
  *     every row is past the cutoff every time the sweep runs, so the
  *     table is kept at zero. Documented in README under TASK-200.
  */
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
+
+// .env lives at the monorepo root — same rationale as renders-sweep.mjs.
+// (Codex round 2 P2.)
+loadEnv({ path: fileURLToPath(new URL('../../../.env', import.meta.url)) });
 
 // ─── arg parsing ──────────────────────────────────────────────────────────
 
