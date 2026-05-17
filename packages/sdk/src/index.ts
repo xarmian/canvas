@@ -7,6 +7,9 @@
 
 export { CanvasClient } from './client.js';
 export type {
+	BakeFormat,
+	BakedRender,
+	BakeOptions,
 	CanvasClientConfig,
 	ImageParamValue,
 	ImageParams

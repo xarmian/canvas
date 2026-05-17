@@ -1,10 +1,18 @@
 /**
  * `CanvasClient` — TypeScript entry point for the Canvas Render API.
  *
- * This module ships the constructor + the synchronous URL builder
- * `client.image()`. Async methods (`bake`, `list`, `get`, `delete`)
- * land in TASK-220+ under PLAN-216.
+ * Current surface:
+ *
+ * - `image(slug, params)` — synchronous URL builder for the
+ *   on-the-fly render route (no network, no auth).
+ * - `bake(slug, params, opts?)` — POST `/api/v1/renders` with bearer
+ *   auth, returns the permalink metadata.
+ *
+ * `list`, `get`, `delete` land in TASK-221. Rate-limit surfacing
+ * (`client.lastRateLimit`) lands in TASK-223.
  */
+
+import { request } from './request.js';
 
 /**
  * Values that can be passed as a render param.
@@ -23,6 +31,54 @@ export type ImageParamValue = string | number | boolean | null | undefined;
 
 /** A bag of render params, keyed by canvas param name. */
 export type ImageParams = Record<string, ImageParamValue>;
+
+/**
+ * Output format for `bake()`. Mirrors the server's `ALLOWED_FORMATS`
+ * (apps/web/src/routes/api/v1/renders/+server.ts).
+ */
+export type BakeFormat = 'png' | 'jpeg' | 'webp' | 'avif';
+
+/** Optional render-level options for `bake()`. All fields default to the server's default. */
+export interface BakeOptions {
+	/** Output format. Server default is `'png'`. */
+	format?: BakeFormat;
+	/**
+	 * URL the `/i/{shortId}` interstitial CTA should forward to.
+	 * Must resolve to http or https after param substitution.
+	 * Pass `null` (or omit) to skip the forward.
+	 */
+	forwardUrl?: string | null;
+	/** OpenGraph title baked into the share-page HTML. */
+	ogTitle?: string | null;
+	/** OpenGraph description baked into the share-page HTML. */
+	ogDescription?: string | null;
+	/** Device-pixel ratio. Server accepts 1, 2, or 3. */
+	dpr?: 1 | 2 | 3;
+	/** Forwarded to `fetch` for caller-side cancellation. */
+	signal?: AbortSignal;
+}
+
+/**
+ * Response shape from POST `/api/v1/renders` (and the dedup-hit
+ * 200 variant). Mirrors what the server actually emits.
+ */
+export interface BakedRender {
+	/** Short, opaque, URL-safe identifier. */
+	id: string;
+	/** Canonical share URL — `${baseUrl}/i/${id}`. */
+	url: string;
+	/** Direct image URL — `${baseUrl}/i/${id}/image.${ext}`. */
+	imageUrl: string;
+	/** Resolved forward URL after param substitution, or `null` if none was set. */
+	forwardUrl: string | null;
+	/**
+	 * `true` when the render was deduplicated against an existing row
+	 * (HTTP 200), `false` when a new row was created (HTTP 201).
+	 */
+	deduplicated: boolean;
+	/** ISO-8601 timestamp of when the underlying row was first created. */
+	createdAt: string;
+}
 
 /** Construction options for a `CanvasClient`. */
 export interface CanvasClientConfig {
@@ -133,5 +189,75 @@ export class CanvasClient {
 
 		const query = search.toString();
 		return query.length > 0 ? `${this.baseUrl}${path}?${query}` : `${this.baseUrl}${path}`;
+	}
+
+	/**
+	 * Bake a render. POSTs to `/api/v1/renders` with bearer auth,
+	 * returns the permalink metadata. Two success shapes share the
+	 * same `BakedRender` interface — the server emits HTTP 201 with
+	 * `deduplicated: false` for a newly-created row and HTTP 200 with
+	 * `deduplicated: true` when a previous identical request is
+	 * found in the dedup index.
+	 *
+	 * @throws `TypeError` when the client was constructed without
+	 *   `apiKey`.
+	 * @throws `InvalidParamError` on 400 (bad canvas, bad param,
+	 *   bad format, etc.).
+	 * @throws `CanvasNotFoundError` on 404 (canvas missing or owned
+	 *   by another user).
+	 * @throws `RateLimitError` on 429 with `error: "rate_limited"`.
+	 * @throws `QuotaExceededError` on 429 with `error: "quota_exceeded"`.
+	 * @throws `CanvasError` for any other failure (5xx, network).
+	 *
+	 * @example
+	 *   const result = await client.bake('og-card', { title: 'Hello' });
+	 *   // → { id: 'abc123', url: '.../i/abc123', imageUrl: '.../image.png',
+	 *   //    forwardUrl: null, deduplicated: false, createdAt: '...' }
+	 */
+	async bake(
+		slug: string,
+		params: ImageParams = {},
+		opts: BakeOptions = {}
+	): Promise<BakedRender> {
+		if (typeof slug !== 'string' || slug.trim().length === 0) {
+			throw new TypeError('CanvasClient.bake: slug must be a non-empty string');
+		}
+
+		// Server expects every param value to be a string. Reuse the
+		// `image()` coercion rules (null/undefined dropped, everything
+		// else coerced via `String(v)`) so a single object shape feeds
+		// both the URL builder and the bake endpoint.
+		//
+		// Use a null-prototype object so a computed `'__proto__'` key
+		// becomes a normal own property instead of mutating the
+		// prototype chain (which would silently drop the param from
+		// JSON.stringify). `image()` is unaffected because
+		// URLSearchParams.set() handles `__proto__` as a regular key.
+		const stringParams: Record<string, string> = Object.create(null);
+		for (const [key, value] of Object.entries(params)) {
+			if (value === null || value === undefined) continue;
+			stringParams[key] = String(value);
+		}
+
+		// Build the request body. The server rejects unknown fields
+		// with `error: "unknown_field"`, so we only include keys the
+		// caller actually set (no `format: undefined`).
+		const body: Record<string, unknown> = {
+			canvas: slug.trim(),
+			params: stringParams
+		};
+		if (opts.format !== undefined) body.format = opts.format;
+		if (opts.forwardUrl !== undefined) body.forwardUrl = opts.forwardUrl;
+		if (opts.ogTitle !== undefined) body.ogTitle = opts.ogTitle;
+		if (opts.ogDescription !== undefined) body.ogDescription = opts.ogDescription;
+		if (opts.dpr !== undefined) body.dpr = opts.dpr;
+
+		const { data } = await request<BakedRender>(this, {
+			method: 'POST',
+			path: '/api/v1/renders',
+			body,
+			signal: opts.signal
+		});
+		return data;
 	}
 }
