@@ -7,8 +7,9 @@
 
 # Build / install artifacts
 node_modules
-build
-.svelte-kit
+**/node_modules
+apps/web/build
+apps/web/.svelte-kit
 .local-storage
 .cache
 
@@ -25,11 +26,11 @@ build
 .pad.toml
 
 # Test infrastructure — none of this runs in production
-e2e
-playwright.config.ts
-playwright-report
-test-results
-lighthouserc.cjs
+apps/web/e2e
+apps/web/playwright.config.ts
+apps/web/playwright-report
+apps/web/test-results
+apps/web/lighthouserc.cjs
 
 # Build-host-only compose files (the image doesn't need to know
 # about its own orchestration)
@@ -37,8 +38,9 @@ docker-compose*.yml
 
 # Dev-only scripts (the production deploy uses scripts/deploy.sh
 # from the host, not from inside the image)
-scripts/setup-test-db.sh
-scripts/seed-crypto-lp-card.sql
+apps/web/scripts/setup-test-db.sh
+apps/web/scripts/seed-crypto-lp-card.sql
+scripts/deploy.sh
 
 # Misc
 *.log

@@ -54,11 +54,17 @@ FROM node:22-bookworm-slim AS deps
 RUN corepack enable && corepack prepare pnpm@10 --activate
 
 WORKDIR /app
-COPY package.json pnpm-lock.yaml .npmrc ./
+# Workspace install: root manifest + lockfile + workspace declarations,
+# plus each workspace package's package.json so pnpm can resolve the
+# dependency graph before any source is copied. This preserves the
+# cache-friendly "deps before code" pattern under the pnpm-workspace
+# layout introduced in TASK-217.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY apps/web/package.json ./apps/web/
 # `--frozen-lockfile` guarantees reproducible builds; CI / deploys
 # should refuse to install anything not pinned in pnpm-lock.yaml.
 # Sharp's native binary build runs here (whitelisted by
-# `pnpm.onlyBuiltDependencies` in package.json).
+# `pnpm.onlyBuiltDependencies` in the root package.json).
 RUN pnpm install --frozen-lockfile
 
 
@@ -73,7 +79,12 @@ FROM node:22-bookworm-slim AS build
 RUN corepack enable && corepack prepare pnpm@10 --activate
 
 WORKDIR /app
+# Copy the workspace's installed node_modules layout. pnpm puts the
+# real content under root `node_modules/.pnpm/`; each workspace
+# package gets its own `node_modules/` with symlinks pointing at the
+# root store, so we need both.
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
 COPY . .
 
 # SvelteKit's prerender / route-analyse pass eagerly evaluates every
@@ -89,7 +100,10 @@ ENV DATABASE_URL=postgresql://stub:stub@127.0.0.1:5432/stub
 ENV BETTER_AUTH_SECRET=stub-secret-build-only
 ENV BETTER_AUTH_URL=http://127.0.0.1:4173
 
-RUN pnpm build
+# Build the `web` workspace package. Output lands at
+# `apps/web/build` per adapter-node. The runner stage copies from
+# there.
+RUN pnpm --filter web build
 
 
 # --- Stage 3: prod-deps — production-only install ---------------------------
@@ -105,12 +119,15 @@ FROM node:22-bookworm-slim AS prod-deps
 RUN corepack enable && corepack prepare pnpm@10 --activate
 
 WORKDIR /app
-COPY package.json pnpm-lock.yaml .npmrc ./
+# Same workspace-aware install pattern as the deps stage, but with
+# `--prod` so devDependencies are excluded.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY apps/web/package.json ./apps/web/
 
 # `--config.strict-build-scripts=false` downgrades pnpm 10's
 # unapproved-build-script policy from a hard error to a warning. We
 # only have `sharp` whitelisted in `pnpm.onlyBuiltDependencies`
-# (package.json); transitive deps like esbuild and canvas have
+# (root package.json); transitive deps like esbuild and canvas have
 # install scripts pnpm would otherwise refuse to skip silently. The
 # warnings still print so a future maintainer can see what's being
 # skipped, but the install succeeds.
@@ -152,38 +169,44 @@ WORKDIR /app
 RUN mkdir -p /data/cache/render && chown -R node:node /data
 
 # Built application output. SvelteKit adapter-node bundles the server
-# entry, SSR code, and client assets into ./build — copying that
-# single tree is everything the Node runtime needs.
-COPY --from=build --chown=node:node /app/build ./build
+# entry, SSR code, and client assets into apps/web/build — copying
+# that single tree (and flattening it to /app/build at runtime so the
+# CMD stays path-stable) is everything the Node runtime needs.
+COPY --from=build --chown=node:node /app/apps/web/build ./build
 
 # Bundled static assets (fonts, robots.txt). `src/lib/engine/fonts.ts`
 # loads Inter-Regular/Bold from `<cwd>/static/fonts` via direct
 # filesystem reads — without these the render path silently falls
 # back to system fonts (DejaVuSans / Liberation), which alters text
 # metrics enough to break OG-card layouts. (Codex round 1 P2.)
-COPY --from=build --chown=node:node /app/static ./static
+COPY --from=build --chown=node:node /app/apps/web/static ./static
 
-# Production-only node_modules from the prod-deps stage. Sharp's
-# native binary was built there via its postinstall hook.
+# Production-only node_modules from the prod-deps stage. The web
+# workspace's deps live under apps/web/node_modules with symlinks
+# into the root pnpm store — copy both so the symlinks resolve.
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
+COPY --from=prod-deps --chown=node:node /app/apps/web/node_modules ./apps/web/node_modules
 
 # package.json is needed at runtime for `type: module` resolution.
+# Bring the web workspace's manifest along too; the runtime CMD runs
+# scripts from apps/web/ paths below.
 COPY --chown=node:node package.json ./
+COPY --chown=node:node apps/web/package.json ./apps/web/package.json
 
 # Drizzle SQL migrations + the runtime migrator. Together these
 # replace the dev-time `drizzle-kit migrate` command.
-COPY --chown=node:node drizzle ./drizzle
-COPY --chown=node:node scripts/run-migrations.mjs ./scripts/run-migrations.mjs
+COPY --chown=node:node apps/web/drizzle ./drizzle
+COPY --chown=node:node apps/web/scripts/run-migrations.mjs ./scripts/run-migrations.mjs
 
 # Sweep CLI for `rendered_images` cleanup (TASK-175). Operator runs
 # this on a cron / systemd timer — see README "Operations". Plain
 # `.mjs` so it works against the production runtime without tsx.
-COPY --chown=node:node scripts/renders-sweep.mjs ./scripts/renders-sweep.mjs
+COPY --chown=node:node apps/web/scripts/renders-sweep.mjs ./scripts/renders-sweep.mjs
 
 # Retention sweep for `render_events` (TASK-194). Same cron shape as
 # `renders-sweep`; see README "Render event log" for the cron pattern
 # and the `RENDER_EVENTS_RETENTION_DAYS` knob.
-COPY --chown=node:node scripts/render-events-sweep.mjs ./scripts/render-events-sweep.mjs
+COPY --chown=node:node apps/web/scripts/render-events-sweep.mjs ./scripts/render-events-sweep.mjs
 
 # Run as the unprivileged `node` user that's baked into the official
 # Node images. The image's process should not have root inside the
