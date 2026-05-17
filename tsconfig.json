@@ -1,0 +1,7 @@
+{
+	"//": "Root tsconfig for the monorepo. Each package owns its own tsconfig and is listed here under `references`. `files: []` keeps the root project itself empty — running tsc from the root is a no-op; per-package builds happen via `pnpm --filter <pkg> check` or `pnpm check:all`.",
+	"files": [],
+	"references": [
+		{ "path": "./apps/web" }
+	]
+}

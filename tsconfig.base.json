@@ -1,0 +1,11 @@
+{
+	"//": "Shared compilerOptions for every workspace package. Each package's own tsconfig.json extends this and layers package-specific options (e.g. apps/web extends .svelte-kit/tsconfig.json AND this base; packages/sdk will pick a publish-friendly moduleResolution).",
+	"compilerOptions": {
+		"esModuleInterop": true,
+		"forceConsistentCasingInFileNames": true,
+		"resolveJsonModule": true,
+		"skipLibCheck": true,
+		"sourceMap": true,
+		"strict": true
+	}
+}

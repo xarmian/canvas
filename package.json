@@ -21,7 +21,18 @@
 		"test:e2e": "pnpm --filter web test:e2e",
 		"renders:sweep": "pnpm --filter web renders:sweep",
 		"events:sweep": "pnpm --filter web events:sweep",
-		"lh:mobile": "pnpm --filter web lh:mobile"
+		"lh:mobile": "pnpm --filter web lh:mobile",
+		"build:all": "pnpm -r build",
+		"check:all": "pnpm -r check",
+		"lint:all": "pnpm -r lint",
+		"test:all": "pnpm -r test:unit"
+	},
+	"devDependencies": {
+		"@types/node": "^24",
+		"eslint": "^10.2.0",
+		"prettier": "^3.8.1",
+		"typescript": "^6.0.2",
+		"vitest": "4.1.6"
 	},
 	"pnpm": {
 		"onlyBuiltDependencies": [
