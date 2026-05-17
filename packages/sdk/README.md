@@ -234,7 +234,7 @@ Hardened by a three-layer defense in CI:
 
 ## Examples
 
-- **`examples/nextjs-og-cards/`** — Next.js 14 app that serves dynamic OG images per blog post via `client.image()`. _(Coming soon — TASK-228.)_
+- **[`examples/nextjs-og-cards/`](../../examples/nextjs-og-cards/)** — Next.js 14 (app router) example using `client.image()` from `generateMetadata()` to set `openGraph.images` per blog post. The crawler fetches the Canvas URL directly; Next.js never proxies bytes.
 
 ## TypeScript
 
