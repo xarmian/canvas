@@ -168,45 +168,60 @@ WORKDIR /app
 # 500 with EACCES on every cache miss. (Codex round 1 P1.)
 RUN mkdir -p /data/cache/render && chown -R node:node /data
 
-# Built application output. SvelteKit adapter-node bundles the server
-# entry, SSR code, and client assets into apps/web/build — copying
-# that single tree (and flattening it to /app/build at runtime so the
-# CMD stays path-stable) is everything the Node runtime needs.
-COPY --from=build --chown=node:node /app/apps/web/build ./build
+# Preserve the workspace layout in the runtime image. pnpm doesn't
+# hoist workspace package deps to the root `node_modules`; instead,
+# `apps/web/node_modules/` carries symlinks pointing into the root
+# pnpm content-addressable store at `node_modules/.pnpm/`. Node's
+# resolver only finds those deps when the running module lives under
+# `apps/web/` — flattening the build to `/app/build` (as the
+# pre-monorepo Dockerfile did) breaks `import 'postgres'` and friends
+# at startup. (Codex round 1 P1.)
+#
+# So: keep everything under `/app/apps/web/`, set WORKDIR there, and
+# let `<cwd>/static`, `<cwd>/build`, `<cwd>/drizzle`, `<cwd>/scripts`
+# resolve naturally.
+
+# Built application output (SvelteKit adapter-node bundle).
+COPY --from=build --chown=node:node /app/apps/web/build ./apps/web/build
 
 # Bundled static assets (fonts, robots.txt). `src/lib/engine/fonts.ts`
 # loads Inter-Regular/Bold from `<cwd>/static/fonts` via direct
 # filesystem reads — without these the render path silently falls
 # back to system fonts (DejaVuSans / Liberation), which alters text
-# metrics enough to break OG-card layouts. (Codex round 1 P2.)
-COPY --from=build --chown=node:node /app/apps/web/static ./static
+# metrics enough to break OG-card layouts. (Codex round 1 P2 of the
+# original Dockerfile review.)
+COPY --from=build --chown=node:node /app/apps/web/static ./apps/web/static
 
-# Production-only node_modules from the prod-deps stage. The web
-# workspace's deps live under apps/web/node_modules with symlinks
-# into the root pnpm store — copy both so the symlinks resolve.
+# Production-only node_modules from the prod-deps stage. Both the root
+# `node_modules` (containing the `.pnpm` store + workspace-level
+# symlinks) and the per-package `apps/web/node_modules` (symlinks into
+# `.pnpm`) are required for Node's resolver to find every dep.
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=prod-deps --chown=node:node /app/apps/web/node_modules ./apps/web/node_modules
 
-# package.json is needed at runtime for `type: module` resolution.
-# Bring the web workspace's manifest along too; the runtime CMD runs
-# scripts from apps/web/ paths below.
-COPY --chown=node:node package.json ./
+# package.json files are needed at runtime for `type: module` resolution
+# at every level Node walks during import resolution.
+COPY --chown=node:node package.json pnpm-workspace.yaml ./
 COPY --chown=node:node apps/web/package.json ./apps/web/package.json
 
 # Drizzle SQL migrations + the runtime migrator. Together these
 # replace the dev-time `drizzle-kit migrate` command.
-COPY --chown=node:node apps/web/drizzle ./drizzle
-COPY --chown=node:node apps/web/scripts/run-migrations.mjs ./scripts/run-migrations.mjs
+COPY --chown=node:node apps/web/drizzle ./apps/web/drizzle
+COPY --chown=node:node apps/web/scripts/run-migrations.mjs ./apps/web/scripts/run-migrations.mjs
 
 # Sweep CLI for `rendered_images` cleanup (TASK-175). Operator runs
 # this on a cron / systemd timer — see README "Operations". Plain
 # `.mjs` so it works against the production runtime without tsx.
-COPY --chown=node:node apps/web/scripts/renders-sweep.mjs ./scripts/renders-sweep.mjs
+COPY --chown=node:node apps/web/scripts/renders-sweep.mjs ./apps/web/scripts/renders-sweep.mjs
 
 # Retention sweep for `render_events` (TASK-194). Same cron shape as
 # `renders-sweep`; see README "Render event log" for the cron pattern
 # and the `RENDER_EVENTS_RETENTION_DAYS` knob.
-COPY --chown=node:node apps/web/scripts/render-events-sweep.mjs ./scripts/render-events-sweep.mjs
+COPY --chown=node:node apps/web/scripts/render-events-sweep.mjs ./apps/web/scripts/render-events-sweep.mjs
+
+# Switch into the web workspace so node_modules resolution + cwd-
+# relative reads (static/, build/) work as the app expects.
+WORKDIR /app/apps/web
 
 # Run as the unprivileged `node` user that's baked into the official
 # Node images. The image's process should not have root inside the

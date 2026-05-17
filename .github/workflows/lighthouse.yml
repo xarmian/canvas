@@ -101,5 +101,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lighthouse-report
-          path: .lighthouseci/
+          # LHCI runs under the web workspace (cwd=apps/web), so its
+          # report directory lands there too. (Codex round 1 P3.)
+          path: apps/web/.lighthouseci/
           retention-days: 14
