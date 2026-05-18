@@ -17,7 +17,11 @@
 	 *
 	 * Dismissal:
 	 *  - Close button in the header (always visible)
-	 *  - Escape key while the drawer or any descendant has focus
+	 *  - Escape key, but ONLY while focus is inside the drawer. Without
+	 *    that scope guard, the global Escape handler that clears the
+	 *    canvas selection would never fire while the drawer is open,
+	 *    and any other modal's Escape would close the drawer too.
+	 *    (Codex round 1 P2.)
 	 *
 	 * Click-outside does NOT close. The whole point of a non-blocking
 	 * surface is that the user can click into the canvas / params panel
@@ -40,18 +44,26 @@
 
 	let { open, onClose, children }: Props = $props();
 
+	let drawerEl: HTMLElement | undefined = $state();
+
 	function onKeydown(event: KeyboardEvent) {
 		if (!open) return;
-		if (event.key === 'Escape') {
-			event.preventDefault();
-			onClose();
-		}
+		if (event.key !== 'Escape') return;
+		// Only handle Escape when focus is INSIDE the drawer. Without
+		// this guard the drawer steals the editor's selection-clear
+		// Escape shortcut (apps/web/src/routes/(app)/canvas/[id]/edit/+page.svelte)
+		// and can also close itself while a modal owns focus. Codex
+		// round 1 P2.
+		if (!drawerEl?.contains(document.activeElement)) return;
+		event.preventDefault();
+		onClose();
 	}
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
 <aside
+	bind:this={drawerEl}
 	class="embed-drawer"
 	class:open
 	aria-label="Embed code"
