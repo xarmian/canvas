@@ -15,6 +15,7 @@
 		Copy,
 		Keyboard,
 		Sliders,
+		Code2,
 		ExternalLink,
 		RotateCw,
 		AlertTriangle as AlertTriangleIcon
@@ -24,6 +25,7 @@
 	import PropertyPanel from '$lib/components/editor/PropertyPanel.svelte';
 	import PublishModal from '$lib/components/editor/PublishModal.svelte';
 	import ParamsPanel from '$lib/components/editor/ParamsPanel.svelte';
+	import EmbedDrawer from '$lib/components/editor/EmbedDrawer.svelte';
 	import MobileBanner from '$lib/components/editor/MobileBanner.svelte';
 	import CanvasSettingsModal, {
 		type CanvasSettingsPatch
@@ -139,6 +141,10 @@
 			// fetch but rendering A's stale schema rows briefly while
 			// canvas B's render races in is jarring. Codex round 1 P1.
 			showParamsPanel = false;
+			// Same rationale for the embed drawer — the snippet text is
+			// keyed off the slug + bindings of the previous canvas; better
+			// to close on swap than to flash stale code.
+			showEmbedDrawer = false;
 		}
 	});
 	let showPublishModal = $state(false);
@@ -150,6 +156,13 @@
 	// wrong type or default. Distinct from showPublishModal so the user
 	// can have either open without losing their place.
 	let showParamsPanel = $state(false);
+	/** "Get the code" embed drawer (PLAN-232 Phase B / TASK-239).
+	 *  Non-blocking surface that hosts <EmbedSnippets> so developers
+	 *  can keep the snippet tab open while tweaking params and watch
+	 *  the typed-TS / example-URL deriveds update live. Separate from
+	 *  showPublishModal — opening the drawer doesn't require opening
+	 *  the publish modal. */
+	let showEmbedDrawer = $state(false);
 
 	/**
 	 * Duplicate the current canvas via POST /api/canvas/[id]/duplicate and
@@ -1447,6 +1460,15 @@
 			<Sliders size={14} />
 			<span>Params</span>
 		</button>
+		<button
+			class="tool-btn"
+			data-testid="toolbar-embed"
+			onclick={() => (showEmbedDrawer = true)}
+			title="Embed snippets for HTML, Markdown, TypeScript, Python, and more"
+		>
+			<Code2 size={14} />
+			<span>Embed</span>
+		</button>
 		<button class="tool-btn" class:active={showPreview} onclick={togglePreview}>
 			{#if showPreview}
 				<EyeOff size={14} />
@@ -1704,6 +1726,8 @@
 		published={isPublished}
 		onClose={() => (showParamsPanel = false)}
 	/>
+
+	<EmbedDrawer open={showEmbedDrawer} onClose={() => (showEmbedDrawer = false)} />
 
 	<ShortcutsCheatsheetModal open={showCheatsheet} onClose={() => (showCheatsheet = false)} />
 
