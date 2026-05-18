@@ -221,6 +221,12 @@
 			// gate. Codex round 2 P2 + round 3 P2.
 			schemaPendingGen++;
 			schemaPending = false;
+			// Reset the panel mode so the next open lands on the
+			// default Test-values view. Without this a user who flipped
+			// to Schema and closed the panel would re-open on the
+			// placeholder with the params table hidden. Codex round 1
+			// P2 of TASK-243.
+			mode = 'test';
 		}
 	});
 
