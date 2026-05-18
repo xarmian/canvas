@@ -220,6 +220,15 @@
 	</header>
 
 	<div class="drawer-body" data-testid="embed-drawer-body">
+		<!--
+			TODO(TASK-242): when `published === false` the snippets here
+			still render copyable `/c/{slug}` + `/image.png` URLs that
+			404. TASK-242 is the planned home for the pre-publish UX
+			(banner + inline publish CTA per the plan recommendation).
+			Until then, opening the drawer pre-publish surfaces snippets
+			pointing at the eventual share URL — incorrect for v1 but
+			documented + fenced into the next task.
+		-->
 		<EmbedSnippets {slug} {bindings} {liveValues} {paramSchemas} {versionToken} />
 	</div>
 </aside>
