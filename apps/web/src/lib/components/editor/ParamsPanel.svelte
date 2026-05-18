@@ -561,17 +561,20 @@
 		{:else}
 			<!--
 				Schema mode (TASK-244). Hosts <ParamSchemaEditor> — the
-				same component PublishModal used to render. The editor
-				is presentational and reads `schemaRows` + `schemaLoaded`
-				+ `schemaError` straight from the existing fetch
-				lifecycle; persistence routes through the existing
-				`persistFlag()` (same shape as the editor's `onPersist`
-				callback).
+				same component PublishModal used to render. Schema rows
+				only exist server-side for PUBLISHED canvases
+				(syncCanvasParams runs on the publish PATCH; unpublished
+				canvases never roundtrip). Pass `paramRowsLoaded=true`
+				on unpublished so the editor renders its empty-state
+				with disabled controls instead of an indefinite loading
+				skeleton — the editor's own `disabled={!row}` check
+				keeps the Type/Required cells un-editable until a row
+				lands. Codex round 1 P2 of TASK-244.
 			-->
 			<ParamSchemaEditor
 				bindings={schemaEditorBindings}
 				paramRows={schemaRows}
-				paramRowsLoaded={schemaLoaded}
+				paramRowsLoaded={!published || schemaLoaded}
 				paramRowsError={schemaError}
 				onPersist={persistFlag}
 				onRetry={retryLoadSchema}

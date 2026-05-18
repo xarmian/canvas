@@ -73,13 +73,20 @@ test('full happy path — signup to share URL, bot meta, image render', async ({
 	const testParam = page.locator('#test-param-title');
 	await expect(testParam).toBeVisible();
 
-	// 6. Publish via the toolbar → 'Using this template' panel renders.
+	// 6. Publish via the toolbar → modal flips to the published
+	//    branch (share + image URL fields). The "Using this template"
+	//    docs section moved out of PublishModal in PLAN-232 Phase C /
+	//    TASK-244 — bindings doc now lives in ParamsPanel's Schema
+	//    tab, example URLs in <EmbedDrawer>. The test asserts what
+	//    the modal still renders.
 	const { shareUrl, imageUrl } = await publish(page);
 	expect(shareUrl).toMatch(/\/c\/[A-Za-z0-9-]+$/);
 	expect(imageUrl).toMatch(/\/c\/[A-Za-z0-9-]+\/image\.png$/);
-	await expect(page.getByRole('heading', { name: 'Using this template' })).toBeVisible();
-	// The bound param appears in the docs table.
-	await expect(page.getByText('title', { exact: true }).first()).toBeVisible();
+	// The bound param's URL is reflected in the share-page URL itself
+	// (so visitors can override it via query string); the published
+	// share / image URL fields are the canonical "this canvas is
+	// publishable" signal.
+	await expect(page.getByLabel('Share page URL', { exact: true })).toBeVisible();
 
 	// 7. Bot UA on the share URL gets HTML with og:image meta tags.
 	const botRes = await request.get(shareUrl, {
