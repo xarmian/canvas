@@ -33,6 +33,8 @@
 	import { editorState, markDirty } from './state.svelte.ts';
 	import type { FabricObject } from 'fabric';
 	import { toast } from '$lib/stores/toast.svelte';
+	import ParamSchemaEditor from './publish/ParamSchemaEditor.svelte';
+	import type { PublishModalBinding } from './PublishModal.svelte';
 
 	interface Props {
 		open: boolean;
@@ -357,9 +359,21 @@
 		}
 	}
 
-	function findRow(name: string): SchemaRow | undefined {
-		return schemaRows.find((r) => r.name === name);
-	}
+	/** Shape-adapter — <ParamSchemaEditor> consumes the
+	 *  PublishModalBinding type ({ name, default, sourceLabel }) inherited
+	 *  from when it lived under PublishModal. ParamsPanel's
+	 *  `derivedParams` carries richer source metadata (multiple layers
+	 *  per param + formatter); we collapse to the first source's
+	 *  property label so the editor's title="from {sourceLabel}" hover
+	 *  still gives the user something useful. Editing UX is identical
+	 *  to the inline cells the Test-values mode used to render. */
+	let schemaEditorBindings = $derived<PublishModalBinding[]>(
+		derivedParams.map((p) => ({
+			name: p.name,
+			default: p.default,
+			sourceLabel: p.sources[0] ? labelForProperty(p.sources[0].property) : 'Dynamic value'
+		}))
+	);
 
 	/** Two-mode panel (PLAN-232 Phase C / TASK-243).
 	 *
@@ -412,13 +426,14 @@
 <Modal {open} {onClose} title="Dynamic values" width="48rem">
 	<div class="params-intro">
 		<p>
-			Dynamic values this canvas accepts. Edit the default to change what renders when a viewer
-			omits the value. Type and Required apply once the canvas is published — they show up in the
-			API docs and gate strict-mode renders.
+			Dynamic values this canvas accepts. The <strong>Test values</strong> tab is for editing
+			defaults and seeing which layers reference each value. The <strong>Schema</strong> tab edits Type
+			+ Required — they apply once the canvas is published and gate strict-mode renders.
 		</p>
 		{#if !published}
 			<p class="params-unpublished-note">
-				Type and Required become editable once the canvas is published. Defaults are editable now.
+				Type and Required (Schema tab) become editable once the canvas is published. Defaults are
+				editable now.
 			</p>
 		{/if}
 	</div>
@@ -488,16 +503,21 @@
 					/>
 				</div>
 			{:else}
+				<!--
+					Test mode (TASK-244): Name + Default + Sources. Type
+					and Required moved to the Schema tab — having them
+					inline duplicated the schema editor's controls + caused
+					the cross-surface aria-label collision that broke the
+					params-validation e2e. Schema editing now has one
+					home; Test mode is focused on driving the live preview.
+				-->
 				<div class="params-table" role="table" aria-label="What this canvas accepts">
 					<div class="params-row params-row-header" role="row">
 						<span role="columnheader">Name</span>
-						<span role="columnheader">Type</span>
 						<span role="columnheader">Default</span>
-						<span role="columnheader">Required</span>
 						<span role="columnheader">Sources</span>
 					</div>
 					{#each derivedParams as p (p.name)}
-						{@const row = findRow(p.name)}
 						<div class="params-row" role="row" data-testid="params-row-{p.name}">
 							<div class="params-cell params-cell-name" role="cell">
 								<code>{p.name}</code>
@@ -509,22 +529,6 @@
 							</div>
 
 							<div class="params-cell" role="cell">
-								<select
-									class="params-input"
-									value={row?.type ?? 'text'}
-									disabled={!published || !row}
-									aria-label="Type for {p.name}"
-									onchange={(e) => persistFlag(p.name, { type: e.currentTarget.value })}
-								>
-									<option value="text">text</option>
-									<option value="number">number</option>
-									<option value="url">url</option>
-									<option value="boolean">boolean</option>
-									<option value="date">date</option>
-								</select>
-							</div>
-
-							<div class="params-cell" role="cell">
 								<input
 									class="params-input"
 									type="text"
@@ -532,16 +536,6 @@
 									placeholder="(empty)"
 									aria-label="Default for {p.name}"
 									oninput={(e) => updateDefault(p.name, e.currentTarget.value)}
-								/>
-							</div>
-
-							<div class="params-cell params-cell-checkbox" role="cell">
-								<input
-									type="checkbox"
-									checked={row?.required ?? false}
-									disabled={!published || !row}
-									aria-label="Required {p.name}"
-									onchange={(e) => persistFlag(p.name, { required: e.currentTarget.checked })}
 								/>
 							</div>
 
@@ -566,13 +560,22 @@
 			{/if}
 		{:else}
 			<!--
-			Schema mode placeholder (TASK-243). TASK-244 mounts
-			<ParamSchemaEditor> here and the duplicate type+required
-			cells in Test mode become candidates for removal.
-		-->
-			<p class="params-schema-placeholder" data-testid="params-schema-placeholder">
-				Schema editor (type + required) lands here in the next task.
-			</p>
+				Schema mode (TASK-244). Hosts <ParamSchemaEditor> — the
+				same component PublishModal used to render. The editor
+				is presentational and reads `schemaRows` + `schemaLoaded`
+				+ `schemaError` straight from the existing fetch
+				lifecycle; persistence routes through the existing
+				`persistFlag()` (same shape as the editor's `onPersist`
+				callback).
+			-->
+			<ParamSchemaEditor
+				bindings={schemaEditorBindings}
+				paramRows={schemaRows}
+				paramRowsLoaded={schemaLoaded}
+				paramRowsError={schemaError}
+				onPersist={persistFlag}
+				onRetry={retryLoadSchema}
+			/>
 		{/if}
 	</div>
 </Modal>
@@ -634,13 +637,6 @@
 		outline-offset: -2px;
 	}
 
-	.params-schema-placeholder {
-		padding: 1.5rem 0;
-		text-align: center;
-		color: var(--color-text-muted);
-		font-size: 0.8125rem;
-	}
-
 	/*
 	 * Empty / skeleton / error wrappers — the underlying primitives
 	 * already supply the visual; we just give them a comfortable
@@ -672,7 +668,7 @@
 
 	.params-row {
 		display: grid;
-		grid-template-columns: minmax(120px, 1.4fr) 90px minmax(120px, 1.4fr) 80px minmax(140px, 1.6fr);
+		grid-template-columns: minmax(120px, 1.4fr) minmax(140px, 1.6fr) minmax(140px, 1.6fr);
 		gap: 0;
 		background: var(--color-bg);
 		align-items: center;
@@ -741,20 +737,8 @@
 		cursor: not-allowed;
 	}
 
-	.params-cell-checkbox {
-		display: flex;
-		justify-content: center;
-	}
-
-	.params-cell-checkbox input[type='checkbox'] {
-		width: 16px;
-		height: 16px;
-		cursor: pointer;
-	}
-
-	.params-cell-checkbox input[type='checkbox']:disabled {
-		cursor: not-allowed;
-	}
+	/* .params-cell-checkbox (Required checkbox) moved out with the
+	   schema editor in TASK-244 — Test mode no longer renders it. */
 
 	.params-cell-sources {
 		font-size: 0.75rem;

@@ -2,11 +2,9 @@
 	import { Modal, Button } from '$lib/components/ui';
 	import { toast } from '$lib/stores/toast.svelte';
 	import CopyUrlRow from './publish/CopyUrlRow.svelte';
-	import ParamSchemaEditor from './publish/ParamSchemaEditor.svelte';
 	import SharingFields from './publish/SharingFields.svelte';
 	import SlugEditor from './publish/SlugEditor.svelte';
 	import SocialValidator from './publish/SocialValidator.svelte';
-	import { buildQueryString, curlFor } from '$lib/embed/snippets';
 
 	export interface PublishModalBinding {
 		/** Parameter name as it appears in the URL. */
@@ -22,27 +20,13 @@
 		canvasId: string;
 		slug: string;
 		published: boolean;
-		/** All unique parameter bindings present on the canvas, used to render
-		 * the "Using this template" documentation section when published. */
+		/** Parameter bindings on the canvas. Used by <SharingFields>'s
+		 *  redirect-URL placeholder validator (the "did you mean X?"
+		 *  suggestion list reads the binding names). After TASK-244,
+		 *  the docs-section that used the rich `liveValues`/`bindingsStale`
+		 *  shape moved out — <EmbedDrawer> reads its own reactive
+		 *  bindings/liveValues from editor-page state. */
 		bindings?: PublishModalBinding[];
-		/** Current user-typed test values from the editor's params panel,
-		 * keyed by param name. When provided, snippet generators prefer
-		 * `liveValues[name]` over the binding's default — so the
-		 * copy-paste snippets reflect what the user is previewing in the
-		 * editor right now, not just the canonical defaults. Reactivity
-		 * contract: the parent passes its $state-backed `testParams`
-		 * object directly, so edits in the params panel flow into the
-		 * modal's derived snippet text on the next microtask without
-		 * needing to close/reopen the modal. Empty-string values are
-		 * treated as "use the binding default" to match the public
-		 * renderer's omit-to-default semantics. */
-		liveValues?: Record<string, string>;
-		/** Set when the editor couldn't fully persist pending edits before
-		 * opening the modal — the bindings snapshot may not match what
-		 * /c/[slug]/image.png currently renders. We still render the docs
-		 * section because the Unpublish button lives here, but show an
-		 * inline warning so the user isn't misled. */
-		bindingsStale?: boolean;
 		onClose: () => void;
 		/** Called after a successful publish or unpublish, with the new state. */
 		onPublishedChange: (published: boolean) => void;
@@ -66,8 +50,6 @@
 		slug,
 		published,
 		bindings = [],
-		liveValues = {},
-		bindingsStale = false,
 		onClose,
 		onPublishedChange,
 		onBeforePublish,
@@ -76,195 +58,39 @@
 
 	let busy = $state(false);
 
-	// --- Per-param schema flags (TASK-52) ---
-	// Loaded lazily when the modal opens for a published canvas. Edits are
-	// persisted via PATCH /api/canvas/[id] with { params: [...] } so we
-	// don't need a separate roundtrip per row.
-	interface ParamRow {
-		name: string;
-		type: string;
-		required: boolean;
-	}
-	let paramRows = $state<ParamRow[]>([]);
-	let paramRowsLoaded = $state(false);
-	/** Set when the GET /params fetch returns non-OK or rejects. Drives
-	 *  the inline ErrorState in the docs section so the failure isn't
-	 *  silently swallowed (TASK-136). */
-	let paramRowsError = $state(false);
-	/** Monotonic generation counter for loadParamSchema requests. Bumped
-	 *  at request start; the stale-guard checks the captured token so
-	 *  a late completion from canvas A (or a closed modal) can't write
-	 *  schema rows / errors over canvas B's live state. Mirrors the
-	 *  pattern used by loadSharing (Codex round 1 of TASK-136 P2). */
-	let paramRowsGen = 0;
-	/** In-flight gate: while a /params request is pending, the $effect
-	 *  must NOT kick off a second one. Without this, a re-render
-	 *  triggered by a sibling state change (sharingLoaded /
-	 *  versionToken / sharingPending) while `paramRowsLoaded` is still
-	 *  false would re-enter loadParamSchema, and a slow late completion
-	 *  could stale out the earlier successful response and then fail —
-	 *  surfacing an error banner over freshly-loaded rows. Mirrors
-	 *  ParamsPanel's `schemaPending` (Codex round 2 of TASK-136 P2). */
-	let paramRowsPending = $state(false);
-
+	// Per-param schema flags + paramRows lifecycle moved into
+	// ParamsPanel's Schema tab (TASK-244). PublishModal is now focused
+	// purely on the publish + share surface; schema editing has one
+	// home (ParamsPanel) and one server flow (its persistFlag → PATCH).
+	//
+	// versionToken + loadVersionToken + the EmbedSnippets mount moved
+	// to <EmbedDrawer> in TASK-240. The drawer owns its own
+	// versionToken + paramRows fetches independently — TASK-245
+	// consolidates with ParamsPanel's at editor-page state.
+	//
 	// Sharing & redirect (TASK-95) extracted to <SharingFields> in
 	// TASK-237. The component owns its own GET / blur-commit /
 	// placeholder validator lifecycle keyed on `open`, `published`,
 	// and `canvasId`.
-
-	$effect(() => {
-		if (open && published && !paramRowsLoaded && !paramRowsPending) {
-			void loadParamSchema();
-		}
-		if (!open) {
-			// Reset paramRows so reopening for a different canvas
-			// refetches. Sharing + slug state lives in their own
-			// components and resets itself when `open` flips.
-			paramRowsLoaded = false;
-			paramRowsError = false;
-			paramRows = [];
-			paramRowsGen++;
-			paramRowsPending = false;
-		}
-	});
-
-	// versionToken + loadVersionToken + the EmbedSnippets mount + the
-	// paramSchemas derived all moved out with <EmbedSnippets> when it
-	// relocated to <EmbedDrawer> (TASK-240). The drawer owns its own
-	// versionToken + paramRows fetches keyed on its open state — until
-	// TASK-245 deduplicates the two GETs.
-
-	async function loadParamSchema(): Promise<void> {
-		paramRowsError = false;
-		paramRowsPending = true;
-		// Snapshot canvasId + bump-and-capture the generation token so a
-		// stale completion can't write rows / errors onto a newer
-		// in-flight request or a different canvas (Codex round 1 P2).
-		const requestCanvasId = canvasId;
-		const requestGen = ++paramRowsGen;
-		const isStale = () => requestCanvasId !== canvasId || requestGen !== paramRowsGen;
-		try {
-			const res = await fetch(`/api/canvas/${canvasId}/params`);
-			if (isStale()) return;
-			if (!res.ok) {
-				// Surface a retryable error in the docs section instead of
-				// the previous silent fail. The bindings table still
-				// renders below so the user can still inspect the params.
-				paramRowsError = true;
-				return;
-			}
-			const rows = (await res.json()) as ParamRow[];
-			if (isStale()) return;
-			paramRows = rows;
-			paramRowsLoaded = true;
-		} catch {
-			// Stale-guarded so a rejected request from a previous
-			// canvas / session can't paint a false error banner over
-			// freshly-loaded rows.
-			if (!isStale()) {
-				paramRowsError = true;
-			}
-		} finally {
-			// Only the LATEST request may clear the pending flag — a
-			// stale completion that lost the race must remain a no-op
-			// so the still-in-flight newer request keeps the effect's
-			// !paramRowsPending gate armed.
-			if (requestGen === paramRowsGen) {
-				paramRowsPending = false;
-			}
-		}
-	}
-
-	function retryLoadParamSchema(): void {
-		paramRowsError = false;
-		void loadParamSchema();
-	}
-
-	// --- Slug rename (TASK-98) extracted to <SlugEditor> in TASK-235.
-	//     The entire state machine + ETag / If-Match handling now lives
-	//     in that component; PublishModal just forwards `slug`,
-	//     `canvasId`, `open`, and the `onSlugChange` callback.
-
-	async function persistParamFlags(name: string, patch: Partial<ParamRow>): Promise<void> {
-		// Optimistic in-memory update first so the UI feels responsive,
-		// then PATCH the canvas with a single-row params array.
-		paramRows = paramRows.map((r) => (r.name === name ? { ...r, ...patch } : r));
-		try {
-			await fetch(`/api/canvas/${canvasId}`, {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ params: [{ name, ...patch }] })
-			});
-		} catch {
-			// User-facing copy: "params accepted" matches the vocabulary
-			// vocab doc (TASK-103) — internal code/comments still use
-			// "schema" since that's the API/DB term.
-			toast.error(`Couldn't save the params-accepted setting for ${name}.`);
-		}
-	}
+	//
+	// Slug rename (TASK-98) extracted to <SlugEditor> in TASK-235. The
+	// entire state machine + ETag / If-Match handling lives there;
+	// PublishModal just forwards `slug`, `canvasId`, `open`, and the
+	// `onSlugChange` callback.
 
 	// Build URLs from the current origin so the copy values match the user's deployment.
 	let origin = $derived(typeof window !== 'undefined' ? window.location.origin : '');
 	let shareUrl = $derived(`${origin}/c/${slug}`);
 	let imageUrl = $derived(`${origin}/c/${slug}/image.png`);
 
-	/** Representative sample value per source type — used when a binding's
-	 * default is an empty string, so the "example URL with all params filled
-	 * in" gives authors something concrete to show API callers. */
-	function sampleFor(sourceLabel: string): string {
-		switch (sourceLabel) {
-			case 'Text Content':
-				return 'Hello';
-			case 'Image Source':
-				return 'https://example.com/pic.png';
-			case 'Fill Color':
-				return '#ff0000';
-			default:
-				return 'value';
-		}
-	}
+	// sampleFor / resolveExampleValue / resolvedParams / exampleQuery /
+	// exampleImageUrl / exampleShareUrl moved out with the docs-section
+	// in TASK-244. The drawer's <EmbedSnippets> owns its own copies
+	// (already extracted in TASK-236); SharingFields kept its own
+	// `sampleFor` (TASK-237) for the redirect placeholder validator.
+	// Both can consolidate into a shared module once a third consumer
+	// shows up.
 
-	/** Resolve the example value for a binding, preferring (in order):
-	 *   1. The user's live test value from the editor params panel
-	 *      (`liveValues[name]`), if non-empty.
-	 *   2. The binding's declared default (`b.default`), if non-empty.
-	 *   3. A representative `sampleFor()` placeholder based on the
-	 *      source property.
-	 *
-	 * Empty strings at tier 1 and 2 fall through to the next tier — this
-	 * matches the public renderer, which treats an empty value the same
-	 * as omitting the param (binding default applies). Reading
-	 * `liveValues[b.name]` inside this function is what wires the modal's
-	 * derived snippet text to the parent's `$state`-backed
-	 * `testParams` proxy: edits in the params panel re-trigger the
-	 * deriveds without needing to close/reopen the modal. */
-	function resolveExampleValue(b: PublishModalBinding): string {
-		const live = liveValues[b.name];
-		if (live) return live;
-		if (b.default) return b.default;
-		return sampleFor(b.sourceLabel);
-	}
-
-	/** Resolved name→value map driving every snippet. The modal owns
-	 * this translation (bindings + liveValues → flat params) so the
-	 * pure `$lib/embed/snippets` module can stay testable without
-	 * caring about Svelte 5 prop shapes. */
-	let resolvedParams = $derived.by(() => {
-		const out: Record<string, string> = {};
-		for (const b of bindings) {
-			if (!b.name) continue;
-			out[b.name] = resolveExampleValue(b);
-		}
-		return out;
-	});
-
-	let exampleQuery = $derived(buildQueryString(resolvedParams));
-	let exampleImageUrl = $derived(`${imageUrl}${exampleQuery}`);
-	let exampleShareUrl = $derived(`${shareUrl}${exampleQuery}`);
-
-	/** Input bundle passed to every snippet generator in
-	 * `$lib/embed/snippets`. Re-deriving this keeps the per-snippet
-	 * deriveds below trivial. */
 	// `paramSchemas` derivation moved to <EmbedDrawer> with <EmbedSnippets>
 	// in TASK-240. The modal no longer needs typed-TS schema info because
 	// the embed snippet generator no longer lives here.
@@ -348,47 +174,14 @@
 
 		<SocialValidator {shareUrl} />
 
-		<section class="docs-section">
-			<h3 class="docs-title">Using this template</h3>
-
-			<ParamSchemaEditor
-				{bindings}
-				{paramRows}
-				{paramRowsLoaded}
-				{paramRowsError}
-				{bindingsStale}
-				onPersist={persistParamFlags}
-				onRetry={retryLoadParamSchema}
-			/>
-
-			{#if bindings.length > 0}
-				<CopyUrlRow
-					id="publish-example-image"
-					label="Example image URL"
-					url={exampleImageUrl}
-					copyLabel="Example URL"
-				/>
-
-				<CopyUrlRow
-					id="publish-curl"
-					label="Copy as cURL"
-					url={curlFor(exampleImageUrl)}
-					copyLabel="cURL command"
-				>
-					{#snippet helpHtml()}
-						Downloads the rendered PNG to <code>canvas.png</code>. No auth required — public
-						endpoint.
-					{/snippet}
-				</CopyUrlRow>
-
-				<CopyUrlRow
-					id="publish-example-share"
-					label="Example share URL"
-					url={exampleShareUrl}
-					copyLabel="Example share URL"
-				/>
-			{/if}
-		</section>
+		<!--
+			The "Using this template" docs section — schema editor +
+			example URL rows — moved out of PublishModal in TASK-244.
+			Schema editing lives in ParamsPanel's Schema tab; example
+			URLs are reconstituted inside <EmbedDrawer>'s snippet
+			generator. PublishModal is now the focused "publish + share"
+			surface PLAN-232 set out to land on.
+		-->
 
 		<div class="unpublish">
 			<Button variant="secondary" loading={busy} onclick={() => togglePublished(false)}>
@@ -442,20 +235,8 @@
 	/*
 	 * The bindings table + its error/skeleton/warning/empty/hint rules
 	 * moved into <ParamSchemaEditor> in TASK-238. The .docs-section
-	 * + .docs-title wrappers stay here because the modal still owns
-	 * the "Using this template" section heading and the example-URL
-	 * <CopyUrlRow>s alongside the editor.
+	 * + .docs-title wrappers + the example-URL CopyUrlRows moved out
+	 * with the docs section itself in TASK-244. The modal's stylesheet
+	 * is now just intro chrome + the unpublish footer.
 	 */
-	.docs-section {
-		margin-top: 1.25rem;
-		padding-top: 1rem;
-		border-top: 1px solid var(--color-border);
-	}
-
-	.docs-title {
-		margin: 0 0 0.5rem;
-		font-size: 0.95rem;
-		font-weight: 600;
-		color: var(--color-text);
-	}
 </style>

@@ -136,7 +136,6 @@
 			openingPublish = false;
 			showPublishModal = false;
 			publishBindings = [];
-			publishBindingsStale = false;
 			// Close the params panel too — it has its own canvasId-keyed
 			// fetch but rendering A's stale schema rows briefly while
 			// canvas B's render races in is jarring. Codex round 1 P1.
@@ -220,10 +219,9 @@
 	 * Fabric state while the canvas was dirty, the "Using this template"
 	 * table and example URLs could describe bindings that aren't yet live. */
 	let publishBindings = $state<{ name: string; default: string; sourceLabel: string }[]>([]);
-	/** True when we opened the modal without being able to persist pending
-	 * edits. Triggers a warning in the docs section but still lets the user
-	 * reach the Unpublish button (which doesn't depend on template state). */
-	let publishBindingsStale = $state(false);
+	// `publishBindingsStale` previously gated a docs-section warning;
+	// the docs section moved out of PublishModal in TASK-244. No
+	// in-modal consumer remains — the variable is gone too.
 
 	async function openPublishModal() {
 		if (openingPublish) return;
@@ -276,7 +274,10 @@
 				}
 			}
 			if (isStale()) return;
-			publishBindingsStale = !persistOk || editorState.isDirty;
+			// (`publishBindingsStale` retired in TASK-244 — `persistOk` is
+			// now only useful for the toast/no-toast branch below if we
+			// want to add it back later; left implicit for now.)
+			void persistOk;
 			publishBindings = collectBoundParams().map((b) => ({
 				name: b.name,
 				default: b.default,
@@ -1721,8 +1722,6 @@
 		slug={canvasSlug}
 		published={isPublished}
 		bindings={publishBindings}
-		liveValues={testParams}
-		bindingsStale={publishBindingsStale}
 		onClose={() => (showPublishModal = false)}
 		onPublishedChange={(next) => (isPublished = next)}
 		onSlugChange={(next) => (canvasSlug = next)}
