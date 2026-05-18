@@ -1752,6 +1752,7 @@
 		bindings={drawerBindings}
 		liveValues={testParams}
 		onClose={() => (showEmbedDrawer = false)}
+		onPublish={openPublishModal}
 	/>
 
 	<ShortcutsCheatsheetModal open={showCheatsheet} onClose={() => (showCheatsheet = false)} />
