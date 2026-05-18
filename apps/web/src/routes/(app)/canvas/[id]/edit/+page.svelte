@@ -1148,6 +1148,23 @@
 	}
 
 	let boundParams = $state<BoundParamInfo[]>([]);
+
+	/** Live, reactive snapshot of bound params in the shape <EmbedDrawer>
+	 *  / <EmbedSnippets> expects. Recomputes on every editor mutation
+	 *  (read of `editorState.editGeneration`) so the snippet text in the
+	 *  drawer tracks param renames / default edits without needing the
+	 *  user to close-reopen. PLAN-232 Phase B / TASK-240. The
+	 *  publish-modal-side `publishBindings` snapshot stays separate
+	 *  because that one's captured at publish-modal-open time and
+	 *  intentionally doesn't move while the modal is open. */
+	let drawerBindings = $derived.by(() => {
+		void editorState.editGeneration;
+		return collectBoundParams().map((b) => ({
+			name: b.name,
+			default: b.default,
+			sourceLabel: b.sampleLabel
+		}));
+	});
 	/** User-typed test values, keyed by param name. Starts empty (so the default
 	 * is applied) and the user types to override. Separate from boundParams so
 	 * edits survive re-discovery of bindings. */
@@ -1727,7 +1744,15 @@
 		onClose={() => (showParamsPanel = false)}
 	/>
 
-	<EmbedDrawer open={showEmbedDrawer} onClose={() => (showEmbedDrawer = false)} />
+	<EmbedDrawer
+		open={showEmbedDrawer}
+		canvasId={data.canvas.id}
+		slug={canvasSlug}
+		published={isPublished}
+		bindings={drawerBindings}
+		liveValues={testParams}
+		onClose={() => (showEmbedDrawer = false)}
+	/>
 
 	<ShortcutsCheatsheetModal open={showCheatsheet} onClose={() => (showCheatsheet = false)} />
 

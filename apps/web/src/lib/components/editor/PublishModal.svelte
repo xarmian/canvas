@@ -2,12 +2,11 @@
 	import { Modal, Button } from '$lib/components/ui';
 	import { toast } from '$lib/stores/toast.svelte';
 	import CopyUrlRow from './publish/CopyUrlRow.svelte';
-	import EmbedSnippets from './publish/EmbedSnippets.svelte';
 	import ParamSchemaEditor from './publish/ParamSchemaEditor.svelte';
 	import SharingFields from './publish/SharingFields.svelte';
 	import SlugEditor from './publish/SlugEditor.svelte';
 	import SocialValidator from './publish/SocialValidator.svelte';
-	import { buildQueryString, curlFor, type ParamSchema, type ParamType } from '$lib/embed/snippets';
+	import { buildQueryString, curlFor } from '$lib/embed/snippets';
 
 	export interface PublishModalBinding {
 		/** Parameter name as it appears in the URL. */
@@ -117,40 +116,23 @@
 		if (open && published && !paramRowsLoaded && !paramRowsPending) {
 			void loadParamSchema();
 		}
-		if (open && published && versionToken === null) {
-			void loadVersionToken();
-		}
 		if (!open) {
-			// Reset paramRows + versionToken so reopening for a
-			// different canvas refetches. Sharing + slug state lives
-			// in their own components and resets itself when `open`
-			// flips. ParamRows extracts in TASK-238.
+			// Reset paramRows so reopening for a different canvas
+			// refetches. Sharing + slug state lives in their own
+			// components and resets itself when `open` flips.
 			paramRowsLoaded = false;
 			paramRowsError = false;
 			paramRows = [];
 			paramRowsGen++;
 			paramRowsPending = false;
-			versionToken = null;
 		}
 	});
 
-	/** `_v` token from /api/canvas/[id]/version — when present, embed
-	 *  snippets emit immutable-cache URLs. Loads asynchronously; before it
-	 *  arrives the snippets fall back to bare URLs (still correct, just
-	 *  short-cache). */
-	let versionToken = $state<string | null>(null);
-	async function loadVersionToken(): Promise<void> {
-		try {
-			const res = await fetch(`/api/canvas/${canvasId}/version`);
-			if (!res.ok) return;
-			const data = (await res.json()) as { token: string };
-			versionToken = data.token;
-		} catch {
-			// Best-effort — falling back to short-cache URLs is fine.
-		}
-	}
-
-	// Embed-snippet tab state moved to <EmbedSnippets> in TASK-236.
+	// versionToken + loadVersionToken + the EmbedSnippets mount + the
+	// paramSchemas derived all moved out with <EmbedSnippets> when it
+	// relocated to <EmbedDrawer> (TASK-240). The drawer owns its own
+	// versionToken + paramRows fetches keyed on its open state — until
+	// TASK-245 deduplicates the two GETs.
 
 	async function loadParamSchema(): Promise<void> {
 		paramRowsError = false;
@@ -283,23 +265,14 @@
 	/** Input bundle passed to every snippet generator in
 	 * `$lib/embed/snippets`. Re-deriving this keeps the per-snippet
 	 * deriveds below trivial. */
-	/** Recognised `canvas_params.type` vocabulary, mirroring the
-	 * narrow union in `$lib/embed/snippets`. Unknown values from the
-	 * API fall back to `text` so the typed-TS snippet stays
-	 * runnable rather than emitting `: unknown` for a field whose
-	 * type the modal happens not to know about (TASK-211). */
-	const KNOWN_PARAM_TYPES: readonly ParamType[] = ['text', 'number', 'boolean', 'url', 'date'];
-	function toParamType(raw: string): ParamType {
-		return (KNOWN_PARAM_TYPES as readonly string[]).includes(raw) ? (raw as ParamType) : 'text';
-	}
-	let paramSchemas = $derived<ParamSchema[]>(
-		paramRows.map((r) => ({ name: r.name, type: toParamType(r.type) }))
-	);
+	// `paramSchemas` derivation moved to <EmbedDrawer> with <EmbedSnippets>
+	// in TASK-240. The modal no longer needs typed-TS schema info because
+	// the embed snippet generator no longer lives here.
 
 	// Snippet generation + tablist + EMBED_TABS + onTabKeydown moved
-	// into <EmbedSnippets> in TASK-236. The parent still computes
-	// `paramSchemas` from `paramRows` (until TASK-238 hoists paramRows
-	// to editor state) and passes it down as a prop.
+	// into <EmbedSnippets> in TASK-236; <EmbedSnippets> itself then
+	// relocated to <EmbedDrawer> in TASK-240. PublishModal no longer
+	// hosts any embed-snippet code.
 
 	async function togglePublished(next: boolean) {
 		if (busy) return;
@@ -372,8 +345,6 @@
 		</CopyUrlRow>
 
 		<SharingFields {canvasId} {open} {published} {bindings} />
-
-		<EmbedSnippets {slug} {bindings} {liveValues} {paramSchemas} {versionToken} />
 
 		<SocialValidator {shareUrl} />
 

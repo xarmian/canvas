@@ -4,7 +4,7 @@
  * writes a valid <img> tag for HTML / Markdown / OG meta.
  */
 import { test, expect } from '@playwright/test';
-import { signupAndLogin, createCanvas, publish } from './helpers';
+import { signupAndLogin, createCanvas, publish, openEmbedDrawer } from './helpers';
 
 test.describe('Publish embed modal', () => {
 	test('embed snippets cover html/markdown/og/url/curl with copyable values', async ({
@@ -17,8 +17,11 @@ test.describe('Publish embed modal', () => {
 		await signupAndLogin(page);
 		const canvas = await createCanvas(page);
 		const { imageUrl } = await publish(page);
+		// Embed snippets moved out of PublishModal and into the "Get
+		// the code" drawer in PLAN-232 Phase B / TASK-240.
+		await openEmbedDrawer(page);
 
-		// Embed section is visible alongside the existing Share + Image URL fields.
+		// Embed section is visible inside the drawer.
 		const embedSection = page.getByTestId('embed-section');
 		await expect(embedSection).toBeVisible();
 

@@ -25,10 +25,17 @@
  *      the clipboard.
  */
 import { test, expect } from '@playwright/test';
-import { signupAndLogin, createCanvas, addTextLayer, bindParam, publish } from './helpers';
+import {
+	signupAndLogin,
+	createCanvas,
+	addTextLayer,
+	bindParam,
+	publish,
+	openEmbedDrawer
+} from './helpers';
 
 /** Every embed tab in declaration order. Mirrors `EMBED_TABS` in
- * PublishModal.svelte — kept in sync by hand because the e2e suite
+ * EmbedSnippets.svelte — kept in sync by hand because the e2e suite
  * doesn't import production code. */
 const ALL_TABS = ['html', 'markdown', 'og', 'url', 'curl', 'typescript', 'python'] as const;
 
@@ -53,24 +60,30 @@ test.describe('Embed tabs — TypeScript + Python', () => {
 
 		await publish(page);
 
-		const snippet = page.getByTestId('embed-snippet');
-		await expect(page.getByTestId('embed-section')).toBeVisible();
-
-		// The per-param type editor is disabled until paramRows finish
-		// loading from `GET /api/canvas/[id]/params` — wait for that, then
-		// flip `count` to `number`. Without this the change is silently
-		// dropped (the select is disabled) and the typed-TS snippet falls
-		// back to all-strings, which would mask the wiring under test.
+		// The per-param type editor lives in the publish modal's
+		// docs-section (ParamSchemaEditor) — flip `count` to `number`
+		// here so the typed-TS snippet has something interesting to
+		// declare. The modal is still open after publish().
 		//
-		// Scoping the lookup to the dialog is necessary because the
-		// ParamsPanel (rendered behind the modal in the editor) has the
-		// same `aria-label="Type for {name}"` schema editor — without the
-		// scope `getByLabel` resolves to two elements and fails strict
-		// mode.
+		// Scoping the lookup to the dialog is necessary because
+		// ParamsPanel has the same `aria-label="Type for {name}"`
+		// schema editor — without the scope `getByLabel` resolves to
+		// two elements and fails strict mode.
 		const dialog = page.getByRole('dialog');
 		const countTypeSelect = dialog.getByLabel('Type for count');
 		await expect(countTypeSelect).toBeEnabled({ timeout: 5_000 });
 		await countTypeSelect.selectOption('number');
+
+		// Close the modal then open the embed drawer. Embed snippets
+		// live in the drawer now (PLAN-232 Phase B / TASK-240); the
+		// drawer fetches its own paramRows on open so it picks up the
+		// type flip we just persisted. Until TASK-245 deduplicates the
+		// two fetches, opening the drawer AFTER the modal-side schema
+		// edit is the simplest deterministic order.
+		await page.getByRole('button', { name: 'Close' }).click();
+		await openEmbedDrawer(page);
+
+		const snippet = page.getByTestId('embed-snippet');
 
 		// Enable "Include example values" BEFORE the per-tab walk —
 		// otherwise the TS/Python snippets render their bare-fetch /
@@ -136,31 +149,31 @@ test.describe('Embed tabs — TypeScript + Python', () => {
 		// where the sub-toggle stops switching).
 		expect(tsTypedValue).not.toContain('Record<string, string>');
 
-		// --- Live-values flow through reopen (TASK-207 data path) ----
+		// --- Live-values flow live, no reopen needed (TASK-207 data
+		// path, exercised in the drawer model) ----
 		//
-		// Close the modal, open the Preview panel, edit `title`'s test
-		// value, then reopen the modal and assert the typed-TS snippet
-		// picked up the new value. The live-reactivity contract is
-		// strictly stronger (no reopen needed) but reopen is what the
-		// task spec asks for and is easier to drive from Playwright —
-		// the modal and the preview panel both compete for screen
-		// space in the test viewport.
-		await page.getByRole('button', { name: 'Close' }).click();
+		// The drawer stays open while the user edits `title`'s test
+		// value. The drawer's snippet text receives the new value
+		// reactively through its `liveValues` prop (testParams flows
+		// from editor-page state → drawer → EmbedSnippets →
+		// resolveExampleValue). No drawer reopen required.
+		// PLAN-232 Phase B / TASK-240. TASK-241 has fuller coverage of
+		// the live-update loop.
+		//
+		// The drawer overlays the right edge of the toolbar, including
+		// the Preview button, so we close the drawer briefly to reach
+		// Preview, edit the testParam, then reopen the drawer. The
+		// drawer's reactive plumbing is what TASK-241 verifies; here
+		// we only need to confirm the new value reaches the rendered
+		// snippet.
+		await page.getByTestId('embed-drawer-close').click();
 		await page.getByRole('button', { name: /^Preview$/ }).click();
 		const titleInput = page.locator('#test-param-title');
 		await expect(titleInput).toBeVisible({ timeout: 5_000 });
 		await titleInput.fill('Updated!');
-
-		// Reopen the publish modal and verify both `title`'s new value
-		// flowed through AND the TS Typed flavor is still active (sub-
-		// toggle state is component-local — modal close DOES blow it
-		// away, but the Typed flavor's schema-driven shape is what we
-		// care about; re-select before asserting to make the test
-		// deterministic across either policy).
-		await page.getByTestId('toolbar-publish').click();
-		await expect(page.getByTestId('embed-section')).toBeVisible({ timeout: 5_000 });
-		// Re-enable Include-example-values — it's component-local and
-		// gets reset when the modal closes.
+		await openEmbedDrawer(page);
+		// Include-example-values and the Typed sub-toggle reset when
+		// the drawer closes — re-arm both.
 		await page.getByRole('checkbox', { name: /Include example values/ }).check();
 		await page.getByTestId('embed-tab-typescript').click();
 		await page.getByTestId('ts-flavor-typed').click();

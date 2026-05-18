@@ -6,7 +6,14 @@
  * "Test on social" validator buttons link to the right tool URLs.
  */
 import { test, expect } from '@playwright/test';
-import { signupAndLogin, createCanvas, gotoEditor, addTextLayer, publish } from './helpers';
+import {
+	signupAndLogin,
+	createCanvas,
+	gotoEditor,
+	addTextLayer,
+	publish,
+	openEmbedDrawer
+} from './helpers';
 
 function metaContent(html: string, property: string): string | null {
 	const re = new RegExp(
@@ -61,6 +68,9 @@ test('PublishModal OG embed snippet includes og:url + og:image:type', async ({ p
 	await gotoEditor(page, canvas.id);
 	await addTextLayer(page, 'placeholder');
 	await publish(page);
+	// Embed snippets moved out of PublishModal and into the "Get the
+	// code" drawer in PLAN-232 Phase B / TASK-240.
+	await openEmbedDrawer(page);
 
 	// Switch to the OG meta tab. The snippet lives in a textarea, so
 	// the asserted content is the input value, not the rendered text.
@@ -82,6 +92,7 @@ test('OG embed snippet og:url tracks the og:image params toggle (Codex round 1)'
 	await addTextLayer(page, 'placeholder');
 	await bindParam(page, 'Text Content', 'title', 'Hello');
 	await publish(page);
+	await openEmbedDrawer(page);
 
 	await page.getByTestId('embed-tab-og').click();
 	const snippet = page.getByTestId('embed-snippet');

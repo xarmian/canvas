@@ -338,6 +338,27 @@ export async function publish(page: Page): Promise<{ shareUrl: string; imageUrl:
 }
 
 /**
+ * Open the "Get the code" embed drawer (PLAN-232 Phase B / TASK-240).
+ * The embed snippet tablist + textarea live in this non-blocking
+ * right-side drawer, not in the publish modal. Tests that assert
+ * against `embed-section` / `embed-tab-*` / `embed-snippet` need this
+ * helper after publish() rather than relying on the publish modal to
+ * host those testids.
+ */
+export async function openEmbedDrawer(page: Page): Promise<void> {
+	// If the publish modal is open, close it first. Modal uses
+	// `dialog.showModal()` which inerts the rest of the page — the
+	// toolbar Embed button is covered while the modal is up.
+	const openDialog = page.locator('dialog.modal[open]');
+	if ((await openDialog.count()) > 0) {
+		await page.getByRole('button', { name: 'Close' }).first().click();
+		await expect(openDialog).toHaveCount(0, { timeout: 5_000 });
+	}
+	await page.getByTestId('toolbar-embed').click();
+	await expect(page.getByTestId('embed-section')).toBeVisible({ timeout: 5_000 });
+}
+
+/**
  * Read the share URL from an already-open Publish modal. Distinct from
  * publish() so tests can assert against the URL repeatedly without
  * re-issuing the publish action.
