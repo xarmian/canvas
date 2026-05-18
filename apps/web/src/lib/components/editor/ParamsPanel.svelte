@@ -354,6 +354,53 @@
 	function findRow(name: string): SchemaRow | undefined {
 		return schemaRows.find((r) => r.name === name);
 	}
+
+	/** Two-mode panel (PLAN-232 Phase C / TASK-243).
+	 *
+	 *  - `test`: the current behavior — defaults are editable, plus
+	 *    Type/Required cells inline for power-users who don't want to
+	 *    flip modes. This is the entry-point mode so existing flows
+	 *    keep working.
+	 *  - `schema`: dedicated home for the schema editor. TASK-244 mounts
+	 *    <ParamSchemaEditor> here and removes the duplicate from
+	 *    PublishModal.
+	 *
+	 *  The mode is component-local — closing and reopening resets to
+	 *  'test'. Persistence would be nice but isn't worth the
+	 *  cross-session-restore complexity for a v1 segmented control.
+	 */
+	type ParamsPanelMode = 'test' | 'schema';
+	let mode = $state<ParamsPanelMode>('test');
+
+	/** ARIA tablist keyboard nav. Standard WAI pattern: arrow keys
+	 *  cycle (with wrap), Home/End jump to ends. Mirrors the embed
+	 *  drawer's onTabKeydown so the two surfaces feel identical. */
+	const MODES: { id: ParamsPanelMode; label: string }[] = [
+		{ id: 'test', label: 'Test values' },
+		{ id: 'schema', label: 'Schema' }
+	];
+
+	function onModeKeydown(event: KeyboardEvent, currentId: ParamsPanelMode) {
+		const idx = MODES.findIndex((m) => m.id === currentId);
+		if (idx === -1) return;
+		let nextIdx: number | null = null;
+		if (event.key === 'ArrowLeft') nextIdx = (idx - 1 + MODES.length) % MODES.length;
+		else if (event.key === 'ArrowRight') nextIdx = (idx + 1) % MODES.length;
+		else if (event.key === 'Home') nextIdx = 0;
+		else if (event.key === 'End') nextIdx = MODES.length - 1;
+		if (nextIdx === null) return;
+		event.preventDefault();
+		const nextMode = MODES[nextIdx];
+		mode = nextMode.id;
+		queueMicrotask(() => {
+			const root = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+			const tablist = root?.closest('[role="tablist"]');
+			const btn = tablist?.querySelector<HTMLButtonElement>(
+				`[data-testid="params-mode-${nextMode.id}"]`
+			);
+			btn?.focus();
+		});
+	}
 </script>
 
 <Modal {open} {onClose} title="Dynamic values" width="48rem">
@@ -370,115 +417,158 @@
 		{/if}
 	</div>
 
-	{#if published && schemaError}
-		<!--
+	<!--
+		Test / Schema mode toggle (PLAN-232 Phase C / TASK-243). Drives
+		a tabpanel split so the "what does this canvas accept" surface
+		hosts both the test-driving controls (Test values) and the
+		dedicated schema editor (Schema, populated in TASK-244).
+	-->
+	<div
+		class="params-modes"
+		role="tablist"
+		aria-label="Params panel mode"
+		aria-orientation="horizontal"
+	>
+		{#each MODES as m (m.id)}
+			<button
+				type="button"
+				role="tab"
+				class="params-mode"
+				class:active={mode === m.id}
+				aria-selected={mode === m.id}
+				aria-controls="params-mode-panel"
+				tabindex={mode === m.id ? 0 : -1}
+				data-testid="params-mode-{m.id}"
+				onclick={() => (mode = m.id)}
+				onkeydown={(e) => onModeKeydown(e, m.id)}
+			>
+				{m.label}
+			</button>
+		{/each}
+	</div>
+
+	<div id="params-mode-panel" role="tabpanel" data-testid="params-mode-panel-{mode}">
+		{#if mode === 'test'}
+			{#if published && schemaError}
+				<!--
 			Server-side schema fetch failed (5xx, network error, etc.).
 			ErrorState keeps the user in the modal with a retry instead
 			of silently leaving the type/required cells disabled.
 			Derived params from the live canvas are still shown below.
 		-->
-		<div class="params-error" data-testid="params-schema-error">
-			<ErrorState
-				title="Couldn't load saved type / required"
-				message="The saved settings for this canvas didn't load. The dynamic values below still work, but Type and Required can't be edited until they reach the editor."
-				onRetry={retryLoadSchema}
-			/>
-		</div>
-	{:else if published && !schemaLoaded}
-		<!--
+				<div class="params-error" data-testid="params-schema-error">
+					<ErrorState
+						title="Couldn't load saved type / required"
+						message="The saved settings for this canvas didn't load. The dynamic values below still work, but Type and Required can't be edited until they reach the editor."
+						onRetry={retryLoadSchema}
+					/>
+				</div>
+			{:else if published && !schemaLoaded}
+				<!--
 			Loading skeleton matches the params-row grid layout so the
 			table chrome doesn't shift when real rows render.
 		-->
-		<div class="params-skeleton" data-testid="params-skeleton" aria-label="Loading parameters">
-			<LoadingSkeleton lines={3} />
-		</div>
-	{/if}
-
-	{#if derivedParams.length === 0}
-		<div class="params-empty" data-testid="params-empty">
-			<EmptyState
-				icon={Sliders}
-				title="No dynamic values yet"
-				description="Make a property dynamic from the property panel — each dynamic property becomes a URL value the viewer can override via the share URL."
-			/>
-		</div>
-	{:else}
-		<div class="params-table" role="table" aria-label="What this canvas accepts">
-			<div class="params-row params-row-header" role="row">
-				<span role="columnheader">Name</span>
-				<span role="columnheader">Type</span>
-				<span role="columnheader">Default</span>
-				<span role="columnheader">Required</span>
-				<span role="columnheader">Sources</span>
-			</div>
-			{#each derivedParams as p (p.name)}
-				{@const row = findRow(p.name)}
-				<div class="params-row" role="row" data-testid="params-row-{p.name}">
-					<div class="params-cell params-cell-name" role="cell">
-						<code>{p.name}</code>
-						{#if p.formatter}
-							<span class="params-formatter" title="Formatted before rendering">
-								{p.formatter}
-							</span>
-						{/if}
-					</div>
-
-					<div class="params-cell" role="cell">
-						<select
-							class="params-input"
-							value={row?.type ?? 'text'}
-							disabled={!published || !row}
-							aria-label="Type for {p.name}"
-							onchange={(e) => persistFlag(p.name, { type: e.currentTarget.value })}
-						>
-							<option value="text">text</option>
-							<option value="number">number</option>
-							<option value="url">url</option>
-							<option value="boolean">boolean</option>
-							<option value="date">date</option>
-						</select>
-					</div>
-
-					<div class="params-cell" role="cell">
-						<input
-							class="params-input"
-							type="text"
-							value={p.default}
-							placeholder="(empty)"
-							aria-label="Default for {p.name}"
-							oninput={(e) => updateDefault(p.name, e.currentTarget.value)}
-						/>
-					</div>
-
-					<div class="params-cell params-cell-checkbox" role="cell">
-						<input
-							type="checkbox"
-							checked={row?.required ?? false}
-							disabled={!published || !row}
-							aria-label="Required {p.name}"
-							onchange={(e) => persistFlag(p.name, { required: e.currentTarget.checked })}
-						/>
-					</div>
-
-					<div class="params-cell params-cell-sources" role="cell">
-						{#if p.sources.length === 0}
-							<span class="params-sources-empty">none</span>
-						{:else}
-							<ul class="params-sources">
-								{#each p.sources as s, i (i)}
-									<li>
-										<span class="params-source-layer">{s.layerLabel}</span>
-										<span class="params-source-arrow" aria-hidden="true">·</span>
-										<span class="params-source-prop">{labelForProperty(s.property)}</span>
-									</li>
-								{/each}
-							</ul>
-						{/if}
-					</div>
+				<div class="params-skeleton" data-testid="params-skeleton" aria-label="Loading parameters">
+					<LoadingSkeleton lines={3} />
 				</div>
-			{/each}
-		</div>
-	{/if}
+			{/if}
+
+			{#if derivedParams.length === 0}
+				<div class="params-empty" data-testid="params-empty">
+					<EmptyState
+						icon={Sliders}
+						title="No dynamic values yet"
+						description="Make a property dynamic from the property panel — each dynamic property becomes a URL value the viewer can override via the share URL."
+					/>
+				</div>
+			{:else}
+				<div class="params-table" role="table" aria-label="What this canvas accepts">
+					<div class="params-row params-row-header" role="row">
+						<span role="columnheader">Name</span>
+						<span role="columnheader">Type</span>
+						<span role="columnheader">Default</span>
+						<span role="columnheader">Required</span>
+						<span role="columnheader">Sources</span>
+					</div>
+					{#each derivedParams as p (p.name)}
+						{@const row = findRow(p.name)}
+						<div class="params-row" role="row" data-testid="params-row-{p.name}">
+							<div class="params-cell params-cell-name" role="cell">
+								<code>{p.name}</code>
+								{#if p.formatter}
+									<span class="params-formatter" title="Formatted before rendering">
+										{p.formatter}
+									</span>
+								{/if}
+							</div>
+
+							<div class="params-cell" role="cell">
+								<select
+									class="params-input"
+									value={row?.type ?? 'text'}
+									disabled={!published || !row}
+									aria-label="Type for {p.name}"
+									onchange={(e) => persistFlag(p.name, { type: e.currentTarget.value })}
+								>
+									<option value="text">text</option>
+									<option value="number">number</option>
+									<option value="url">url</option>
+									<option value="boolean">boolean</option>
+									<option value="date">date</option>
+								</select>
+							</div>
+
+							<div class="params-cell" role="cell">
+								<input
+									class="params-input"
+									type="text"
+									value={p.default}
+									placeholder="(empty)"
+									aria-label="Default for {p.name}"
+									oninput={(e) => updateDefault(p.name, e.currentTarget.value)}
+								/>
+							</div>
+
+							<div class="params-cell params-cell-checkbox" role="cell">
+								<input
+									type="checkbox"
+									checked={row?.required ?? false}
+									disabled={!published || !row}
+									aria-label="Required {p.name}"
+									onchange={(e) => persistFlag(p.name, { required: e.currentTarget.checked })}
+								/>
+							</div>
+
+							<div class="params-cell params-cell-sources" role="cell">
+								{#if p.sources.length === 0}
+									<span class="params-sources-empty">none</span>
+								{:else}
+									<ul class="params-sources">
+										{#each p.sources as s, i (i)}
+											<li>
+												<span class="params-source-layer">{s.layerLabel}</span>
+												<span class="params-source-arrow" aria-hidden="true">·</span>
+												<span class="params-source-prop">{labelForProperty(s.property)}</span>
+											</li>
+										{/each}
+									</ul>
+								{/if}
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		{:else}
+			<!--
+			Schema mode placeholder (TASK-243). TASK-244 mounts
+			<ParamSchemaEditor> here and the duplicate type+required
+			cells in Test mode become candidates for removal.
+		-->
+			<p class="params-schema-placeholder" data-testid="params-schema-placeholder">
+				Schema editor (type + required) lands here in the next task.
+			</p>
+		{/if}
+	</div>
 </Modal>
 
 <style>
@@ -499,6 +589,49 @@
 		border: 1px solid var(--color-warning-border);
 		border-radius: 4px;
 		color: var(--color-warning-text);
+		font-size: 0.8125rem;
+	}
+
+	/* Test / Schema mode toggle (TASK-243). Visual treatment matches
+	   the embed drawer's tablist so the two surfaces feel identical. */
+	.params-modes {
+		display: flex;
+		gap: 0.25rem;
+		flex-wrap: wrap;
+		margin: 0 0 1rem;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.params-mode {
+		padding: 0.4rem 0.75rem;
+		background: none;
+		border: none;
+		border-bottom: 2px solid transparent;
+		color: var(--color-text-subtle);
+		font: inherit;
+		font-size: 0.85rem;
+		cursor: pointer;
+	}
+
+	.params-mode:hover {
+		color: var(--color-text);
+	}
+
+	.params-mode.active {
+		color: var(--color-text);
+		border-bottom-color: var(--color-text);
+		font-weight: 600;
+	}
+
+	.params-mode:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
+	}
+
+	.params-schema-placeholder {
+		padding: 1.5rem 0;
+		text-align: center;
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 	}
 
