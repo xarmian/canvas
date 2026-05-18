@@ -141,6 +141,14 @@
 	}
 
 	async function loadVersionToken(): Promise<void> {
+		// Flip attempted=true SYNCHRONOUSLY before any await. Without
+		// this, the $effect re-fires when loadParamSchema's
+		// `paramRowsPending = true` write triggers a reactive tick,
+		// `versionTokenAttempted` is still false at that point, and
+		// a second concurrent `/version` request kicks off — its
+		// late completion can mark a still-in-flight successful
+		// first request as stale (Codex round 2 P3 of TASK-240).
+		versionTokenAttempted = true;
 		// Snapshot canvasId + bump-and-capture the generation. A late
 		// completion whose canvasId or gen no longer matches drops its
 		// `versionToken` write so a previous canvas's `_v` can't bleed
@@ -157,14 +165,6 @@
 			versionToken = data.token;
 		} catch {
 			// Best-effort — falling back to short-cache URLs is fine.
-		} finally {
-			// Mark attempted so the $effect doesn't re-enter on the
-			// next reactive read of versionTokenAttempted. The reset
-			// in the close-effect bumps versionTokenGen too, so any
-			// late completion from this attempt drops cleanly.
-			if (!isStale()) {
-				versionTokenAttempted = true;
-			}
 		}
 	}
 
