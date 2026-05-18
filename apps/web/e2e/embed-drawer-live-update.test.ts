@@ -111,11 +111,17 @@ test.describe('Embed drawer — live-update loop', () => {
 
 		// Walk through several tabs and back — the textarea should
 		// always have non-empty content (i.e. no flash-of-empty
-		// during the switch — would imply a remount/re-fetch).
+		// during the switch — would imply a remount/re-fetch). Read
+		// inputValue() synchronously after each click rather than
+		// awaiting an auto-retrying matcher; a flash-of-empty
+		// satisfies `expect(...).not.toHaveValue('')` once the value
+		// re-fills, so the assertion has to capture the value at the
+		// moment we'd see the flash. (Codex round 1 P3 on TASK-241.)
 		const snippet = page.getByTestId('embed-snippet');
 		for (const tab of ['html', 'markdown', 'og', 'url', 'curl', 'typescript', 'python'] as const) {
 			await page.getByTestId(`embed-tab-${tab}`).click();
-			await expect(snippet).not.toHaveValue('');
+			const value = await snippet.inputValue();
+			expect(value, `embed-tab-${tab} textarea was empty after click`).not.toBe('');
 		}
 
 		// Back on TS: include-values checkbox still on, sub-toggle
