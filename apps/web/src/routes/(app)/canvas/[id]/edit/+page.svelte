@@ -83,6 +83,20 @@
 			// Resync publish state for the newly loaded canvas.
 			isPublished = data.canvas.published;
 			canvasSlug = data.canvas.slug;
+			// Drop the previous canvas's paramRows so consumers don't
+			// render stale Schema rows / typed-TS keys for the new
+			// canvas. If the new canvas is published, the page-level
+			// $effect will refetch; if unpublished, the array stays
+			// empty (matching the "no schema until publish" UX). Bump
+			// the generation so any in-flight load from the previous
+			// canvas drops its writes when it completes. Codex round 1
+			// P2 of TASK-245.
+			paramRows = [];
+			paramRowsLoaded = false;
+			paramRowsError = false;
+			paramRowsCanvasId = null;
+			paramRowsGen++;
+			paramRowsPending = false;
 			// Resync dimensions + background for the new canvas.
 			canvasWidth = data.canvas.width;
 			canvasHeight = data.canvas.height;
@@ -830,6 +844,20 @@
 				markClean();
 			}
 			handleSaveSuccess();
+			// Invalidate the page-level paramRows cache. The server re-runs
+			// syncCanvasParams on every templateJson PATCH, so a save can
+			// have ADDED, REMOVED, or RENAMED canvas_params rows behind the
+			// scenes — leaving the cache untouched would leave ParamsPanel's
+			// Schema tab showing stale rows and EmbedDrawer emitting typed
+			// snippets for params that no longer exist. Bumping the
+			// generation drops any in-flight load from this canvas, then
+			// the page-level $effect kicks off a fresh fetch (if the
+			// canvas is published). Codex round 1 P1 of TASK-245.
+			if (isPublished) {
+				paramRowsLoaded = false;
+				paramRowsGen++;
+				paramRowsPending = false;
+			}
 			return true;
 		} catch {
 			if (isStale()) return false;
