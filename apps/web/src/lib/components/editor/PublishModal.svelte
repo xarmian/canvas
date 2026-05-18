@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { Modal, Button, Input, ErrorState, LoadingSkeleton } from '$lib/components/ui';
+	import { Modal, Button } from '$lib/components/ui';
 	import { toast } from '$lib/stores/toast.svelte';
-	import { copyToClipboard } from '$lib/share-clipboard';
 	import CopyUrlRow from './publish/CopyUrlRow.svelte';
 	import EmbedSnippets from './publish/EmbedSnippets.svelte';
+	import ParamSchemaEditor from './publish/ParamSchemaEditor.svelte';
 	import SharingFields from './publish/SharingFields.svelte';
 	import SlugEditor from './publish/SlugEditor.svelte';
 	import SocialValidator from './publish/SocialValidator.svelte';
@@ -333,13 +333,6 @@
 			busy = false;
 		}
 	}
-
-	async function copy(value: string, label: string) {
-		// Delegates to the canonical helper so clipboard logic, fallback
-		// path, and toast wording stay consistent across the editor
-		// toolbar, this modal, and the dashboard card menu (TASK-132).
-		await copyToClipboard(value, { success: `${label} copied to clipboard` });
-	}
 </script>
 
 <Modal
@@ -387,145 +380,42 @@
 		<section class="docs-section">
 			<h3 class="docs-title">Using this template</h3>
 
-			{#if bindingsStale}
-				<p class="docs-warning">
-					⚠️ This canvas has unsaved edits. The dynamic values below may not yet be live on the
-					public URL. Save the canvas, then reopen this dialog for the authoritative docs.
-				</p>
-			{/if}
+			<ParamSchemaEditor
+				{bindings}
+				{paramRows}
+				{paramRowsLoaded}
+				{paramRowsError}
+				{bindingsStale}
+				onPersist={persistParamFlags}
+				onRetry={retryLoadParamSchema}
+			/>
 
-			{#if paramRowsError}
-				<!--
-					GET /api/canvas/[id]/params failed. The bindings table
-					still renders below (those come from the in-memory
-					Fabric canvas), but Type / Required cells stay
-					disabled until the schema reaches the editor — so
-					surface the error inline with retry instead of
-					silently leaving them stuck. (TASK-136)
-				-->
-				<div class="docs-error" data-testid="docs-schema-error">
-					<ErrorState
-						title="Couldn't load Type / Required"
-						message="The saved type/required settings didn't reach the editor. The dynamic values still show below; Type and Required can't be edited until they load."
-						onRetry={retryLoadParamSchema}
-					/>
-				</div>
-			{:else if bindings.length > 0 && !paramRowsLoaded}
-				<!--
-					Skeleton fills the table area so it doesn't look
-					broken while the GET is in flight.
-				-->
-				<div
-					class="docs-skeleton"
-					data-testid="docs-skeleton"
-					aria-label="Loading saved type and required"
+			{#if bindings.length > 0}
+				<CopyUrlRow
+					id="publish-example-image"
+					label="Example image URL"
+					url={exampleImageUrl}
+					copyLabel="Example URL"
+				/>
+
+				<CopyUrlRow
+					id="publish-curl"
+					label="Copy as cURL"
+					url={curlFor(exampleImageUrl)}
+					copyLabel="cURL command"
 				>
-					<LoadingSkeleton lines={3} />
-				</div>
-			{/if}
-
-			{#if bindings.length === 0}
-				<p class="docs-empty">
-					This canvas has no dynamic values yet. Make properties dynamic in the editor (⚡ Dynamic
-					values in the property panel) to make the shared URL change based on query string values.
-				</p>
-			{:else}
-				<p class="docs-hint">
-					This canvas accepts {bindings.length}
-					{bindings.length === 1 ? 'dynamic value' : 'dynamic values'}. Omit any to use its default
-					value.
-				</p>
-
-				<div class="docs-table">
-					<div class="docs-row docs-row-header">
-						<span>Name</span>
-						<span>Default</span>
-						<span>Type</span>
-						<span>Required</span>
-					</div>
-					{#each bindings as b (b.name)}
-						{@const row = paramRows.find((r) => r.name === b.name)}
-						<div class="docs-row">
-							<code class="docs-param-name" title={b.sourceLabel}>{b.name}</code>
-							<code class="docs-param-default">{b.default || '—'}</code>
-							<select
-								class="docs-type-select"
-								value={row?.type ?? 'text'}
-								disabled={!row}
-								aria-label="Type for {b.name}"
-								onchange={(e) => persistParamFlags(b.name, { type: e.currentTarget.value })}
-							>
-								<option value="text">text</option>
-								<option value="number">number</option>
-								<option value="url">url</option>
-								<option value="boolean">boolean</option>
-								<option value="date">date</option>
-							</select>
-							<label class="docs-required-cell">
-								<input
-									type="checkbox"
-									checked={row?.required ?? false}
-									disabled={!row}
-									aria-label="Required {b.name}"
-									onchange={(e) => persistParamFlags(b.name, { required: e.currentTarget.checked })}
-								/>
-								<span>required</span>
-							</label>
-						</div>
-					{/each}
-				</div>
-
-				<div class="field">
-					<label for="publish-example-image">Example image URL</label>
-					<div class="copy-row">
-						<Input
-							id="publish-example-image"
-							type="text"
-							readonly
-							value={exampleImageUrl}
-							class="url-input"
-						/>
-						<Button variant="copy" onclick={() => copy(exampleImageUrl, 'Example URL')}>
-							Copy
-						</Button>
-					</div>
-				</div>
-
-				<div class="field">
-					<label for="publish-curl">Copy as cURL</label>
-					<div class="copy-row">
-						<Input
-							id="publish-curl"
-							type="text"
-							readonly
-							value={curlFor(exampleImageUrl)}
-							class="url-input"
-						/>
-						<Button variant="copy" onclick={() => copy(curlFor(exampleImageUrl), 'cURL command')}>
-							Copy
-						</Button>
-					</div>
-					<p class="help">
+					{#snippet helpHtml()}
 						Downloads the rendered PNG to <code>canvas.png</code>. No auth required — public
 						endpoint.
-					</p>
-				</div>
+					{/snippet}
+				</CopyUrlRow>
 
-				<div class="field">
-					<label for="publish-example-share">Example share URL</label>
-					<div class="copy-row">
-						<Input
-							id="publish-example-share"
-							type="text"
-							readonly
-							value={exampleShareUrl}
-							class="url-input"
-						/>
-						<Button variant="copy" onclick={() => copy(exampleShareUrl, 'Example share URL')}>
-							Copy
-						</Button>
-					</div>
-				</div>
+				<CopyUrlRow
+					id="publish-example-share"
+					label="Example share URL"
+					url={exampleShareUrl}
+					copyLabel="Example share URL"
+				/>
 			{/if}
 		</section>
 
@@ -551,50 +441,14 @@
 		border-radius: 3px;
 	}
 
-	.field {
-		margin-bottom: 1rem;
-	}
-
-	.field label {
-		display: block;
-		font-size: 0.8125rem;
-		font-weight: 600;
-		color: var(--color-text);
-		margin-bottom: 0.3rem;
-	}
-
-	.copy-row {
-		display: flex;
-		gap: 0.4rem;
-		align-items: center;
-	}
-
 	/*
-	 * Read-only URL displays inside `.copy-row` use the Input primitive
-	 * but want a monospace + slightly muted treatment so the URL/cURL
-	 * value is visually distinct from a normal editable text field.
-	 * `:global` reaches through the primitive's scoped CSS — every Input
-	 * with `class="url-input"` in this modal opts into this treatment.
+	 * `.field` / `.copy-row` / `.help` / `.url-input` were used by the
+	 * slug, share-URL, image-URL, sharing-fields, and example-URL rows
+	 * that used to live here directly. Every consumer is now a
+	 * sub-component (<SlugEditor>, <CopyUrlRow>, <SharingFields>) that
+	 * scopes its own copies of those rules. The modal no longer renders
+	 * any raw form rows so these selectors moved with their consumers.
 	 */
-	.copy-row :global(.url-input) {
-		flex: 1;
-		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-		font-size: 0.8125rem;
-		background: var(--color-surface-muted);
-	}
-
-	.help {
-		margin: 0.4rem 0 0;
-		font-size: 0.75rem;
-		color: var(--color-text-subtle);
-		line-height: 1.4;
-	}
-
-	.help code {
-		background: var(--color-surface-muted);
-		padding: 0 0.25rem;
-		border-radius: 3px;
-	}
 
 	.actions {
 		display: flex;
@@ -615,23 +469,12 @@
 	 */
 
 	/*
-	 * The sharing-section + redirect-warning / redirect-preview styles
-	 * moved with <SharingFields> in TASK-237. `.docs-error` and
-	 * `.docs-skeleton` (formerly grouped with `.sharing-error` /
-	 * `.sharing-skeleton`) stay here for the params-schema section
-	 * until TASK-238 relocates it.
+	 * The bindings table + its error/skeleton/warning/empty/hint rules
+	 * moved into <ParamSchemaEditor> in TASK-238. The .docs-section
+	 * + .docs-title wrappers stay here because the modal still owns
+	 * the "Using this template" section heading and the example-URL
+	 * <CopyUrlRow>s alongside the editor.
 	 */
-	.docs-error {
-		margin: 0 0 var(--spacing-3);
-	}
-
-	.docs-skeleton {
-		margin: 0 0 var(--spacing-3);
-		display: flex;
-		flex-direction: column;
-		gap: var(--spacing-2);
-	}
-
 	.docs-section {
 		margin-top: 1.25rem;
 		padding-top: 1rem;
@@ -643,92 +486,5 @@
 		font-size: 0.95rem;
 		font-weight: 600;
 		color: var(--color-text);
-	}
-
-	.docs-hint,
-	.docs-empty {
-		margin: 0 0 0.75rem;
-		font-size: 0.8125rem;
-		color: var(--color-text-muted);
-		line-height: 1.5;
-	}
-
-	.docs-empty {
-		background: var(--color-surface-muted);
-		border: 1px dashed var(--color-border-strong);
-		border-radius: 5px;
-		padding: 0.625rem 0.75rem;
-	}
-
-	.docs-warning {
-		margin: 0 0 0.75rem;
-		padding: 0.5rem 0.75rem;
-		background: var(--color-warning-surface);
-		border: 1px solid var(--color-warning-border);
-		border-radius: 5px;
-		font-size: 0.75rem;
-		color: var(--color-warning-text);
-		line-height: 1.45;
-	}
-
-	.docs-table {
-		margin-bottom: 1rem;
-		border: 1px solid var(--color-border);
-		border-radius: 5px;
-		overflow: hidden;
-		font-size: 0.8125rem;
-	}
-
-	.docs-row {
-		display: grid;
-		grid-template-columns: 1fr 1fr 0.9fr 0.8fr;
-		gap: 0.5rem;
-		padding: 0.45rem 0.6rem;
-		border-bottom: 1px solid var(--color-surface-muted);
-		align-items: center;
-	}
-
-	.docs-type-select {
-		font-size: 0.75rem;
-		padding: 0.15rem 0.3rem;
-		border: 1px solid var(--color-border-strong);
-		border-radius: 4px;
-		background: var(--color-bg);
-	}
-
-	.docs-required-cell {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3rem;
-		font-size: 0.7rem;
-		color: var(--color-text-muted);
-	}
-
-	.docs-required-cell input[type='checkbox'] {
-		margin: 0;
-	}
-
-	.docs-row:last-child {
-		border-bottom: none;
-	}
-
-	.docs-row-header {
-		background: var(--color-surface);
-		font-size: 0.6875rem;
-		text-transform: uppercase;
-		letter-spacing: 0.5px;
-		color: var(--color-text-subtle);
-		font-weight: 600;
-	}
-
-	.docs-param-name,
-	.docs-param-default {
-		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-		font-size: 0.75rem;
-		background: var(--color-surface-muted);
-		padding: 0.1rem 0.35rem;
-		border-radius: 3px;
-		overflow-x: auto;
-		white-space: nowrap;
 	}
 </style>
