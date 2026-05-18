@@ -2,7 +2,7 @@
 	import { Code2, X } from '@lucide/svelte';
 	import EmbedSnippets from './publish/EmbedSnippets.svelte';
 	import type { PublishModalBinding } from './PublishModal.svelte';
-	import { type ParamSchema, type ParamType } from '$lib/embed/snippets';
+	import { type ParamSchema } from '$lib/embed/snippets';
 
 	/**
 	 * "Get the code" drawer — right-side slide-out surface that hosts
@@ -12,12 +12,11 @@
 	 * the snippet text update live. That live-edit loop is the core UX
 	 * payoff of PLAN-232 Phase B.
 	 *
-	 * Owns its own `paramRows` + `versionToken` fetches keyed on
-	 * `canvasId` + `open`. Independent of PublishModal's identical
-	 * fetches — TASK-245 (the Phase C "single source of truth for
-	 * paramRows" task) is what de-duplicates them at editor-page
-	 * state. Until then: one extra GET when both drawer + modal are
-	 * open simultaneously, which is uncommon and acceptable.
+	 * `paramSchemas` is now a prop fed from editor-page state (TASK-245).
+	 * The drawer used to fetch its own `paramRows` independently; that
+	 * lifecycle moved up so ParamsPanel + EmbedDrawer share one server
+	 * roundtrip. `versionToken` is still drawer-owned because it's a
+	 * separate `/version` endpoint with only one consumer.
 	 *
 	 * Dismissal:
 	 *  - Close button in the header (always visible)
@@ -38,6 +37,9 @@
 		published: boolean;
 		bindings?: PublishModalBinding[];
 		liveValues?: Record<string, string>;
+		/** Page-level derived from editor-page state. Replaces the
+		 *  drawer's own `loadParamSchema` fetch in TASK-245. */
+		paramSchemas: ParamSchema[];
 		onClose: () => void;
 		/** Optional handler invoked when the unpublished-state banner's
 		 *  Publish button is clicked. The page wires this to the same
@@ -55,34 +57,20 @@
 		published,
 		bindings = [],
 		liveValues = {},
+		paramSchemas,
 		onClose,
 		onPublish
 	}: Props = $props();
-
-	/** Param schema row as returned by GET /api/canvas/[id]/params. */
-	interface ParamRow {
-		name: string;
-		type: string;
-		required: boolean;
-	}
-	let paramRows = $state<ParamRow[]>([]);
-	let paramRowsLoaded = $state(false);
-	/** Monotonic counter — bumped at request start; a late completion
-	 *  whose generation no longer matches drops its writes. Mirrors the
-	 *  pattern PublishModal uses (Codex round 1 P2 of TASK-136). */
-	let paramRowsGen = 0;
-	/** In-flight gate so the open-effect re-running (e.g. when
-	 *  `published` flips) doesn't kick off a second concurrent GET. */
-	let paramRowsPending = $state(false);
 
 	/** `_v` token from /api/canvas/[id]/version — when present the
 	 *  snippets emit immutable-cache URLs. Loads asynchronously; before
 	 *  it arrives the snippets fall back to short-cache URLs. */
 	let versionToken = $state<string | null>(null);
 	/** Monotonic counter for version-token fetches — same stale-guard
-	 *  pattern as `paramRowsGen`. Without it, a late completion from a
-	 *  previous canvas could write a stale `_v` into the snippets for
-	 *  the new canvas. (Codex round 1 P2 of TASK-240.) */
+	 *  pattern paramRows uses at the page layer. Without it, a late
+	 *  completion from a previous canvas could write a stale `_v`
+	 *  into the snippets for the new canvas. (Codex round 1 P2 of
+	 *  TASK-240.) */
 	let versionTokenGen = 0;
 	/** Set once we've ATTEMPTED to load the version token for the
 	 *  current open session — successful OR failed. Gates the
@@ -93,60 +81,15 @@
 	let drawerEl: HTMLElement | undefined = $state();
 
 	$effect(() => {
-		if (open && published && !paramRowsLoaded && !paramRowsPending) {
-			void loadParamSchema();
-		}
 		if (open && published && !versionTokenAttempted) {
 			void loadVersionToken();
 		}
 		if (!open) {
-			// Reset so reopening for a different canvas refetches. Bump
-			// both generation counters so any in-flight load from this
-			// open is treated as stale on completion.
-			paramRowsLoaded = false;
-			paramRows = [];
-			paramRowsGen++;
-			paramRowsPending = false;
 			versionToken = null;
 			versionTokenAttempted = false;
 			versionTokenGen++;
 		}
 	});
-
-	async function loadParamSchema(): Promise<void> {
-		paramRowsPending = true;
-		const requestCanvasId = canvasId;
-		const requestGen = ++paramRowsGen;
-		const isStale = () => requestCanvasId !== canvasId || requestGen !== paramRowsGen;
-		try {
-			const res = await fetch(`/api/canvas/${canvasId}/params`);
-			if (isStale()) return;
-			if (!res.ok) {
-				// Snippets degrade gracefully when the schema hasn't
-				// loaded (typed-TS falls back to all-strings; example
-				// query still works off bindings). Mark `loaded=true`
-				// even on the failure path so the $effect doesn't
-				// re-enter and tight-loop the GET. Codex round 1 P1
-				// of TASK-240.
-				paramRowsLoaded = true;
-				return;
-			}
-			const rows = (await res.json()) as ParamRow[];
-			if (isStale()) return;
-			paramRows = rows;
-			paramRowsLoaded = true;
-		} catch {
-			// Same rationale — silent fallback, but still flip the
-			// loaded flag so we don't retry.
-			if (!isStale()) {
-				paramRowsLoaded = true;
-			}
-		} finally {
-			if (requestGen === paramRowsGen) {
-				paramRowsPending = false;
-			}
-		}
-	}
 
 	async function loadVersionToken(): Promise<void> {
 		// Flip attempted=true SYNCHRONOUSLY before any await. Without
@@ -176,16 +119,9 @@
 		}
 	}
 
-	/** Map paramRows → ParamSchema[] for the typed-TS / Python snippet
-	 *  generators. Unknown types collapse to 'text' so the snippets stay
-	 *  runnable rather than emitting `: unknown`. */
-	const KNOWN_PARAM_TYPES: readonly ParamType[] = ['text', 'number', 'boolean', 'url', 'date'];
-	function toParamType(raw: string): ParamType {
-		return (KNOWN_PARAM_TYPES as readonly string[]).includes(raw) ? (raw as ParamType) : 'text';
-	}
-	let paramSchemas = $derived<ParamSchema[]>(
-		paramRows.map((r) => ({ name: r.name, type: toParamType(r.type) }))
-	);
+	// paramSchemas derivation moved to editor-page state in TASK-245
+	// (single source of truth for paramRows). The drawer just renders
+	// whatever the page hands it.
 
 	function onKeydown(event: KeyboardEvent) {
 		if (!open) return;

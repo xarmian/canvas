@@ -26,6 +26,7 @@
 	import PublishModal from '$lib/components/editor/PublishModal.svelte';
 	import ParamsPanel from '$lib/components/editor/ParamsPanel.svelte';
 	import EmbedDrawer from '$lib/components/editor/EmbedDrawer.svelte';
+	import type { ParamSchema, ParamType } from '$lib/embed/snippets';
 	import MobileBanner from '$lib/components/editor/MobileBanner.svelte';
 	import CanvasSettingsModal, {
 		type CanvasSettingsPatch
@@ -82,6 +83,20 @@
 			// Resync publish state for the newly loaded canvas.
 			isPublished = data.canvas.published;
 			canvasSlug = data.canvas.slug;
+			// Drop the previous canvas's paramRows so consumers don't
+			// render stale Schema rows / typed-TS keys for the new
+			// canvas. If the new canvas is published, the page-level
+			// $effect will refetch; if unpublished, the array stays
+			// empty (matching the "no schema until publish" UX). Bump
+			// the generation so any in-flight load from the previous
+			// canvas drops its writes when it completes. Codex round 1
+			// P2 of TASK-245.
+			paramRows = [];
+			paramRowsLoaded = false;
+			paramRowsError = false;
+			paramRowsCanvasId = null;
+			paramRowsGen++;
+			paramRowsPending = false;
 			// Resync dimensions + background for the new canvas.
 			canvasWidth = data.canvas.width;
 			canvasHeight = data.canvas.height;
@@ -829,6 +844,24 @@
 				markClean();
 			}
 			handleSaveSuccess();
+			// Invalidate the page-level paramRows cache. The server re-runs
+			// syncCanvasParams on every templateJson PATCH, so a save can
+			// have ADDED, REMOVED, or RENAMED canvas_params rows behind the
+			// scenes — leaving the cache untouched would leave ParamsPanel's
+			// Schema tab showing stale rows and EmbedDrawer emitting typed
+			// snippets for params that no longer exist. Bumping the
+			// generation drops any in-flight load from this canvas; the
+			// page-level $effect refetches on the next reactive tick if
+			// the canvas is published, or leaves the cache empty if not.
+			//
+			// We invalidate UNCONDITIONALLY of `isPublished` — the
+			// unpublish → edit-params → onBeforePublish-saves-then-publishes
+			// flow runs save() while still unpublished but the new
+			// canvas_params rows the server wrote DO matter on the
+			// upcoming republish. (Codex round 2 P1 of TASK-245.)
+			paramRowsLoaded = false;
+			paramRowsGen++;
+			paramRowsPending = false;
 			return true;
 		} catch {
 			if (isStale()) return false;
@@ -1166,6 +1199,120 @@
 			sourceLabel: b.sampleLabel
 		}));
 	});
+
+	// --- canvas_params schema rows (single source of truth) ---
+	//
+	// PLAN-232 Phase C / TASK-245. Both ParamsPanel (Schema tab) and
+	// EmbedDrawer used to GET /api/canvas/[id]/params independently +
+	// keep their own paramRows state + stale-guard generation. After
+	// this task that lifecycle lives ONCE here at the editor-page
+	// layer and the two consumers read it as props.
+	//
+	// Why page-level (Option A from the plan):
+	//  - Bindings are editor-scoped; no other route needs them.
+	//  - PATCH-on-edit + refetch-on-canvas-swap is already how the
+	//    page handles all server-coupled state.
+	//  - A shared $lib/stores/ store (Option B) is overkill for a
+	//    single editor surface; per-consumer fetches with cache
+	//    (Option C) reproduces stale-guard plumbing N times.
+	interface ParamRow {
+		name: string;
+		type: string;
+		required: boolean;
+	}
+	let paramRows = $state<ParamRow[]>([]);
+	let paramRowsLoaded = $state(false);
+	let paramRowsError = $state(false);
+	let paramRowsPending = $state(false);
+	/** Monotonic generation token. Bumped at every load start; a stale
+	 *  completion whose captured generation no longer matches drops
+	 *  its writes silently. Same pattern ParamsPanel used to carry
+	 *  internally (Codex round 3 P2 of TASK-136). */
+	let paramRowsGen = 0;
+	/** canvasId the cached `paramRows` belong to. A page-level canvas
+	 *  swap bumps the generation + clears the rows + refetches; this
+	 *  field lets a late completion verify it landed on the right
+	 *  canvas before committing writes. */
+	let paramRowsCanvasId = $state<string | null>(null);
+
+	$effect(() => {
+		// Read both reactive dependencies so the effect re-fires when
+		// either changes.
+		const id = data.canvas.id;
+		const stale = paramRowsCanvasId !== null && paramRowsCanvasId !== id;
+		if (isPublished && (stale || (!paramRowsLoaded && !paramRowsPending))) {
+			void loadParamRows();
+		}
+	});
+
+	async function loadParamRows(): Promise<void> {
+		paramRowsPending = true;
+		paramRowsError = false;
+		const requestGen = ++paramRowsGen;
+		const requestCanvasId = data.canvas.id;
+		const isStale = () => requestGen !== paramRowsGen || requestCanvasId !== data.canvas.id;
+		try {
+			const res = await fetch(`/api/canvas/${requestCanvasId}/params`);
+			if (isStale()) return;
+			if (res.ok) {
+				const rows = (await res.json()) as ParamRow[];
+				if (isStale()) return;
+				paramRows = rows;
+				paramRowsCanvasId = requestCanvasId;
+			} else {
+				paramRowsError = true;
+			}
+		} catch {
+			if (!isStale()) {
+				paramRowsError = true;
+			}
+		} finally {
+			if (requestGen === paramRowsGen) {
+				paramRowsPending = false;
+				if (requestCanvasId === data.canvas.id) {
+					paramRowsLoaded = true;
+				}
+			}
+		}
+	}
+
+	function retryLoadParamRows(): void {
+		paramRowsLoaded = false;
+		paramRowsError = false;
+		void loadParamRows();
+	}
+
+	/** PATCH for type / required, mirroring the per-row callback both
+	 *  consumers used to wire. Optimistic in-memory update first so the
+	 *  cell feels responsive; the request is one-shot (single-row
+	 *  params array) so simultaneous edits across rows don't collide. */
+	async function persistParamFlag(name: string, patch: Partial<ParamRow>): Promise<void> {
+		paramRows = paramRows.map((r) => (r.name === name ? { ...r, ...patch } : r));
+		try {
+			const res = await fetch(`/api/canvas/${data.canvas.id}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ params: [{ name, ...patch }] })
+			});
+			if (!res.ok) {
+				toast.error(`Couldn't save params for ${name}.`);
+			}
+		} catch {
+			toast.error(`Couldn't save params for ${name}.`);
+		}
+	}
+
+	/** Recognised `canvas_params.type` vocabulary, mirroring the narrow
+	 *  union in `$lib/embed/snippets`. Unknown values from the API
+	 *  fall back to `text` so the typed-TS snippet stays runnable. */
+	const KNOWN_PARAM_TYPES: readonly ParamType[] = ['text', 'number', 'boolean', 'url', 'date'];
+	function toParamType(raw: string): ParamType {
+		return (KNOWN_PARAM_TYPES as readonly string[]).includes(raw) ? (raw as ParamType) : 'text';
+	}
+	/** Narrower projection for snippet generators — name + type only. */
+	let paramSchemas = $derived<ParamSchema[]>(
+		paramRows.map((r) => ({ name: r.name, type: toParamType(r.type) }))
+	);
 	/** User-typed test values, keyed by param name. Starts empty (so the default
 	 * is applied) and the user types to override. Separate from boundParams so
 	 * edits survive re-discovery of bindings. */
@@ -1740,6 +1887,11 @@
 		open={showParamsPanel}
 		canvasId={data.canvas.id}
 		published={isPublished}
+		{paramRows}
+		{paramRowsLoaded}
+		{paramRowsError}
+		onPersistFlag={persistParamFlag}
+		onRetryLoad={retryLoadParamRows}
 		onClose={() => (showParamsPanel = false)}
 	/>
 
@@ -1750,6 +1902,7 @@
 		published={isPublished}
 		bindings={drawerBindings}
 		liveValues={testParams}
+		{paramSchemas}
 		onClose={() => (showEmbedDrawer = false)}
 		onPublish={openPublishModal}
 	/>

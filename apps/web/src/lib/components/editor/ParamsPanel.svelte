@@ -28,58 +28,49 @@
 	 * for reactive recomputation as the user edits bindings — same trick
 	 * the property panel uses.
 	 */
-	import { Modal, LoadingSkeleton, EmptyState, ErrorState } from '$lib/components/ui';
+	import { Modal, EmptyState } from '$lib/components/ui';
 	import { Sliders } from '@lucide/svelte';
 	import { editorState, markDirty } from './state.svelte.ts';
 	import type { FabricObject } from 'fabric';
-	import { toast } from '$lib/stores/toast.svelte';
 	import ParamSchemaEditor from './publish/ParamSchemaEditor.svelte';
 	import type { PublishModalBinding } from './PublishModal.svelte';
+
+	/** Param schema row as returned by GET /api/canvas/[id]/params and
+	 *  accepted by the PATCH /api/canvas/[id] body's `params: [...]`.
+	 *  Re-exported as a type from the editor-page state owner; the
+	 *  shape lives here so callers don't need to import from
+	 *  +page.svelte. */
+	export interface SchemaRow {
+		name: string;
+		type: string;
+		required: boolean;
+	}
 
 	interface Props {
 		open: boolean;
 		canvasId: string;
 		published: boolean;
+		/** Page-level paramRows source (PLAN-232 Phase C / TASK-245).
+		 *  Loading + persistence both live at the editor-page layer; the
+		 *  panel just renders the data and delegates writes via
+		 *  `onPersistFlag` / `onRetryLoad`. */
+		paramRows: SchemaRow[];
+		paramRowsLoaded: boolean;
+		paramRowsError: boolean;
+		onPersistFlag: (name: string, patch: Partial<SchemaRow>) => void;
+		onRetryLoad: () => void;
 		onClose: () => void;
 	}
-	let { open, canvasId, published, onClose }: Props = $props();
-
-	/** Param schema row as returned by GET /api/canvas/[id]/params and
-	 *  accepted by the PATCH /api/canvas/[id] body's `params: [...]`. */
-	interface SchemaRow {
-		name: string;
-		type: string;
-		required: boolean;
-	}
-	let schemaRows = $state<SchemaRow[]>([]);
-	let schemaLoaded = $state(false);
-	/** Set when the GET /params fetch returns non-OK or the network call
-	 *  itself rejects. Drives the inline ErrorState retry surface so the
-	 *  failure isn't silently swallowed (TASK-136). */
-	let schemaError = $state(false);
-	/** Tracks an in-flight GET so a parent re-render doesn't fire a
-	 *  second load while the first is still landing. Without this, the
-	 *  second response could overwrite the first's freshly-edited rows
-	 *  if it took longer to return. */
-	let schemaPending = $state(false);
-	/** Monotonic generation token — incremented at every loadSchema()
-	 *  start and stored in `schemaPendingGen`. The finally block only
-	 *  clears `schemaPending` when its captured generation still matches
-	 *  the current one; a stale completion that lost the race is
-	 *  treated as if it never happened. Without this, canvas A's late
-	 *  finally would clear `schemaPending=false` while canvas B's
-	 *  newer request was still in flight, letting the $effect kick off
-	 *  a duplicate B fetch whose response would clobber any optimistic
-	 *  type/required edit the user had made between requests.
-	 *  Codex round 3 P2. */
-	let schemaPendingGen = 0;
-	/** The canvasId the cached `schemaRows` belong to. Compared against
-	 *  the current `canvasId` prop on every $effect run so a parent-
-	 *  level canvas switch (the editor route reuses this component
-	 *  across navigations) refetches instead of silently rendering
-	 *  stale rows for canvas A while the user is editing canvas B.
-	 *  Codex round 1 P1. */
-	let schemaCanvasId = $state<string | null>(null);
+	let {
+		open,
+		published,
+		paramRows,
+		paramRowsLoaded,
+		paramRowsError,
+		onPersistFlag,
+		onRetryLoad,
+		onClose
+	}: Props = $props();
 
 	/** Per-binding metadata derived from the live Fabric canvas — used to
 	 *  surface which layers reference each param and to expose the
@@ -200,29 +191,7 @@
 	});
 
 	$effect(() => {
-		// Only fetch the schema rows for published canvases — `syncCanvasParams`
-		// only runs when templateJson is PATCH'd through the publish path,
-		// so unpublished canvases have no rows on the server side to fetch.
-		// Refetch when the canvasId itself changes (parent reuses this
-		// component across canvas-id navigations) — without that check
-		// canvas A's schemaRows would briefly show on canvas B until the
-		// next close+reopen. Codex round 1 P1.
-		const stale = schemaCanvasId !== null && schemaCanvasId !== canvasId;
-		if (open && published && (stale || (!schemaLoaded && !schemaPending))) {
-			void loadSchema();
-		}
 		if (!open) {
-			schemaLoaded = false;
-			schemaError = false;
-			schemaRows = [];
-			schemaCanvasId = null;
-			// Bump the generation so any in-flight load is treated as
-			// stale on completion (its finally block won't touch
-			// schemaPending or schemaLoaded). Then clear schemaPending
-			// directly so the next open isn't blocked by the !pending
-			// gate. Codex round 2 P2 + round 3 P2.
-			schemaPendingGen++;
-			schemaPending = false;
 			// Reset the panel mode so the next open lands on the
 			// default Test-values view. Without this a user who flipped
 			// to Schema and closed the panel would re-open on the
@@ -232,87 +201,10 @@
 		}
 	});
 
-	/** Reset and re-run loadSchema, used by the inline ErrorState retry
-	 *  button. Clears the loaded flag so the $effect's gate re-arms,
-	 *  and clears the error flag so the loading skeleton replaces the
-	 *  error surface immediately rather than overlapping. */
-	function retryLoadSchema(): void {
-		schemaLoaded = false;
-		schemaError = false;
-		void loadSchema();
-	}
-
-	async function loadSchema(): Promise<void> {
-		schemaPending = true;
-		schemaError = false;
-		// Bump + capture the generation token so a stale completion can't
-		// clear the pending flag for a newer in-flight request, and so
-		// a stale response can't overwrite freshly-loaded rows. Codex
-		// round 3 P2.
-		const requestGen = ++schemaPendingGen;
-		// Snapshot the canvasId at request start. By the time the response
-		// lands the parent may have switched canvases — assigning A's
-		// schemaRows on canvas B's open modal would be a stale-write bug.
-		const requestCanvasId = canvasId;
-		const isStale = () => requestGen !== schemaPendingGen || requestCanvasId !== canvasId;
-		try {
-			const res = await fetch(`/api/canvas/${canvasId}/params`);
-			if (isStale()) return;
-			if (res.ok) {
-				const rows = (await res.json()) as SchemaRow[];
-				if (isStale()) return;
-				schemaRows = rows;
-				schemaCanvasId = requestCanvasId;
-			} else {
-				// Surface non-OK responses (5xx, 4xx) via the visible
-				// ErrorState retry surface (TASK-136). The previous
-				// behavior was a silent fail with the type/required
-				// cells stuck in their default-disabled state. Stale-
-				// guarded so a late completion from a prior canvas /
-				// session can't paint a false error on the current
-				// panel (Codex round 1 P2).
-				schemaError = true;
-			}
-		} catch {
-			// Network rejections take the same retryable path. Same
-			// stale guard applies — a stale rejection must not paint
-			// an error on a newer in-flight request (Codex round 1).
-			if (!isStale()) {
-				schemaError = true;
-			}
-		} finally {
-			// Only the LATEST request's generation may clear `schemaPending`
-			// or flip `schemaLoaded` — a stale completion that lost the
-			// race must remain a no-op so the still-in-flight newer
-			// request keeps the effect's guard armed. Codex round 3 P2.
-			if (requestGen === schemaPendingGen) {
-				schemaPending = false;
-				if (requestCanvasId === canvasId) {
-					schemaLoaded = true;
-				}
-			}
-		}
-	}
-
-	/** Per-row PATCH for type / required, mirroring PublishModal's
-	 *  persistParamFlags. Optimistic in-memory update first so the cell
-	 *  feels responsive; the request is one-shot (single-row params
-	 *  array) so simultaneous edits across rows don't collide. */
-	async function persistFlag(name: string, patch: Partial<SchemaRow>): Promise<void> {
-		schemaRows = schemaRows.map((r) => (r.name === name ? { ...r, ...patch } : r));
-		try {
-			const res = await fetch(`/api/canvas/${canvasId}`, {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ params: [{ name, ...patch }] })
-			});
-			if (!res.ok) {
-				toast.error(`Couldn't save params for ${name}.`);
-			}
-		} catch {
-			toast.error(`Couldn't save params for ${name}.`);
-		}
-	}
+	// paramRows fetching + persistence moved up to editor-page state in
+	// TASK-245 (PLAN-232 Phase C exit criteria — "paramRows has one
+	// owner"). The panel reads them via props and routes writes through
+	// `onPersistFlag` + `onRetryLoad`.
 
 	/** Update the binding default for `name` across every layer that
 	 *  references it. We can't use a single setProp call because the
@@ -470,30 +362,13 @@
 
 	<div id="params-mode-panel" role="tabpanel" data-testid="params-mode-panel-{mode}">
 		{#if mode === 'test'}
-			{#if published && schemaError}
-				<!--
-			Server-side schema fetch failed (5xx, network error, etc.).
-			ErrorState keeps the user in the modal with a retry instead
-			of silently leaving the type/required cells disabled.
-			Derived params from the live canvas are still shown below.
-		-->
-				<div class="params-error" data-testid="params-schema-error">
-					<ErrorState
-						title="Couldn't load saved type / required"
-						message="The saved settings for this canvas didn't load. The dynamic values below still work, but Type and Required can't be edited until they reach the editor."
-						onRetry={retryLoadSchema}
-					/>
-				</div>
-			{:else if published && !schemaLoaded}
-				<!--
-			Loading skeleton matches the params-row grid layout so the
-			table chrome doesn't shift when real rows render.
-		-->
-				<div class="params-skeleton" data-testid="params-skeleton" aria-label="Loading parameters">
-					<LoadingSkeleton lines={3} />
-				</div>
-			{/if}
-
+			<!--
+				Test-values mode shows Name + Default + Sources. The
+				ErrorState / loading-skeleton for the schema fetch
+				lives in the Schema tab (where the failure actually
+				matters); Test mode is purely client-side so it has
+				nothing to load.
+			-->
 			{#if derivedParams.length === 0}
 				<div class="params-empty" data-testid="params-empty">
 					<EmptyState
@@ -573,11 +448,11 @@
 			-->
 			<ParamSchemaEditor
 				bindings={schemaEditorBindings}
-				paramRows={schemaRows}
-				paramRowsLoaded={!published || schemaLoaded}
-				paramRowsError={schemaError}
-				onPersist={persistFlag}
-				onRetry={retryLoadSchema}
+				{paramRows}
+				paramRowsLoaded={!published || paramRowsLoaded}
+				{paramRowsError}
+				onPersist={onPersistFlag}
+				onRetry={onRetryLoad}
 			/>
 		{/if}
 	</div>
@@ -651,13 +526,10 @@
 		padding: var(--spacing-4) 0;
 	}
 
-	.params-skeleton {
-		padding: var(--spacing-3) var(--spacing-2) var(--spacing-4);
-	}
-
-	.params-error {
-		padding: var(--spacing-2) 0 var(--spacing-4);
-	}
+	/* .params-skeleton + .params-error were specific to the in-panel
+	   schema fetch state. After TASK-245 the fetch lives at editor-page
+	   state and the corresponding loading/error UX is part of
+	   <ParamSchemaEditor> in the Schema tab. */
 
 	.params-table {
 		display: flex;
