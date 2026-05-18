@@ -23,6 +23,7 @@ import {
 	addTextLayer,
 	bindParam,
 	publish,
+	openParamsPanelSchema,
 	uniqueXffHeaders
 } from './helpers';
 
@@ -40,7 +41,9 @@ test.describe('Param validation', () => {
 		await bindParam(page, 'Text Content', 'title');
 		const { imageUrl } = await publish(page);
 
-		// Mark as required via the publish modal.
+		// Mark as required via ParamsPanel's Schema tab. (Schema editing
+		// moved out of PublishModal in PLAN-232 Phase C / TASK-244.)
+		await openParamsPanelSchema(page);
 		const requiredBox = page.getByRole('checkbox', { name: 'Required title' });
 		await expect(requiredBox).toBeVisible({ timeout: 10_000 });
 		await requiredBox.check();
@@ -88,6 +91,9 @@ test.describe('Param validation', () => {
 		await bindParam(page, 'Text Content', 'price', '0');
 		const { imageUrl } = await publish(page);
 
+		// Schema editing lives in ParamsPanel's Schema tab after
+		// PLAN-232 Phase C / TASK-244.
+		await openParamsPanelSchema(page);
 		const typeSelect = page.getByLabel('Type for price');
 		await expect(typeSelect).toBeVisible({ timeout: 10_000 });
 		await typeSelect.selectOption('number');
@@ -137,6 +143,7 @@ test.describe('Param validation', () => {
 		await bindParam(page, 'Text Content', 'title', 'Hello fallback');
 		const { imageUrl } = await publish(page);
 
+		await openParamsPanelSchema(page);
 		const requiredBox = page.getByRole('checkbox', { name: 'Required title' });
 		await expect(requiredBox).toBeVisible({ timeout: 10_000 });
 		await requiredBox.check();

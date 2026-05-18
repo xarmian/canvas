@@ -345,6 +345,28 @@ export async function publish(page: Page): Promise<{ shareUrl: string; imageUrl:
  * helper after publish() rather than relying on the publish modal to
  * host those testids.
  */
+/**
+ * Open the ParamsPanel modal and switch to Schema mode (PLAN-232
+ * Phase C / TASK-244). The per-param Type / Required schema editor
+ * lives there now — the publish modal no longer hosts it. Tests
+ * that need to flip a param's type or required flag must take this
+ * route.
+ *
+ * Closes any other open dialog first so the page isn't inert when
+ * we click the toolbar Params button.
+ */
+export async function openParamsPanelSchema(page: Page): Promise<void> {
+	const openDialog = page.locator('dialog.modal[open]');
+	if ((await openDialog.count()) > 0) {
+		await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click();
+		await expect(openDialog).toHaveCount(0, { timeout: 5_000 });
+	}
+	await page.getByTestId('toolbar-params').click();
+	await expect(page.getByTestId('params-mode-test')).toBeVisible({ timeout: 5_000 });
+	await page.getByTestId('params-mode-schema').click();
+	await expect(page.getByTestId('params-mode-panel-schema')).toBeVisible();
+}
+
 export async function openEmbedDrawer(page: Page): Promise<void> {
 	// If the publish modal is open, close it first. Modal uses
 	// `dialog.showModal()` which inerts the rest of the page — the

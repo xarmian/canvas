@@ -31,7 +31,8 @@ import {
 	addTextLayer,
 	bindParam,
 	publish,
-	openEmbedDrawer
+	openEmbedDrawer,
+	openParamsPanelSchema
 } from './helpers';
 
 /** Every embed tab in declaration order. Mirrors `EMBED_TABS` in
@@ -60,27 +61,17 @@ test.describe('Embed tabs — TypeScript + Python', () => {
 
 		await publish(page);
 
-		// The per-param type editor lives in the publish modal's
-		// docs-section (ParamSchemaEditor) — flip `count` to `number`
-		// here so the typed-TS snippet has something interesting to
-		// declare. The modal is still open after publish().
-		//
-		// Scoping the lookup to the dialog is necessary because
-		// ParamsPanel has the same `aria-label="Type for {name}"`
-		// schema editor — without the scope `getByLabel` resolves to
-		// two elements and fails strict mode.
-		const dialog = page.getByRole('dialog');
-		const countTypeSelect = dialog.getByLabel('Type for count');
+		// The per-param type editor lives in ParamsPanel's Schema tab
+		// (PLAN-232 Phase C / TASK-244). Flip `count` to `number`
+		// before opening the embed drawer so the drawer's paramRows
+		// GET picks up the type when it fires. Until TASK-245
+		// deduplicates the modal/panel/drawer fetches, this ordering
+		// is the simplest deterministic path.
+		await openParamsPanelSchema(page);
+		const countTypeSelect = page.getByLabel('Type for count');
 		await expect(countTypeSelect).toBeEnabled({ timeout: 5_000 });
 		await countTypeSelect.selectOption('number');
 
-		// Close the modal then open the embed drawer. Embed snippets
-		// live in the drawer now (PLAN-232 Phase B / TASK-240); the
-		// drawer fetches its own paramRows on open so it picks up the
-		// type flip we just persisted. Until TASK-245 deduplicates the
-		// two fetches, opening the drawer AFTER the modal-side schema
-		// edit is the simplest deterministic order.
-		await page.getByRole('button', { name: 'Close' }).click();
 		await openEmbedDrawer(page);
 
 		const snippet = page.getByTestId('embed-snippet');
