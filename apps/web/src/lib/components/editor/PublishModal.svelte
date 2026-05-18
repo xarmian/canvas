@@ -4,6 +4,7 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import { copyToClipboard } from '$lib/share-clipboard';
 	import { nearestParamName } from './param-validation';
+	import CopyUrlRow from './publish/CopyUrlRow.svelte';
 	import SocialValidator from './publish/SocialValidator.svelte';
 	import {
 		buildQueryString,
@@ -1115,28 +1116,18 @@
 			{/if}
 		</div>
 
-		<div class="field">
-			<label for="publish-share-url">Share page URL</label>
-			<div class="copy-row">
-				<Input id="publish-share-url" type="text" readonly value={shareUrl} class="url-input" />
-				<Button variant="copy" onclick={() => copy(shareUrl, 'Share URL')}>Copy</Button>
-			</div>
-			<p class="help">
+		<CopyUrlRow id="publish-share-url" label="Share page URL" url={shareUrl} copyLabel="Share URL">
+			{#snippet helpHtml()}
 				Humans see an OG preview + redirect; bots/crawlers get <code>og:image</code> meta tags.
-			</p>
-		</div>
+			{/snippet}
+		</CopyUrlRow>
 
-		<div class="field">
-			<label for="publish-image-url">Image URL</label>
-			<div class="copy-row">
-				<Input id="publish-image-url" type="text" readonly value={imageUrl} class="url-input" />
-				<Button variant="copy" onclick={() => copy(imageUrl, 'Image URL')}>Copy</Button>
-			</div>
-			<p class="help">
+		<CopyUrlRow id="publish-image-url" label="Image URL" url={imageUrl} copyLabel="Image URL">
+			{#snippet helpHtml()}
 				Returns the rendered PNG directly. Append dynamic values as query strings, e.g.
 				<code>?title=Hello</code>.
-			</p>
-		</div>
+			{/snippet}
+		</CopyUrlRow>
 
 		<section class="sharing-section" data-testid="sharing-section">
 			<h3 class="sharing-title">Sharing &amp; redirect</h3>
