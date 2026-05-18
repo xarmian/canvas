@@ -348,10 +348,13 @@ export async function publish(page: Page): Promise<{ shareUrl: string; imageUrl:
 export async function openEmbedDrawer(page: Page): Promise<void> {
 	// If the publish modal is open, close it first. Modal uses
 	// `dialog.showModal()` which inerts the rest of the page — the
-	// toolbar Embed button is covered while the modal is up.
+	// toolbar Embed button is covered while the modal is up. Scope
+	// the Close click to the dialog so it can't accidentally hit
+	// the embed drawer's own close button (which also has accessible
+	// name "Close" via aria-label="Close embed drawer").
 	const openDialog = page.locator('dialog.modal[open]');
 	if ((await openDialog.count()) > 0) {
-		await page.getByRole('button', { name: 'Close' }).first().click();
+		await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click();
 		await expect(openDialog).toHaveCount(0, { timeout: 5_000 });
 	}
 	await page.getByTestId('toolbar-embed').click();

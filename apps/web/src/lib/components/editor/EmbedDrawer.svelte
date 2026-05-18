@@ -39,6 +39,13 @@
 		bindings?: PublishModalBinding[];
 		liveValues?: Record<string, string>;
 		onClose: () => void;
+		/** Optional handler invoked when the unpublished-state banner's
+		 *  Publish button is clicked. The page wires this to the same
+		 *  `openPublishModal()` the toolbar button uses, so the user
+		 *  flow is "see snippets → publish via modal → snippets become
+		 *  live" without re-implementing the publish call here.
+		 *  TASK-242. */
+		onPublish?: () => void;
 	}
 
 	let {
@@ -48,7 +55,8 @@
 		published,
 		bindings = [],
 		liveValues = {},
-		onClose
+		onClose,
+		onPublish
 	}: Props = $props();
 
 	/** Param schema row as returned by GET /api/canvas/[id]/params. */
@@ -220,15 +228,37 @@
 	</header>
 
 	<div class="drawer-body" data-testid="embed-drawer-body">
-		<!--
-			TODO(TASK-242): when `published === false` the snippets here
-			still render copyable `/c/{slug}` + `/image.png` URLs that
-			404. TASK-242 is the planned home for the pre-publish UX
-			(banner + inline publish CTA per the plan recommendation).
-			Until then, opening the drawer pre-publish surfaces snippets
-			pointing at the eventual share URL — incorrect for v1 but
-			documented + fenced into the next task.
-		-->
+		{#if !published}
+			<!--
+				Pre-publish banner (TASK-242). The snippets below
+				point at the canvas's eventual share URL — they
+				render so developers can plan their integration
+				before publish, but `/c/{slug}` and `/image.png`
+				404 until the canvas is published. The banner
+				makes that explicit and offers a one-click route
+				into the publish flow. Clicking "Publish now"
+				delegates to the page-level publish handler (same
+				one the toolbar button uses) — keeps onBeforePublish
+				flushing + the modal's confirmation step in one
+				canonical path.
+			-->
+			<aside class="pre-publish-banner" data-testid="embed-drawer-pre-publish-banner">
+				<div class="pre-publish-copy">
+					<strong>Not yet published.</strong>
+					Snippets below preview the eventual share URL — they'll 404 until you publish.
+				</div>
+				{#if onPublish}
+					<button
+						type="button"
+						class="pre-publish-cta"
+						data-testid="embed-drawer-publish-cta"
+						onclick={onPublish}
+					>
+						Publish now
+					</button>
+				{/if}
+			</aside>
+		{/if}
 		<EmbedSnippets {slug} {bindings} {liveValues} {paramSchemas} {versionToken} />
 	</div>
 </aside>
@@ -308,5 +338,50 @@
 		flex: 1 1 auto;
 		overflow-y: auto;
 		padding: 1rem;
+	}
+
+	.pre-publish-banner {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		margin: 0 0 1rem;
+		padding: 0.6rem 0.75rem;
+		background: var(--color-warning-surface);
+		border: 1px solid var(--color-warning-border);
+		border-radius: 5px;
+		font-size: 0.8125rem;
+		color: var(--color-warning-text);
+		line-height: 1.4;
+	}
+
+	.pre-publish-copy {
+		flex: 1 1 auto;
+	}
+
+	.pre-publish-copy strong {
+		display: block;
+		margin-bottom: 0.15rem;
+	}
+
+	.pre-publish-cta {
+		flex: 0 0 auto;
+		padding: 0.35rem 0.7rem;
+		font-size: 0.75rem;
+		font-weight: 600;
+		border-radius: 4px;
+		border: 1px solid var(--color-warning-border);
+		background: var(--color-bg);
+		color: var(--color-warning-text);
+		cursor: pointer;
+	}
+
+	.pre-publish-cta:hover {
+		background: var(--color-warning-border);
+	}
+
+	.pre-publish-cta:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
 	}
 </style>
