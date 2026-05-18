@@ -1,19 +1,23 @@
 <script lang="ts">
 	import { Code2, X } from '@lucide/svelte';
-	import type { Snippet } from 'svelte';
+	import EmbedSnippets from './publish/EmbedSnippets.svelte';
+	import type { PublishModalBinding } from './PublishModal.svelte';
+	import { type ParamSchema, type ParamType } from '$lib/embed/snippets';
 
 	/**
 	 * "Get the code" drawer — right-side slide-out surface that hosts
-	 * <EmbedSnippets> (TASK-240). Unlike <Modal> (which uses
-	 * `dialog.showModal()` and inerts the rest of the page), this drawer
-	 * is non-blocking so the user can keep editing the canvas / tweaking
-	 * params while watching the snippet text update live. That live-edit
-	 * loop is the core UX payoff of PLAN-232 Phase B.
+	 * <EmbedSnippets>. Non-blocking by design (cf. <Modal>'s
+	 * `dialog.showModal()` which inerts the rest of the page) so the
+	 * user can keep editing the canvas / tweaking params while watching
+	 * the snippet text update live. That live-edit loop is the core UX
+	 * payoff of PLAN-232 Phase B.
 	 *
-	 * Shell only — this task (TASK-239) just establishes the surface and
-	 * its open/close lifecycle. TASK-240 wires <EmbedSnippets> as the
-	 * content; until then, callers pass any content via the `children`
-	 * snippet (or leave it empty).
+	 * Owns its own `paramRows` + `versionToken` fetches keyed on
+	 * `canvasId` + `open`. Independent of PublishModal's identical
+	 * fetches — TASK-245 (the Phase C "single source of truth for
+	 * paramRows" task) is what de-duplicates them at editor-page
+	 * state. Until then: one extra GET when both drawer + modal are
+	 * open simultaneously, which is uncommon and acceptable.
 	 *
 	 * Dismissal:
 	 *  - Close button in the header (always visible)
@@ -21,39 +25,133 @@
 	 *    that scope guard, the global Escape handler that clears the
 	 *    canvas selection would never fire while the drawer is open,
 	 *    and any other modal's Escape would close the drawer too.
-	 *    (Codex round 1 P2.)
+	 *    (Codex round 1 P2 on TASK-239.)
 	 *
 	 * Click-outside does NOT close. The whole point of a non-blocking
-	 * surface is that the user can click into the canvas / params panel
-	 * without the drawer disappearing. (Modal's blocking semantics
-	 * naturally close on backdrop click; here the editor IS the
-	 * "backdrop.")
-	 *
-	 * The drawer is fixed to the right edge of the viewport so it
-	 * overlays PropertyPanel rather than displacing it. The user closes
-	 * the drawer to reach PropertyPanel again. PLAN-232 Phase C will
-	 * revisit panel coexistence if it becomes an issue.
+	 * surface is that the user can click into the canvas / params
+	 * panel without the drawer disappearing.
 	 */
 	interface Props {
 		open: boolean;
+		canvasId: string;
+		slug: string;
+		published: boolean;
+		bindings?: PublishModalBinding[];
+		liveValues?: Record<string, string>;
 		onClose: () => void;
-		/** Optional drawer body. Empty during TASK-239; TASK-240 mounts
-		 *  <EmbedSnippets>. */
-		children?: Snippet;
 	}
 
-	let { open, onClose, children }: Props = $props();
+	let {
+		open,
+		canvasId,
+		slug,
+		published,
+		bindings = [],
+		liveValues = {},
+		onClose
+	}: Props = $props();
+
+	/** Param schema row as returned by GET /api/canvas/[id]/params. */
+	interface ParamRow {
+		name: string;
+		type: string;
+		required: boolean;
+	}
+	let paramRows = $state<ParamRow[]>([]);
+	let paramRowsLoaded = $state(false);
+	/** Monotonic counter — bumped at request start; a late completion
+	 *  whose generation no longer matches drops its writes. Mirrors the
+	 *  pattern PublishModal uses (Codex round 1 P2 of TASK-136). */
+	let paramRowsGen = 0;
+	/** In-flight gate so the open-effect re-running (e.g. when
+	 *  `published` flips) doesn't kick off a second concurrent GET. */
+	let paramRowsPending = $state(false);
+
+	/** `_v` token from /api/canvas/[id]/version — when present the
+	 *  snippets emit immutable-cache URLs. Loads asynchronously; before
+	 *  it arrives the snippets fall back to short-cache URLs. */
+	let versionToken = $state<string | null>(null);
 
 	let drawerEl: HTMLElement | undefined = $state();
+
+	$effect(() => {
+		if (open && published && !paramRowsLoaded && !paramRowsPending) {
+			void loadParamSchema();
+		}
+		if (open && published && versionToken === null) {
+			void loadVersionToken();
+		}
+		if (!open) {
+			// Reset so reopening for a different canvas refetches. Bump
+			// the generation so any in-flight load from this open is
+			// treated as stale on completion.
+			paramRowsLoaded = false;
+			paramRows = [];
+			paramRowsGen++;
+			paramRowsPending = false;
+			versionToken = null;
+		}
+	});
+
+	async function loadParamSchema(): Promise<void> {
+		paramRowsPending = true;
+		const requestCanvasId = canvasId;
+		const requestGen = ++paramRowsGen;
+		const isStale = () => requestCanvasId !== canvasId || requestGen !== paramRowsGen;
+		try {
+			const res = await fetch(`/api/canvas/${canvasId}/params`);
+			if (isStale()) return;
+			if (!res.ok) {
+				// Snippets degrade gracefully when the schema hasn't
+				// loaded (typed-TS falls back to all-strings; example
+				// query still works off bindings). Logging-only on
+				// failure rather than surfacing a banner — the drawer
+				// is exploratory; a transient fetch failure here is
+				// noisy compared to the modal's ErrorState pattern.
+				return;
+			}
+			const rows = (await res.json()) as ParamRow[];
+			if (isStale()) return;
+			paramRows = rows;
+			paramRowsLoaded = true;
+		} catch {
+			// Same rationale — silent fallback.
+		} finally {
+			if (requestGen === paramRowsGen) {
+				paramRowsPending = false;
+			}
+		}
+	}
+
+	async function loadVersionToken(): Promise<void> {
+		try {
+			const res = await fetch(`/api/canvas/${canvasId}/version`);
+			if (!res.ok) return;
+			const data = (await res.json()) as { token: string };
+			versionToken = data.token;
+		} catch {
+			// Best-effort — falling back to short-cache URLs is fine.
+		}
+	}
+
+	/** Map paramRows → ParamSchema[] for the typed-TS / Python snippet
+	 *  generators. Unknown types collapse to 'text' so the snippets stay
+	 *  runnable rather than emitting `: unknown`. */
+	const KNOWN_PARAM_TYPES: readonly ParamType[] = ['text', 'number', 'boolean', 'url', 'date'];
+	function toParamType(raw: string): ParamType {
+		return (KNOWN_PARAM_TYPES as readonly string[]).includes(raw) ? (raw as ParamType) : 'text';
+	}
+	let paramSchemas = $derived<ParamSchema[]>(
+		paramRows.map((r) => ({ name: r.name, type: toParamType(r.type) }))
+	);
 
 	function onKeydown(event: KeyboardEvent) {
 		if (!open) return;
 		if (event.key !== 'Escape') return;
 		// Only handle Escape when focus is INSIDE the drawer. Without
 		// this guard the drawer steals the editor's selection-clear
-		// Escape shortcut (apps/web/src/routes/(app)/canvas/[id]/edit/+page.svelte)
-		// and can also close itself while a modal owns focus. Codex
-		// round 1 P2.
+		// Escape shortcut and can close itself while another modal owns
+		// focus. Codex round 1 P2 on TASK-239.
 		if (!drawerEl?.contains(document.activeElement)) return;
 		event.preventDefault();
 		onClose();
@@ -88,15 +186,7 @@
 	</header>
 
 	<div class="drawer-body" data-testid="embed-drawer-body">
-		{#if children}
-			{@render children()}
-		{:else}
-			<!--
-				Empty during TASK-239. <EmbedSnippets> lands here in
-				TASK-240. Keeping the empty state intentionally blank so
-				it's visually obvious during the shell-only PR.
-			-->
-		{/if}
+		<EmbedSnippets {slug} {bindings} {liveValues} {paramSchemas} {versionToken} />
 	</div>
 </aside>
 
