@@ -351,10 +351,7 @@ export async function openEmbedDrawer(page: Page): Promise<void> {
 	// toolbar Embed button is covered while the modal is up.
 	const openDialog = page.locator('dialog.modal[open]');
 	if ((await openDialog.count()) > 0) {
-		await page
-			.getByRole('button', { name: 'Close' })
-			.first()
-			.click();
+		await page.getByRole('button', { name: 'Close' }).first().click();
 		await expect(openDialog).toHaveCount(0, { timeout: 5_000 });
 	}
 	await page.getByTestId('toolbar-embed').click();

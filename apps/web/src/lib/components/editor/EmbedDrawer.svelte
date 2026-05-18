@@ -71,6 +71,16 @@
 	 *  snippets emit immutable-cache URLs. Loads asynchronously; before
 	 *  it arrives the snippets fall back to short-cache URLs. */
 	let versionToken = $state<string | null>(null);
+	/** Monotonic counter for version-token fetches — same stale-guard
+	 *  pattern as `paramRowsGen`. Without it, a late completion from a
+	 *  previous canvas could write a stale `_v` into the snippets for
+	 *  the new canvas. (Codex round 1 P2 of TASK-240.) */
+	let versionTokenGen = 0;
+	/** Set once we've ATTEMPTED to load the version token for the
+	 *  current open session — successful OR failed. Gates the
+	 *  `$effect` away from a retry loop when the GET fails (Codex
+	 *  round 1 P1 of TASK-240). */
+	let versionTokenAttempted = $state(false);
 
 	let drawerEl: HTMLElement | undefined = $state();
 
@@ -78,18 +88,20 @@
 		if (open && published && !paramRowsLoaded && !paramRowsPending) {
 			void loadParamSchema();
 		}
-		if (open && published && versionToken === null) {
+		if (open && published && !versionTokenAttempted) {
 			void loadVersionToken();
 		}
 		if (!open) {
 			// Reset so reopening for a different canvas refetches. Bump
-			// the generation so any in-flight load from this open is
-			// treated as stale on completion.
+			// both generation counters so any in-flight load from this
+			// open is treated as stale on completion.
 			paramRowsLoaded = false;
 			paramRows = [];
 			paramRowsGen++;
 			paramRowsPending = false;
 			versionToken = null;
+			versionTokenAttempted = false;
+			versionTokenGen++;
 		}
 	});
 
@@ -104,10 +116,11 @@
 			if (!res.ok) {
 				// Snippets degrade gracefully when the schema hasn't
 				// loaded (typed-TS falls back to all-strings; example
-				// query still works off bindings). Logging-only on
-				// failure rather than surfacing a banner — the drawer
-				// is exploratory; a transient fetch failure here is
-				// noisy compared to the modal's ErrorState pattern.
+				// query still works off bindings). Mark `loaded=true`
+				// even on the failure path so the $effect doesn't
+				// re-enter and tight-loop the GET. Codex round 1 P1
+				// of TASK-240.
+				paramRowsLoaded = true;
 				return;
 			}
 			const rows = (await res.json()) as ParamRow[];
@@ -115,7 +128,11 @@
 			paramRows = rows;
 			paramRowsLoaded = true;
 		} catch {
-			// Same rationale — silent fallback.
+			// Same rationale — silent fallback, but still flip the
+			// loaded flag so we don't retry.
+			if (!isStale()) {
+				paramRowsLoaded = true;
+			}
 		} finally {
 			if (requestGen === paramRowsGen) {
 				paramRowsPending = false;
@@ -124,13 +141,30 @@
 	}
 
 	async function loadVersionToken(): Promise<void> {
+		// Snapshot canvasId + bump-and-capture the generation. A late
+		// completion whose canvasId or gen no longer matches drops its
+		// `versionToken` write so a previous canvas's `_v` can't bleed
+		// into the new canvas's snippets. (Codex round 1 P2 of TASK-240.)
+		const requestCanvasId = canvasId;
+		const requestGen = ++versionTokenGen;
+		const isStale = () => requestCanvasId !== canvasId || requestGen !== versionTokenGen;
 		try {
 			const res = await fetch(`/api/canvas/${canvasId}/version`);
+			if (isStale()) return;
 			if (!res.ok) return;
 			const data = (await res.json()) as { token: string };
+			if (isStale()) return;
 			versionToken = data.token;
 		} catch {
 			// Best-effort — falling back to short-cache URLs is fine.
+		} finally {
+			// Mark attempted so the $effect doesn't re-enter on the
+			// next reactive read of versionTokenAttempted. The reset
+			// in the close-effect bumps versionTokenGen too, so any
+			// late completion from this attempt drops cleanly.
+			if (!isStale()) {
+				versionTokenAttempted = true;
+			}
 		}
 	}
 
