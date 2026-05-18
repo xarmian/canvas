@@ -4,6 +4,7 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import { copyToClipboard } from '$lib/share-clipboard';
 	import { nearestParamName } from './param-validation';
+	import SocialValidator from './publish/SocialValidator.svelte';
 	import {
 		buildQueryString,
 		curlFor,
@@ -1384,45 +1385,7 @@
 			{/if}
 		</section>
 
-		<section class="validator-section" data-testid="validator-section">
-			<h3 class="validator-title">Test on social</h3>
-			<p class="validator-hint">
-				Open the share URL in each platform's preview tool to refresh the cache and confirm the card
-				renders. Each link opens in a new tab with the URL pre-filled.
-			</p>
-			<div class="validator-row">
-				<a
-					class="btn btn-secondary"
-					data-testid="validator-twitter"
-					href="https://cards-dev.twitter.com/validator?url={encodeURIComponent(shareUrl)}"
-					target="_blank"
-					rel="noopener noreferrer"
-					title="Force Twitter / X to re-fetch the OG card and show validation issues"
-				>
-					Twitter Card Validator
-				</a>
-				<a
-					class="btn btn-secondary"
-					data-testid="validator-facebook"
-					href="https://developers.facebook.com/tools/debug/?q={encodeURIComponent(shareUrl)}"
-					target="_blank"
-					rel="noopener noreferrer"
-					title="Facebook / Meta sharing debugger — also flushes WhatsApp / Instagram caches"
-				>
-					Facebook Debugger
-				</a>
-				<a
-					class="btn btn-secondary"
-					data-testid="validator-linkedin"
-					href="https://www.linkedin.com/post-inspector/inspect/{encodeURIComponent(shareUrl)}"
-					target="_blank"
-					rel="noopener noreferrer"
-					title="LinkedIn Post Inspector — re-fetches and shows the rendered card"
-				>
-					LinkedIn Post Inspector
-				</a>
-			</div>
-		</section>
+		<SocialValidator {shareUrl} />
 
 		<section class="docs-section">
 			<h3 class="docs-title">Using this template</h3>
@@ -1695,12 +1658,13 @@
 	}
 
 	/*
-	 * `.btn-link` and `.btn.btn-secondary` remain for the few <a> elements
-	 * that act as buttons (embed "Open in new tab", validator anchors).
-	 * The Button primitive renders <button>, not <a>; href-bearing
-	 * variants would need a primitive change (Button polymorphism). Until
-	 * then, anchors keep their inline styles. Tracked for follow-up after
+	 * `.btn-link` remains for the embed "Open in new tab" anchor. The
+	 * Button primitive renders <button>, not <a>; href-bearing variants
+	 * would need a primitive change (Button polymorphism). Until then,
+	 * anchors keep their inline styles. Tracked for follow-up after
 	 * TASK-110 — anchor styling will inherit token vars in the same pass.
+	 * (The `.btn-secondary` variant moved out with <SocialValidator> in
+	 * TASK-233.)
 	 */
 	.btn {
 		padding: 0.45rem 0.9rem;
@@ -1714,16 +1678,6 @@
 	.btn:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
-	}
-
-	.btn-secondary {
-		background: var(--color-bg);
-		color: var(--color-text-muted);
-		border-color: var(--color-border-strong);
-	}
-
-	.btn-secondary:hover {
-		background: var(--color-surface-muted);
 	}
 
 	.btn-link {
@@ -1976,38 +1930,6 @@
 		padding: 0.05rem 0.3rem;
 		border-radius: 3px;
 		font-size: 0.75rem;
-	}
-
-	.validator-section {
-		margin-top: 1.25rem;
-		padding-top: 1rem;
-		border-top: 1px solid var(--color-border);
-	}
-
-	.validator-title {
-		margin: 0 0 0.4rem;
-		font-size: 0.95rem;
-		font-weight: 600;
-		color: var(--color-text);
-	}
-
-	.validator-hint {
-		margin: 0 0 0.6rem;
-		font-size: 0.8125rem;
-		color: var(--color-text-muted);
-		line-height: 1.5;
-	}
-
-	.validator-row {
-		display: flex;
-		gap: 0.4rem;
-		flex-wrap: wrap;
-	}
-
-	.validator-row .btn {
-		text-decoration: none;
-		display: inline-flex;
-		align-items: center;
 	}
 
 	.docs-section {
